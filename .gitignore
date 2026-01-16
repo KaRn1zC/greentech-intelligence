@@ -1,0 +1,186 @@
+# =============================================================================
+# GreenTech Intelligence - .gitignore
+# =============================================================================
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# === Virtual Environments ===
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# === UV ===
+.uv/
+uv.lock
+
+# === IDE ===
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# === Jupyter Notebooks ===
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# === Testing ===
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# === Documentation ===
+docs/_build/
+site/
+
+# === Distribution ===
+*.manifest
+*.spec
+
+# === Logs ===
+*.log
+logs/
+log/
+
+# === Data & Models (gérés par DVC) ===
+/data/
+!/data/.gitkeep
+/models/
+!/models/.gitkeep
+*.parquet
+*.csv
+!requirements*.csv
+*.pkl
+*.joblib
+*.h5
+*.hdf5
+*.onnx
+*.safetensors
+*.bin
+!*.bin.dvc
+
+# === DVC ===
+# Fichiers DVC trackés
+*.dvc
+!.dvc/
+.dvc/tmp/
+.dvc/cache/
+
+# === MLflow ===
+mlruns/
+mlartifacts/
+
+# === Docker ===
+.docker/
+
+# === Environment Variables ===
+.env
+.env.local
+.env.*.local
+*.env
+!.env.example
+
+# === Secrets ===
+secrets/
+*.pem
+*.key
+*.crt
+*.p12
+
+# === OS ===
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# === Node.js (Frontend) ===
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# === Frontend Build ===
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/out/
+
+# === Temporary Files ===
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# === MinIO Local Data ===
+minio-data/
+
+# === PostgreSQL Local Data ===
+postgres-data/
+
+# === Prometheus/Grafana Data ===
+prometheus-data/
+grafana-data/
+loki-data/
+
+# === Spark ===
+spark-warehouse/
+metastore_db/
+derby.log
+
+# === Cache ===
+.cache/
+*.cache
+
+# === Profiling ===
+*.prof
+*.lprof
+
+# === Type Checking ===
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# === Codecarbon ===
+emissions.csv
+codecarbon.log
