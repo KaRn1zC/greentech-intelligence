@@ -210,5 +210,5 @@ MIT License - voir [LICENSE](LICENSE)
 ## 👤 Auteur
 
 **Votre Nom**
-- Projet de mémoire - [Titre du diplôme]
-- [Année]
+- Projet de mémoire - [Titre Professionnel de niveau 6 - Développeur en Intelligence Artificielle et Data Analyst]
+- [2025-2026]
