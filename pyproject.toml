@@ -1,0 +1,175 @@
+[project]
+name = "greentech-intelligence"
+version = "0.1.0"
+description = "Plateforme d'analyse Green IT avec Intelligence Artificielle - Classification automatique d'articles tech"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+authors = [
+    { name = "Votre Nom", email = "votre.email@example.com" }
+]
+keywords = ["green-it", "ai", "machine-learning", "nlp", "sustainability", "fastapi", "react"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # === Data Collection (Bloc E1) ===
+    "httpx>=0.27.0",
+    "scrapy>=2.11.0",
+    "playwright>=1.40.0",
+    "scrapy-playwright>=0.0.40",
+    
+    # === Big Data & Storage (Bloc E1) ===
+    "pyspark>=3.5.0",
+    "sqlalchemy>=2.0.0",
+    "asyncpg>=0.29.0",
+    
+    # === Machine Learning (Blocs E2 & E3) ===
+    "scikit-learn>=1.4.0",
+    "transformers>=4.36.0",
+    "huggingface-hub>=0.20.0",
+    "datasets>=2.16.0",
+    "accelerate>=0.25.0",
+    "peft>=0.7.0",
+    "safetensors>=0.4.0",
+    
+    # === MLOps (Bloc E3) ===
+    "mlflow>=2.10.0",
+    "dvc>=3.40.0",
+    "dvc-s3>=3.0.0",
+    "deepchecks>=0.18.0",
+    "codecarbon>=2.3.0",
+    
+    # === Backend API (Bloc E4) ===
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "fastapi-users[sqlalchemy]>=13.0.0",
+    "python-multipart>=0.0.6",
+    "loguru>=0.7.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.0",
+    
+    # === Monitoring (Bloc E5) ===
+    "prometheus-client>=0.19.0",
+    
+    # === Documentation ===
+    "sphinx>=7.2.0",
+    "myst-parser>=2.0.0",
+    "furo>=2024.1.0",
+]
+
+[project.optional-dependencies]
+# PyTorch avec ROCm (PC Fixe AMD)
+rocm = [
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "torchaudio>=2.2.0",
+]
+
+# PyTorch avec DirectML (Alternative Windows)
+directml = [
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "torchaudio>=2.2.0",
+    "torch-directml>=0.2.0",
+]
+
+# PyTorch CPU uniquement
+cpu = [
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "torchaudio>=2.2.0",
+]
+
+dev = [
+    "ruff>=0.1.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "pre-commit>=3.6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/VOTRE_USERNAME/greentech-intelligence"
+Documentation = "https://github.com/VOTRE_USERNAME/greentech-intelligence#readme"
+Repository = "https://github.com/VOTRE_USERNAME/greentech-intelligence"
+
+[project.scripts]
+greentech = "greentech.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/greentech"]
+
+# === Ruff Configuration (Linting & Formatting) ===
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # function call in default argument
+    "B904",   # raise without from inside except
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["greentech"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# === Pytest Configuration ===
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+
+# === Coverage Configuration ===
+[tool.coverage.run]
+source = ["src/greentech"]
+branch = true
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
