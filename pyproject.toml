@@ -68,14 +68,12 @@ dependencies = [
 [project.optional-dependencies]
 # PyTorch avec ROCm (PC Fixe AMD)
 rocm = [
-    "torch>=2.2.0",
     "torchvision>=0.17.0",
     "torchaudio>=2.2.0",
 ]
 
 # PyTorch avec DirectML (Alternative Windows)
 directml = [
-    "torch>=2.2.0",
     "torchvision>=0.17.0",
     "torchaudio>=2.2.0",
     "torch-directml>=0.2.0",
@@ -83,7 +81,6 @@ directml = [
 
 # PyTorch CPU uniquement
 cpu = [
-    "torch>=2.2.0",
     "torchvision>=0.17.0",
     "torchaudio>=2.2.0",
 ]
