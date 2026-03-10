@@ -1,78 +1,110 @@
-📂 Sources de Données - Projet GreenTech Intelligence
-Ce document recense les trois sources de données officielles sélectionnées pour alimenter l'architecture Data Lakehouse du projet. Elles ont été choisies pour leur pertinence thématique ("Green IT", "Sustainable AI") et pour valider les contraintes techniques du diplôme (API, Scraping dynamique, Big Data).
+# Sources de Donnees - Projet GreenTech Intelligence
 
-1. Source API : Flux d'Actualités (Veille Chaude)
-Nom : NewsData.io
+> **Redige par KaRn1zC - 2026-02-10**
 
-Type : API REST (JSON)
+Ce document recense les trois sources de donnees externes selectionnees pour alimenter
+l'architecture Data Lakehouse du projet. Elles ont ete choisies pour leur pertinence
+thematique ("Green IT", "Sustainable AI") et pour valider les contraintes techniques
+du diplome (API, Scraping dynamique, Big Data).
 
-🔗 URL d'accès : https://newsdata.io/
+---
 
-Documentation technique : Documentation Officielle
+## 1. Source API : Flux d'Actualites (Veille Chaude)
 
-Pourquoi cette source ?
+**Nom** : NewsData.io
 
+**Type** : API REST (JSON)
 
-Quota généreux : Offre 200 crédits par jour dans le plan gratuit (contre 100 habituellement), offrant une marge de sécurité pour le développement.
+**URL d'acces** : <https://newsdata.io/>
 
+**Documentation technique** : <https://newsdata.io/documentation>
 
-Filtrage sémantique : Permet de combiner des mots-clés complexes ("Sustainable AI" OR "Green IT") avec un filtre de catégorie technology.
-+1
+**Endpoint principal** :
 
+```
+GET https://newsdata.io/api/1/latest?apikey=YOUR_API_KEY&q=green+IT&category=technology&language=en
+```
 
-Fraîcheur : Délai de mise à jour raisonnable (15 min à 12h) pour de la veille.
+### Pourquoi cette source ?
 
-Exemple de Données à récupérer (pour le MCD) :
+- **Quota genereux** : 200 credits par jour dans le plan gratuit (contre 100 habituellement),
+  offrant une marge de securite pour le developpement.
+- **Filtrage semantique** : Permet de combiner des mots-cles complexes
+  (`"Sustainable AI" OR "Green IT"`) avec un filtre de categorie `technology`.
+- **Fraicheur** : Delai de mise a jour raisonnable (15 min a 12h) pour de la veille.
 
-title, link, description, content, pubDate, source_id.
+### Donnees recuperees (pour le MCD)
 
-2. Source Scraping : Blog Tech (Market Intelligence)
-Nom : TechCrunch - Section Climate
+| Champ API     | Description                  |
+|---------------|------------------------------|
+| `title`       | Titre de l'article           |
+| `link`        | URL de l'article             |
+| `description` | Resume court                 |
+| `content`     | Contenu complet              |
+| `pubDate`     | Date de publication          |
+| `source_id`   | Identifiant de la source     |
 
-Type : Web Scraping (Site Dynamique / SPA)
+---
 
+## 2. Source Scraping : Blog Tech (Market Intelligence)
 
-🔗 URL Cible : https://techcrunch.com/category/climate/ 
+**Nom** : TechCrunch - Section Climate
 
-Contrainte Technique Validée : Utilisation obligatoire de Playwright.
+**Type** : Web Scraping (Site Dynamique / SPA)
 
-Pourquoi cette source ?
+**URL cible** : <https://techcrunch.com/category/climate/>
 
+**Contrainte technique validee** : Utilisation obligatoire de Playwright.
 
-Architecture Dynamique : Le site utilise un chargement en "Infinite Scroll" (défilement infini).
+### Pourquoi cette source ?
 
-Justification Playwright : Un scraper simple ne verrait que les premiers articles. Playwright est nécessaire pour simuler le scroll utilisateur et attendre le chargement réseau (hydratation React).
-+1
+- **Architecture dynamique** : Le site utilise un chargement en "Infinite Scroll"
+  (defilement infini).
+- **Justification Playwright** : Un scraper simple ne verrait que les premiers articles.
+  Playwright est necessaire pour simuler le scroll utilisateur et attendre le chargement
+  reseau (hydratation React).
+- **Pertinence** : Couvre les levees de fonds et l'innovation materielle (Hardware) durable.
 
+### Donnees recuperees (pour le MCD)
 
-Pertinence : Couvre les levées de fonds et l'innovation matérielle (Hardware) durable.
+| Champ extrait      | Description                  |
+|--------------------|------------------------------|
+| Titre article      | Titre de l'article           |
+| URL                | Lien vers l'article complet  |
+| Date de publication| Date de parution             |
+| Contenu HTML       | Corps de l'article           |
+| Auteur             | Nom de l'auteur              |
 
-Exemple de Données à récupérer (pour le MCD) :
+---
 
-Titre Article, URL, Date Publication, Contenu HTML, Auteur.
+## 3. Source Big Data : Archives Scientifiques (Recherche de Fond)
 
-3. Source Big Data : Archives Scientifiques (Recherche de Fond)
-Nom : arXiv Metadata Dataset (Kaggle)
+**Nom** : arXiv Metadata Dataset (Kaggle / Cornell University)
 
-Type : Dataset Statique (JSON volumineux)
+**Type** : Dataset statique (JSON volumineux)
 
+**URL de telechargement** : <https://www.kaggle.com/datasets/Cornell-University/arxiv>
 
-🔗 URL de Téléchargement : Kaggle - arXiv Dataset (ou miroir direct : Lien Dataset )
+**Licence** : CC0 (Domaine Public)
 
-Contrainte Technique Validée : Utilisation obligatoire d'Apache Spark et MinIO.
+**Contrainte technique validee** : Utilisation obligatoire d'Apache Spark et MinIO.
 
-Pourquoi cette source ?
+### Pourquoi cette source ?
 
+- **Volume "Big Data"** : Le fichier pese environ 3.6 Go (format JSON) et contient
+  plus de 1.7 million d'articles scientifiques.
+- **Justification Spark** : Le volume est trop important pour etre traite en memoire
+  simple. Il necessite un traitement distribue pour filtrer les categories IA (`cs.AI`)
+  et analyser les abstracts.
+- **Richesse textuelle** : Contient des resumes (abstracts) techniques ideaux
+  pour l'analyse NLP et l'entrainement du modele de classification Green IT.
 
-Volume "Big Data" : Le fichier pèse environ 3.6 Go (format JSON) et contient plus de 1.7 million d'articles.
-+1
+### Donnees recuperees (pour le MCD)
 
-Justification Spark : Le volume est trop important pour être traité en mémoire simple. Il nécessite un traitement distribué pour filtrer les catégories IA (cs.AI) et analyser les abstracts.
-+1
-
-
-Richesse Textuelle : Contient des résumés (abstracts) techniques idéaux pour l'analyse NLP.
-
-Exemple de Données à récupérer (pour le MCD) :
-
-id, title, abstract, categories, update_date.
+| Champ JSON     | Description                          |
+|----------------|--------------------------------------|
+| `id`           | Identifiant unique arXiv             |
+| `title`        | Titre de la publication              |
+| `abstract`     | Resume scientifique                  |
+| `categories`   | Categories arXiv (ex: `cs.AI`)       |
+| `update_date`  | Date de derniere mise a jour         |
