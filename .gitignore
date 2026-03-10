@@ -93,11 +93,12 @@ log/
 !*.bin.dvc
 
 # === DVC ===
-# Fichiers DVC trackés
-*.dvc
+# Dossier DVC (tracké par Git, sauf tmp et cache)
 !.dvc/
 .dvc/tmp/
 .dvc/cache/
+# Fichiers .dvc (données versionnées, trackés par Git)
+!*.dvc
 
 # === MLflow ===
 mlruns/

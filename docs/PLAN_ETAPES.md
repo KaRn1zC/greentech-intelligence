@@ -207,27 +207,27 @@ Environnement Node.js (via npm) :
 
 ### 3.1 Veille Technologique & Benchmark (Bloc E2)
 
-- [ ] **Configuration de la Veille** :
-  - [ ] Creation de flux RSS sur Inoreader ciblant "Green IT", "Sustainable AI", "Model Efficiency"
-  - [ ] Configuration de taches de recherche automatique sur Perplexity Pro pour synthetiser les tendances hebdo
-  - [ ] Redaction d'une synthese mensuelle (Document Markdown)
-- [ ] **Benchmark des Services IA (Etude Comparative)** :
-  - [ ] Redaction d'un document comparant les solutions de resumes automatiques (OpenAI, Mistral, Hugging Face)
-  - [ ] Criteres d'analyse : Cout, Facilite d'integration, Impact Carbone, Qualite du resume
-  - [ ] Selection finale : Hugging Face Serverless Inference API (pour le resume)
-- [ ] **Integration du Service SaaS (Script Python)** :
-  - [ ] Developpement d'un module Python summarizer.py utilisant la librairie huggingface_hub
-  - [ ] Connexion a l'API Serverless pour envoyer le texte nettoye des articles
-  - [ ] Recuperation et stockage du resume genere dans la base PostgreSQL
+- [x] **Configuration de la Veille** :
+  - [x] Creation de flux RSS sur Inoreader ciblant "Green IT", "Sustainable AI", "Model Efficiency"
+  - [x] Configuration de taches de recherche automatique sur Perplexity Pro pour synthetiser les tendances hebdo
+  - [x] Redaction d'une synthese mensuelle (Document Markdown)
+- [x] **Benchmark des Services IA (Etude Comparative)** :
+  - [x] Redaction d'un document comparant les solutions de resumes automatiques (OpenAI, Mistral, Hugging Face)
+  - [x] Criteres d'analyse : Cout, Facilite d'integration, Impact Carbone, Qualite du resume
+  - [x] Selection finale : Hugging Face Serverless Inference API (pour le resume)
+- [x] **Integration du Service SaaS (Script Python)** :
+  - [x] Developpement d'un module Python summarizer.py utilisant la librairie huggingface_hub
+  - [x] Connexion a l'API Serverless pour envoyer le texte nettoye des articles
+  - [x] Recuperation et stockage du resume genere dans la base PostgreSQL
 
 ### 3.2 Preparation des Donnees & MLOps (Data Ops)
 
 - [ ] **Creation du Dataset d'Or (Golden Dataset)** :
   - [ ] Selection manuelle de 200 articles varies depuis la base
   - [ ] Annotation binaire manuelle (Labeling) : "Green IT" (1) ou "Non Green IT" (0)
-- [ ] **Mise en place du Versioning (DVC)** :
-  - [ ] Initialisation de DVC (dvc init) dans le projet
-  - [ ] Configuration du "Remote" DVC vers le bucket MinIO clean-data ou un dossier dedie
+- [x] **Mise en place du Versioning (DVC)** :
+  - [x] Initialisation de DVC (dvc init) dans le projet
+  - [x] Configuration du "Remote" DVC vers le bucket MinIO clean-data ou un dossier dedie
   - [ ] Versioning du fichier dataset annote (dataset.csv.dvc)
   - [ ] Push des donnees vers le stockage distant pour synchronisation entre PC Fixe et Portable
 
@@ -235,17 +235,17 @@ Environnement Node.js (via npm) :
 
 > Cette phase utilise specifiquement le GPU AMD 7900 XTX via ROCm.
 
-- [ ] **Configuration de l'Experience (MLFlow)** :
-  - [ ] Lancement du serveur MLFlow local pour tracker les metriques (Perte, Precision)
-  - [ ] Integration de la librairie codecarbon pour mesurer la consommation electrique reelle du GPU pendant l'entrainement
-- [ ] **Entrainement du Challenger (Llama 3.2 3B)** :
-  - [ ] Script de Fine-tuning utilisant PEFT (LoRA) pour adapter le modele generatif a la classification
-  - [ ] Parametrage specifique pour PyTorch sur ROCm (device='cuda')
-  - [ ] Enregistrement des logs et du modele final
-- [ ] **Entrainement du Champion (DeBERTa-v3-base)** :
-  - [ ] Script de Fine-tuning classique utilisant transformers.Trainer
-  - [ ] Optimisation des hyperparametres pour la classification de sequence
-  - [ ] Enregistrement des logs et du modele final
+- [x] **Configuration de l'Experience (MLFlow)** :
+  - [x] Lancement du serveur MLFlow local pour tracker les metriques (Perte, Precision)
+  - [x] Integration de la librairie codecarbon pour mesurer la consommation electrique reelle du GPU pendant l'entrainement
+- [x] **Entrainement du Challenger (Llama 3.2 3B)** :
+  - [x] Script de Fine-tuning utilisant PEFT (LoRA) pour adapter le modele generatif a la classification
+  - [x] Parametrage specifique pour PyTorch sur ROCm (device='cuda')
+  - [x] Enregistrement des logs et du modele final
+- [x] **Entrainement du Champion (DeBERTa-v3-base)** :
+  - [x] Script de Fine-tuning classique utilisant transformers.Trainer
+  - [x] Optimisation des hyperparametres pour la classification de sequence
+  - [x] Enregistrement des logs et du modele final
 - [ ] **Benchmark Final & Selection** :
   - [ ] Execution du script de comparaison sur le jeu de test
   - [ ] Analyse des graphiques MLFlow : Comparaison Precision vs Latence vs CO2
@@ -253,9 +253,9 @@ Environnement Node.js (via npm) :
 
 ### 3.4 Validation & Packaging (Qualite Modele)
 
-- [ ] **Tests Automatises du Modele (Deepchecks)** :
-  - [ ] Ecriture d'une suite de tests pour verifier l'integrite du modele (Data Leakage, Biais, Robustesse au bruit)
-  - [ ] Generation d'un rapport de validation automatique
+- [x] **Tests Automatises du Modele (Deepchecks)** :
+  - [x] Ecriture d'une suite de tests pour verifier l'integrite du modele (Data Leakage, Biais, Robustesse au bruit)
+  - [x] Generation d'un rapport de validation automatique
 - [ ] **Packaging pour Inference** :
   - [ ] Conversion/Sauvegarde du modele gagnant dans un format optimise (ex: safetensors ou ONNX si applicable)
   - [ ] Push du modele valide via DVC vers le stockage partage
@@ -263,11 +263,11 @@ Environnement Node.js (via npm) :
 
 ### 3.5 Deploiement MLOps (Monitoring)
 
-- [ ] **Definition des Metriques de Production** :
-  - [ ] Identification des indicateurs cles a surveiller (Drift des donnees, Temps de reponse, Pourcentage de classification "Green")
-- [ ] **Configuration du Monitoring (Prometheus)** :
-  - [ ] Preparation des exporteurs pour envoyer les metriques d'inference vers Prometheus
-  - [ ] (L'integration effective se fera lors du developpement de l'API a l'etape suivante)
+- [x] **Definition des Metriques de Production** :
+  - [x] Identification des indicateurs cles a surveiller (Drift des donnees, Temps de reponse, Pourcentage de classification "Green")
+- [x] **Configuration du Monitoring (Prometheus)** :
+  - [x] Preparation des exporteurs pour envoyer les metriques d'inference vers Prometheus
+  - [x] (L'integration effective se fera lors du developpement de l'API a l'etape suivante)
 
 ---
 

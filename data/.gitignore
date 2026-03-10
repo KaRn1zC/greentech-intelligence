@@ -1,0 +1,10 @@
+# Données versionnées par DVC (pas par Git directement)
+*.csv
+*.parquet
+*.json
+
+# Sauf les fichiers .dvc qui trackent les versions
+!*.dvc
+
+# Garder le README
+!README.md

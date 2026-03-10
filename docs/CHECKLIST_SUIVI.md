@@ -92,29 +92,29 @@
 - [x] Identifier des sources fiables (dont accessibilite, securite, data)
 - [x] Qualifier la fiabilite des sources
 - [x] Configurer les outils d'agregation
-- [ ] Rediger des syntheses des informations collectees
-- [ ] Communiquer les syntheses aux parties prenantes (format accessible)
+- [x] Rediger des syntheses des informations collectees
+- [x] Communiquer les syntheses aux parties prenantes (format accessible)
 
 #### C7. Identifier des services IA (Benchmark)
 
-- [ ] Reformuler le besoin (problematique technique/fonctionnelle)
-- [ ] Identifier les contraintes (moyens, techniques, ops)
-- [ ] Realiser un benchmark des services existants (etudies vs non etudies)
-- [ ] Expliciter les raisons d'exclusion des services
-- [ ] Le benchmark detaille l'adequation fonctionnelle
-- [ ] Le benchmark detaille la demarche eco-responsable des services
-- [ ] Le benchmark detaille les contraintes techniques/pre-requis
-- [ ] Rediger des conclusions preconisant une ou plusieurs solutions
+- [x] Reformuler le besoin (problematique technique/fonctionnelle)
+- [x] Identifier les contraintes (moyens, techniques, ops)
+- [x] Realiser un benchmark des services existants (etudies vs non etudies)
+- [x] Expliciter les raisons d'exclusion des services
+- [x] Le benchmark detaille l'adequation fonctionnelle
+- [x] Le benchmark detaille la demarche eco-responsable des services
+- [x] Le benchmark detaille les contraintes techniques/pre-requis
+- [x] Rediger des conclusions preconisant une ou plusieurs solutions
 
 #### C8. Parametrer un service IA
 
-- [ ] Creer l'environnement d'execution (Compte SaaS, VPS, etc.)
-- [ ] Installer/configurer les dependances (SDK, outils)
-- [ ] Gerer les acces (comptes, groupes, droits)
-- [ ] Installer/configurer les outils de monitoring du service
-- [ ] Le service est accessible et authentifie
-- [ ] Le service repond aux besoins fonctionnels
-- [ ] Le monitoring est operationnel
+- [x] Creer l'environnement d'execution (Compte SaaS, VPS, etc.)
+- [x] Installer/configurer les dependances (SDK, outils)
+- [x] Gerer les acces (comptes, groupes, droits)
+- [x] Installer/configurer les outils de monitoring du service
+- [x] Le service est accessible et authentifie
+- [x] Le service repond aux besoins fonctionnels
+- [x] Le monitoring est operationnel
 - [ ] La documentation technique couvre installation, acces, dependances
 - [ ] La documentation est accessible (normes handicap)
 
@@ -155,10 +155,10 @@
 
 #### C11. Monitorer le modele IA
 
-- [ ] Lister les metriques a monitorer (perf modele, stabilite data, sante systeme)
-- [ ] Definir les declencheurs de reentrainement
-- [ ] Choisir l'outil de monitoring et de consolidation
-- [ ] Integrer les collecteurs de donnees
+- [x] Lister les metriques a monitorer (perf modele, stabilite data, sante systeme)
+- [x] Definir les declencheurs de reentrainement
+- [x] Choisir l'outil de monitoring et de consolidation
+- [x] Integrer les collecteurs de donnees
 - [ ] Integrer l'outil de restitution (Dashboard type Grafana/Streamlit)
 - [ ] Configurer les alertes (email, notif)
 - [ ] L'outil de restitution respecte les enjeux d'accessibilite
@@ -168,10 +168,10 @@
 
 #### C12. Tests automatises du modele
 
-- [ ] Definir le perimetre des tests (format data, entrainement, eval)
-- [ ] Choisir les outils de test (ex: unittest, pytest)
-- [ ] Configurer l'environnement de test
-- [ ] Integrer les tests (assertions, mocks, fixtures)
+- [x] Definir le perimetre des tests (format data, entrainement, eval)
+- [x] Choisir les outils de test (ex: unittest, pytest)
+- [x] Configurer l'environnement de test
+- [x] Integrer les tests (assertions, mocks, fixtures)
 - [ ] Les tests couvrent le perimetre defini
 - [ ] Code et Donnees (si possible DVC) versionnes
 - [ ] Documentation technique des tests redigee
