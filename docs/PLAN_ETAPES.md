@@ -197,7 +197,7 @@ Environnement Node.js (via npm) :
 - [x] **Validation & Documentation** :
   - [x] Execution de requetes SQL de verification pour confirmer que les donnees sont bien extraites et stockees
   - [x] Redaction de la documentation technique expliquant la logique algorithmique, les choix de nettoyage et les commandes pour lancer les scripts
-  - [ ] Push de l'ensemble du code source (scripts, Dockerfiles, docs) sur le depot distant GitHub
+  - [x] Push de l'ensemble du code source (scripts, Dockerfiles, docs) sur le depot distant GitHub
 
 ---
 
