@@ -25,15 +25,15 @@
 - [x] Executer des requetes d'extraction depuis le systeme Big Data via le script
 - [x] Le script est fonctionnel et recupere toutes les donnees visees
 - [x] Le script est structure (initialisation, traitement, gestion erreurs, sauvegarde)
-- [ ] Le script est versionne et accessible sur un depot Git distant
+- [x] Le script est versionne et accessible sur un depot Git distant
 
 #### C2. Developper des requetes SQL d'extraction
 
 - [x] Ecrire les requetes SQL pour extraire les donnees de la base de donnees relationnelle
 - [x] Ecrire les requetes pour extraire les donnees du systeme Big Data
 - [x] Les requetes sont fonctionnelles et extraient exactement les donnees visees
-- [ ] Documenter les requetes (choix de selections, filtrages, jointures)
-- [ ] La documentation explicite les optimisations appliquees aux requetes
+- [x] Documenter les requetes (choix de selections, filtrages, jointures)
+- [x] La documentation explicite les optimisations appliquees aux requetes
 
 #### C3. Agregation et nettoyage des donnees
 
@@ -44,8 +44,8 @@
 - [x] Programmer l'identification des formats non normalises
 - [x] Programmer l'homogeneisation des formats (dates, unites, etc.)
 - [x] Le script produit un jeu de donnees final unique, nettoye et normalise
-- [ ] Le script est versionne sur Git
-- [ ] La documentation du script est complete (dependances, logique algo, choix de nettoyage)
+- [x] Le script est versionne sur Git
+- [x] La documentation du script est complete (dependances, logique algo, choix de nettoyage)
 
 ### A2. Developper la mise a disposition technique des donnees
 
@@ -61,7 +61,7 @@
 - [x] Rediger les procedures de tri des donnees personnelles (detection, suppression, conformite RGPD)
 - [x] Programmer le script d'import des donnees dans la base
 - [x] Le script d'import est fonctionnel
-- [ ] Le script d'import est versionne et documente (dependances, commandes)
+- [x] Le script d'import est versionne et documente (dependances, commandes)
 
 #### C5. Developper une API de mise a disposition (REST)
 
