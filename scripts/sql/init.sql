@@ -1,6 +1,7 @@
 -- =============================================================================
--- GreenTech Intelligence - Database Initialization Script
+-- GreenTech Intelligence - Script d'initialisation de la base de données
 -- PostgreSQL 15+
+-- Rédigé par KaRn1zC - 2026-02-11
 -- =============================================================================
 
 -- Extension pour UUID
@@ -12,18 +13,18 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Table de configuration des recherches (Source SQL dynamique)
 CREATE TABLE IF NOT EXISTS search_config (
-    id SERIAL PRIMARY KEY,
-    keyword VARCHAR(100) NOT NULL,
-    source_url TEXT,
-    source_type VARCHAR(20) CHECK (source_type IN ('api', 'scraping', 'file')),
-    priority INTEGER DEFAULT 1,
-    active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    id_config SERIAL PRIMARY KEY,
+    mot_cle VARCHAR(100) NOT NULL,
+    url_source TEXT,
+    type_source VARCHAR(20) CHECK (type_source IN ('api', 'scraping', 'file')),
+    priorite INTEGER DEFAULT 1,
+    actif BOOLEAN DEFAULT true,
+    date_creation TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    date_modification TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Données initiales de configuration
-INSERT INTO search_config (keyword, source_type, priority) VALUES
+INSERT INTO search_config (mot_cle, type_source, priorite) VALUES
     ('Green IT', 'api', 1),
     ('Sustainable AI', 'api', 1),
     ('Eco-friendly Tech', 'api', 2),
@@ -39,64 +40,64 @@ ON CONFLICT DO NOTHING;
 
 -- Sources de données
 CREATE TABLE IF NOT EXISTS sources (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL UNIQUE,
+    id_source SERIAL PRIMARY KEY,
+    nom VARCHAR(100) NOT NULL UNIQUE,
     type VARCHAR(20) NOT NULL CHECK (type IN ('api', 'scraping', 'file')),
-    base_url TEXT,
+    url_base TEXT,
     description TEXT,
-    is_active BOOLEAN DEFAULT true,
-    last_fetched_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    est_active BOOLEAN DEFAULT true,
+    derniere_collecte TIMESTAMP WITH TIME ZONE,
+    date_creation TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Articles collectés
 CREATE TABLE IF NOT EXISTS articles (
-    id SERIAL PRIMARY KEY,
+    id_article SERIAL PRIMARY KEY,
     uuid UUID DEFAULT uuid_generate_v4() UNIQUE,
-    source_id INTEGER REFERENCES sources(id) ON DELETE SET NULL,
-    
+    id_source INTEGER REFERENCES sources(id_source) ON DELETE SET NULL,
+
     -- Contenu
-    title VARCHAR(500) NOT NULL,
+    titre VARCHAR(500) NOT NULL,
     url TEXT UNIQUE NOT NULL,
-    content TEXT,
-    summary TEXT,
-    
+    contenu TEXT,
+    resume TEXT,
+
     -- Métadonnées
-    author VARCHAR(200),
-    published_at TIMESTAMP WITH TIME ZONE,
-    language VARCHAR(10) DEFAULT 'en',
-    
+    auteur VARCHAR(200),
+    date_publication TIMESTAMP WITH TIME ZONE,
+    langue VARCHAR(10) DEFAULT 'en',
+
     -- Résultats IA
-    is_green_it BOOLEAN,
-    confidence_score FLOAT CHECK (confidence_score >= 0 AND confidence_score <= 1),
-    classification_model VARCHAR(100),
-    
+    est_green_it BOOLEAN,
+    score_confiance FLOAT CHECK (score_confiance >= 0 AND score_confiance <= 1),
+    modele_classification VARCHAR(100),
+
     -- Audit
-    raw_data_path TEXT,
-    analyzed_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    chemin_donnees_brutes TEXT,
+    date_analyse TIMESTAMP WITH TIME ZONE,
+    date_creation TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    date_modification TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Index pour les recherches fréquentes
-CREATE INDEX IF NOT EXISTS idx_articles_is_green_it ON articles(is_green_it);
-CREATE INDEX IF NOT EXISTS idx_articles_published_at ON articles(published_at DESC);
-CREATE INDEX IF NOT EXISTS idx_articles_source_id ON articles(source_id);
-CREATE INDEX IF NOT EXISTS idx_articles_analyzed ON articles(analyzed_at) WHERE analyzed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_articles_est_green_it ON articles(est_green_it);
+CREATE INDEX IF NOT EXISTS idx_articles_date_publication ON articles(date_publication DESC);
+CREATE INDEX IF NOT EXISTS idx_articles_id_source ON articles(id_source);
+CREATE INDEX IF NOT EXISTS idx_articles_date_analyse ON articles(date_analyse) WHERE date_analyse IS NOT NULL;
 
 -- =============================================================================
 -- TABLES UTILISATEURS (FastAPI Users)
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id_utilisateur UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(320) UNIQUE NOT NULL,
-    hashed_password VARCHAR(1024) NOT NULL,
-    is_active BOOLEAN DEFAULT true,
-    is_superuser BOOLEAN DEFAULT false,
-    is_verified BOOLEAN DEFAULT false,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    mot_de_passe_hash VARCHAR(1024) NOT NULL,
+    est_actif BOOLEAN DEFAULT true,
+    est_superuser BOOLEAN DEFAULT false,
+    est_verifie BOOLEAN DEFAULT false,
+    date_creation TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    date_modification TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- =============================================================================
@@ -105,60 +106,60 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- Statistiques quotidiennes
 CREATE TABLE IF NOT EXISTS daily_stats (
-    id SERIAL PRIMARY KEY,
-    date DATE UNIQUE NOT NULL,
+    id_stats SERIAL PRIMARY KEY,
+    date_stat DATE UNIQUE NOT NULL,
     total_articles INTEGER DEFAULT 0,
-    green_it_articles INTEGER DEFAULT 0,
-    non_green_it_articles INTEGER DEFAULT 0,
-    avg_confidence_score FLOAT,
-    articles_by_source JSONB,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    articles_green_it INTEGER DEFAULT 0,
+    articles_non_green_it INTEGER DEFAULT 0,
+    score_confiance_moyen FLOAT,
+    articles_par_source JSONB,
+    date_creation TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Logs d'analyse IA
 CREATE TABLE IF NOT EXISTS analysis_logs (
-    id SERIAL PRIMARY KEY,
-    article_id INTEGER REFERENCES articles(id) ON DELETE CASCADE,
-    model_name VARCHAR(100) NOT NULL,
-    model_version VARCHAR(50),
-    inference_time_ms INTEGER,
-    carbon_emissions_kg FLOAT,
+    id_log SERIAL PRIMARY KEY,
+    id_article INTEGER REFERENCES articles(id_article) ON DELETE CASCADE,
+    nom_modele VARCHAR(100) NOT NULL,
+    version_modele VARCHAR(50),
+    temps_inference_ms INTEGER,
+    emissions_carbone_kg FLOAT,
     prediction BOOLEAN,
-    confidence FLOAT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    confiance FLOAT,
+    date_creation TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- =============================================================================
 -- FONCTIONS & TRIGGERS
 -- =============================================================================
 
--- Fonction pour mettre à jour updated_at automatiquement
-CREATE OR REPLACE FUNCTION update_updated_at_column()
+-- Fonction pour mettre à jour date_modification automatiquement
+CREATE OR REPLACE FUNCTION update_date_modification_column()
 RETURNS TRIGGER AS $$
 BEGIN
-    NEW.updated_at = NOW();
+    NEW.date_modification = NOW();
     RETURN NEW;
 END;
 $$ language 'plpgsql';
 
--- Triggers pour updated_at
-DROP TRIGGER IF EXISTS update_articles_updated_at ON articles;
-CREATE TRIGGER update_articles_updated_at
+-- Triggers pour date_modification
+DROP TRIGGER IF EXISTS update_articles_date_modification ON articles;
+CREATE TRIGGER update_articles_date_modification
     BEFORE UPDATE ON articles
     FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+    EXECUTE FUNCTION update_date_modification_column();
 
-DROP TRIGGER IF EXISTS update_users_updated_at ON users;
-CREATE TRIGGER update_users_updated_at
+DROP TRIGGER IF EXISTS update_users_date_modification ON users;
+CREATE TRIGGER update_users_date_modification
     BEFORE UPDATE ON users
     FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+    EXECUTE FUNCTION update_date_modification_column();
 
-DROP TRIGGER IF EXISTS update_search_config_updated_at ON search_config;
-CREATE TRIGGER update_search_config_updated_at
+DROP TRIGGER IF EXISTS update_search_config_date_modification ON search_config;
+CREATE TRIGGER update_search_config_date_modification
     BEFORE UPDATE ON search_config
     FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+    EXECUTE FUNCTION update_date_modification_column();
 
 -- =============================================================================
 -- VUES
@@ -166,32 +167,32 @@ CREATE TRIGGER update_search_config_updated_at
 
 -- Vue des statistiques globales
 CREATE OR REPLACE VIEW v_global_stats AS
-SELECT 
+SELECT
     COUNT(*) as total_articles,
-    COUNT(*) FILTER (WHERE is_green_it = true) as green_it_count,
-    COUNT(*) FILTER (WHERE is_green_it = false) as non_green_it_count,
-    COUNT(*) FILTER (WHERE is_green_it IS NULL) as pending_analysis,
-    ROUND(AVG(confidence_score)::numeric, 3) as avg_confidence,
-    ROUND((COUNT(*) FILTER (WHERE is_green_it = true)::float / NULLIF(COUNT(*) FILTER (WHERE is_green_it IS NOT NULL), 0) * 100)::numeric, 2) as green_it_percentage
+    COUNT(*) FILTER (WHERE est_green_it = true) as articles_green_it,
+    COUNT(*) FILTER (WHERE est_green_it = false) as articles_non_green_it,
+    COUNT(*) FILTER (WHERE est_green_it IS NULL) as en_attente_analyse,
+    ROUND(AVG(score_confiance)::numeric, 3) as score_confiance_moyen,
+    ROUND((COUNT(*) FILTER (WHERE est_green_it = true)::float / NULLIF(COUNT(*) FILTER (WHERE est_green_it IS NOT NULL), 0) * 100)::numeric, 2) as pourcentage_green_it
 FROM articles;
 
 -- Vue des articles récents
-CREATE OR REPLACE VIEW v_recent_articles AS
-SELECT 
-    a.id,
+CREATE OR REPLACE VIEW v_articles_recents AS
+SELECT
+    a.id_article,
     a.uuid,
-    a.title,
+    a.titre,
     a.url,
-    a.summary,
-    a.author,
-    a.published_at,
-    a.is_green_it,
-    a.confidence_score,
-    s.name as source_name,
-    a.analyzed_at
+    a.resume,
+    a.auteur,
+    a.date_publication,
+    a.est_green_it,
+    a.score_confiance,
+    s.nom as nom_source,
+    a.date_analyse
 FROM articles a
-LEFT JOIN sources s ON a.source_id = s.id
-ORDER BY a.created_at DESC
+LEFT JOIN sources s ON a.id_source = s.id_source
+ORDER BY a.date_creation DESC
 LIMIT 100;
 
 -- =============================================================================
@@ -199,15 +200,34 @@ LIMIT 100;
 -- =============================================================================
 
 -- Sources de test
-INSERT INTO sources (name, type, base_url, description) VALUES
-    ('NewsAPI', 'api', 'https://newsapi.org/v2', 'News aggregator API'),
-    ('Dev.to', 'scraping', 'https://dev.to', 'Developer community blog'),
-    ('Medium Tech', 'scraping', 'https://medium.com/tag/technology', 'Medium technology articles'),
-    ('Historical CSV', 'file', NULL, 'Historical dataset from CSV import')
-ON CONFLICT (name) DO NOTHING;
+INSERT INTO sources (nom, type, url_base, description) VALUES
+    ('NewsData.io', 'api', 'https://newsdata.io/api/1/latest', 'API REST actualites technologiques'),
+    ('TechCrunch Climate', 'scraping', 'https://techcrunch.com/category/climate/', 'Blog tech - section Climate (Scraping Playwright)'),
+    ('arXiv Dataset', 'file', 'https://www.kaggle.com/datasets/Cornell-University/arxiv', 'Dataset scientifique Cornell University (1.7M+ articles)')
+ON CONFLICT (nom) DO NOTHING;
+
+-- =============================================================================
+-- UTILISATEUR APPLICATIF (Droits Restreints)
+-- =============================================================================
+
+-- Créer le rôle applicatif (lecture/écriture seulement, pas de DDL)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'greentech_app') THEN
+        CREATE ROLE greentech_app WITH LOGIN PASSWORD 'greentech_app_password';
+    END IF;
+END $$;
+
+GRANT CONNECT ON DATABASE greentech_db TO greentech_app;
+GRANT USAGE ON SCHEMA public TO greentech_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO greentech_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO greentech_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO greentech_app;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO greentech_app;
 
 -- Message de confirmation
 DO $$
 BEGIN
-    RAISE NOTICE 'GreenTech Intelligence database initialized successfully!';
+    RAISE NOTICE 'Base de données GreenTech Intelligence initialisée avec succès !';
+    RAISE NOTICE 'Utilisateur applicatif greentech_app créé avec droits restreints.';
 END $$;

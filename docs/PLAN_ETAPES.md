@@ -110,7 +110,6 @@ Environnement Node.js (via npm) :
 - [x] Veille Techno :
   - [x] Compte Inoreader (Agregateur RSS avec 9-10 flux configures)
   - [x] Compte Perplexity Pro (Recherche IA + Deep Research hebdomadaire configure)
-- [ ] Communication : Serveur Discord dedie au projet (OPTIONNEL)
 
 ---
 
@@ -121,84 +120,84 @@ Environnement Node.js (via npm) :
 
 ### 2.1 Conception & Conformite (Avant de coder)
 
-- [ ] **Specifications Techniques** : Redaction d'un document Markdown listant les contraintes techniques des sources de donnees (API, Web, Fichiers) et les regles d'extraction
-- [ ] **Modelisation des Donnees** :
-  - [ ] Realisation du Modele Conceptuel de Donnees (MCD) sur Looping (Entites : Article, Source, Auteur, Analyse)
-  - [ ] Generation du Modele Logique de Donnees (MLD) et du script SQL correspondant
-- [ ] **Registre RGPD & Confidentialite** :
-  - [ ] Redaction du registre des traitements de donnees (document texte)
-  - [ ] Definition des procedures de tri pour identifier et anonymiser les eventuelles donnees personnelles (noms d'auteurs, e-mails)
+- [x] **Specifications Techniques** : Redaction d'un document Markdown listant les contraintes techniques des sources de donnees (API, Web, Fichiers) et les regles d'extraction
+- [x] **Modelisation des Donnees** :
+  - [x] Realisation du Modele Conceptuel de Donnees (MCD) sur Looping (Entites : Article, Source, Auteur, Analyse)
+  - [x] Generation du Modele Logique de Donnees (MLD) et du script SQL correspondant
+- [x] **Registre RGPD & Confidentialite** :
+  - [x] Redaction du registre des traitements de donnees (document texte)
+  - [x] Definition des procedures de tri pour identifier et anonymiser les eventuelles donnees personnelles (noms d'auteurs, e-mails)
 
 ### 2.2 Infrastructure de Stockage
 
-- [ ] **Deploiement Base Relationnelle (PostgreSQL)** :
-  - [ ] Lancement du conteneur Docker PostgreSQL
-  - [ ] Creation de la base de donnees greentech_db
-  - [ ] Creation d'un utilisateur dedie avec droits restreints
-- [ ] **Deploiement Systeme Big Data (MinIO - Stockage Objet)** :
-  - [ ] Lancement du conteneur Docker MinIO
-  - [ ] Creation de deux "Buckets" via l'interface console :
-    - [ ] raw-data : Pour stocker les fichiers bruts (HTML, JSON non traites)
-    - [ ] clean-data : Pour stocker les donnees nettoyees par Spark
+- [x] **Deploiement Base Relationnelle (PostgreSQL)** :
+  - [x] Lancement du conteneur Docker PostgreSQL
+  - [x] Creation de la base de donnees greentech_db
+  - [x] Creation d'un utilisateur dedie avec droits restreints
+- [x] **Deploiement Systeme Big Data (MinIO - Stockage Objet)** :
+  - [x] Lancement du conteneur Docker MinIO
+  - [x] Creation de deux "Buckets" via l'interface console :
+    - [x] raw-data : Pour stocker les fichiers bruts (HTML, JSON non traites)
+    - [x] clean-data : Pour stocker les donnees nettoyees par Spark
 
 ### 2.3 Programmation de la Collecte (Extraction)
 
 #### Module 0 : Configuration Dynamique (Source SQL - PostgreSQL)
 
-- [ ] **Creation de la table de configuration** :
-  - [ ] Developpement d'un script SQL d'initialisation pour la table search_config (Mots-cles, URLs)
-  - [ ] Insertion des donnees de reference (ex: "Green IT", "Sustainable AI")
-- [ ] **Developpement du connecteur d'extraction (SQLAlchemy)** :
-  - [ ] Programmation d'une fonction Python get_config_from_db pour executer la requete SELECT
-  - [ ] Injection dynamique des parametres recuperes dans les modules API et Scraping (Validation source SQL)
+- [x] **Creation de la table de configuration** :
+  - [x] Developpement d'un script SQL d'initialisation pour la table search_config (Mots-cles, URLs)
+  - [x] Insertion des donnees de reference (ex: "Green IT", "Sustainable AI")
+- [x] **Developpement du connecteur d'extraction (SQLAlchemy)** :
+  - [x] Programmation d'une fonction Python get_config_from_db pour executer la requete SELECT
+  - [x] Injection dynamique des parametres recuperes dans les modules API et Scraping (Validation source SQL)
 
 #### Module 1 : Collecte via API (Bibliotheque httpx)
 
-- [ ] Developpement d'un script Python pour interroger une API d'actualites technologiques publique
-- [ ] Configuration des requetes HTTP (headers, timeouts, gestion des erreurs 4xx/5xx)
-- [ ] Filtrage initial des donnees JSON recues (parsing)
-- [ ] Sauvegarde des reponses brutes dans le bucket MinIO raw-data
+- [x] Developpement d'un script Python pour interroger une API d'actualites technologiques publique
+- [x] Configuration des requetes HTTP (headers, timeouts, gestion des erreurs 4xx/5xx)
+- [x] Filtrage initial des donnees JSON recues (parsing)
+- [x] Sauvegarde des reponses brutes dans le bucket MinIO raw-data
 
 #### Module 2 : Scraping Hybride (Bibliotheque scrapy + playwright)
 
-- [ ] Developpement d'un "Spider" Scrapy ciblant un blog technique moderne (site dynamique)
-- [ ] Integration de Playwright pour charger le JavaScript et effectuer le rendu navigateur des pages
-- [ ] Extraction du contenu HTML complet des articles
-- [ ] Gestion des contraintes techniques (User-Agent, delais entre requetes pour eviter le blocage)
-- [ ] Sauvegarde du HTML brut dans le bucket MinIO raw-data
+- [x] Developpement d'un "Spider" Scrapy ciblant un blog technique moderne (site dynamique)
+- [x] Integration de Playwright pour charger le JavaScript et effectuer le rendu navigateur des pages
+- [x] Extraction du contenu HTML complet des articles
+- [x] Gestion des contraintes techniques (User-Agent, delais entre requetes pour eviter le blocage)
+- [x] Sauvegarde du HTML brut dans le bucket MinIO raw-data
 
 #### Module 3 : Ingestion de Fichiers (Script Python)
 
-- [ ] Developpement d'un script pour lire un dataset historique local (format CSV telecharge)
-- [ ] Programmation de la lecture et du parsing du fichier
-- [ ] Upload des donnees brutes vers le bucket MinIO raw-data
+- [x] Developpement d'un script pour lire un dataset historique local (format JSON telecharge depuis Kaggle)
+- [x] Programmation de la lecture et du parsing du fichier
+- [x] Upload des donnees brutes vers le bucket MinIO raw-data
 
 ### 2.4 Traitement Big Data & Nettoyage (Apache Spark)
 
-- [ ] **Initialisation Spark** : Configuration d'une session PySpark locale connectee a MinIO (via connecteurs S3)
-- [ ] **Lecture (Extraction Big Data)** :
-  - [ ] Programmation de la lecture des donnees brutes depuis le Data Lake MinIO via Spark
-  - [ ] (Note : Cette etape valide la competence "Connexion et extraction depuis un systeme Big Data")
-- [ ] **Script de Nettoyage Automatise** :
-  - [ ] Programmation de la lecture des fichiers bruts depuis MinIO raw-data
-  - [ ] Developpement des fonctions de nettoyage :
-    - [ ] Suppression des balises HTML residuelles
-    - [ ] Identification et suppression des entrees corrompues ou incompletes
-    - [ ] Homogeneisation des formats de dates (ISO 8601) et des encodages textes
-  - [ ] Agregation des trois sources (API, Scraping, Fichier) en un DataFrame unique normalise
-- [ ] **Sauvegarde "Propre"** : Ecriture du jeu de donnees final nettoye dans le bucket MinIO clean-data (format Parquet ou JSON)
+- [x] **Initialisation Spark** : Configuration d'une session PySpark locale connectee a MinIO (via connecteurs S3)
+- [x] **Lecture (Extraction Big Data)** :
+  - [x] Programmation de la lecture des donnees brutes depuis le Data Lake MinIO via Spark
+  - [x] (Note : Cette etape valide la competence "Connexion et extraction depuis un systeme Big Data")
+- [x] **Script de Nettoyage Automatise** :
+  - [x] Programmation de la lecture des fichiers bruts depuis MinIO raw-data
+  - [x] Developpement des fonctions de nettoyage :
+    - [x] Suppression des balises HTML residuelles
+    - [x] Identification et suppression des entrees corrompues ou incompletes
+    - [x] Homogeneisation des formats de dates (ISO 8601) et des encodages textes
+  - [x] Agregation des trois sources (API, Scraping, Fichier) en un DataFrame unique normalise
+- [x] **Sauvegarde "Propre"** : Ecriture du jeu de donnees final nettoye dans le bucket MinIO clean-data (format Parquet ou JSON)
 
 ### 2.5 Mise a disposition structuree (SQL)
 
-- [ ] **Script d'Ingestion SQL (SQLAlchemy)** :
-  - [ ] Configuration de la connexion asynchrone a la base PostgreSQL
-  - [ ] Developpement du script qui lit les donnees propres depuis MinIO ou le DataFrame Spark final
-  - [ ] Insertion des metadonnees structurees (Titre, URL, Date, Auteur, Resume) dans les tables PostgreSQL
-  - [ ] Gestion des conflits (Upsert) pour eviter les doublons
-- [ ] **Validation & Documentation** :
-  - [ ] Execution de requetes SQL de verification pour confirmer que les donnees sont bien extraites et stockees
-  - [ ] Redaction de la documentation technique expliquant la logique algorithmique, les choix de nettoyage et les commandes pour lancer les scripts
-  - [ ] Push de l'ensemble du code source (scripts, Dockerfiles, docs) sur le depot distant GitHub
+- [x] **Script d'Ingestion SQL (SQLAlchemy)** :
+  - [x] Configuration de la connexion asynchrone a la base PostgreSQL
+  - [x] Developpement du script qui lit les donnees propres depuis MinIO ou le DataFrame Spark final
+  - [x] Insertion des metadonnees structurees (Titre, URL, Date, Auteur, Resume) dans les tables PostgreSQL
+  - [x] Gestion des conflits (Upsert) pour eviter les doublons
+- [x] **Validation & Documentation** :
+  - [x] Execution de requetes SQL de verification pour confirmer que les donnees sont bien extraites et stockees
+  - [x] Redaction de la documentation technique expliquant la logique algorithmique, les choix de nettoyage et les commandes pour lancer les scripts
+  - [x] Push de l'ensemble du code source (scripts, Dockerfiles, docs) sur le depot distant GitHub
 
 ---
 
