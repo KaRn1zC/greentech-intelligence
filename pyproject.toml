@@ -23,12 +23,11 @@ dependencies = [
     "scrapy>=2.11.0",
     "playwright>=1.40.0",
     "scrapy-playwright>=0.0.40",
-    
     # === Big Data & Storage (Bloc E1) ===
     "pyspark>=3.5.0",
+    "pyarrow>=14.0.0",
     "sqlalchemy>=2.0.0",
     "asyncpg>=0.29.0",
-    
     # === Machine Learning (Blocs E2 & E3) ===
     "scikit-learn>=1.4.0",
     "transformers>=4.36.0",
@@ -37,14 +36,12 @@ dependencies = [
     "accelerate>=0.25.0",
     "peft>=0.7.0",
     "safetensors>=0.4.0",
-    
     # === MLOps (Bloc E3) ===
     "mlflow>=2.10.0",
     "dvc>=3.40.0",
     "dvc-s3>=3.0.0",
     "deepchecks>=0.18.0",
     "codecarbon>=2.3.0",
-    
     # === Backend API (Bloc E4) ===
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
@@ -55,14 +52,13 @@ dependencies = [
     "pydantic-settings>=2.1.0",
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.0",
-    
     # === Monitoring (Bloc E5) ===
     "prometheus-client>=0.19.0",
-    
     # === Documentation ===
     "sphinx>=7.2.0",
     "myst-parser>=2.0.0",
     "furo>=2024.1.0",
+    "minio>=7.2.20",
 ]
 
 [project.optional-dependencies]
@@ -130,6 +126,7 @@ ignore = [
     "E501",   # line too long (handled by formatter)
     "B008",   # function call in default argument
     "B904",   # raise without from inside except
+    "ARG002", # unused method argument (nécessaire pour le polymorphisme des collectors)
 ]
 
 [tool.ruff.lint.isort]

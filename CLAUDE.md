@@ -17,8 +17,8 @@ Plateforme web d'analyse et classification automatique d'articles technologiques
 ### Systeme
 - **OS** : Windows 11 Pro | **Terminal** : PowerShell
 - **IDE** : VSCode (extensions : Python, Ruff, Docker, MyST-Parser, Playwright)
-- **PC Fixe** : Ryzen 9 7950X, 32GB DDR5, AMD 7900 XTX + ROCm/HIP SDK 6.x+
-- **PC Portable** : Ryzen AI 9 HX 370, 32GB DDR5
+- **PC Fixe** : Ryzen 9 7950X, 32 Gb DDR5, AMD Radeon RX 7900 XTX 24 Go + ROCm 7.1/7.2
+- **PC Portable** : Ryzen AI 9 HX 370 (NPU inclus), 32 Gb DDR5, chipset graphique integre
 - **Python** : 3.12 via UV (Astral)
 
 ### Data (E1)

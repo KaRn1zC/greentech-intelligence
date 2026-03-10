@@ -11,39 +11,39 @@
 
 #### C1. Automatiser l'extraction de donnees
 
-- [ ] Identifier les contraintes techniques propres aux sources de donnees (documentation, confidentialite, etc.)
-- [ ] Rediger les specifications techniques pour l'extraction des donnees
-- [ ] Construire les requetes HTTP pour recuperer des donnees depuis un service web (API REST)
-- [ ] Programmer la lecture d'un fichier de donnees dans un script
-- [ ] Programmer le telechargement du HTML d'une ou plusieurs pages web (Scraping)
-- [ ] Etablir une connexion programmatique a un Systeme de Gestion de Base de Donnees (SGBD)
-- [ ] Etablir une connexion programmatique a un systeme Big Data (Hive, Impala, etc.)
-- [ ] Programmer le filtrage/parsing des donnees depuis l'API
-- [ ] Programmer le filtrage/parsing des donnees depuis les fichiers
-- [ ] Programmer le filtrage/parsing des donnees depuis le HTML (Scraping)
-- [ ] Executer des requetes d'extraction de type SQL via le script
-- [ ] Executer des requetes d'extraction depuis le systeme Big Data via le script
-- [ ] Le script est fonctionnel et recupere toutes les donnees visees
-- [ ] Le script est structure (initialisation, traitement, gestion erreurs, sauvegarde)
+- [x] Identifier les contraintes techniques propres aux sources de donnees (documentation, confidentialite, etc.)
+- [x] Rediger les specifications techniques pour l'extraction des donnees
+- [x] Construire les requetes HTTP pour recuperer des donnees depuis un service web (API REST)
+- [x] Programmer la lecture d'un fichier de donnees dans un script
+- [x] Programmer le telechargement du HTML d'une ou plusieurs pages web (Scraping)
+- [x] Etablir une connexion programmatique a un Systeme de Gestion de Base de Donnees (SGBD)
+- [x] Etablir une connexion programmatique a un systeme Big Data (Hive, Impala, etc.)
+- [x] Programmer le filtrage/parsing des donnees depuis l'API
+- [x] Programmer le filtrage/parsing des donnees depuis les fichiers
+- [x] Programmer le filtrage/parsing des donnees depuis le HTML (Scraping)
+- [x] Executer des requetes d'extraction de type SQL via le script
+- [x] Executer des requetes d'extraction depuis le systeme Big Data via le script
+- [x] Le script est fonctionnel et recupere toutes les donnees visees
+- [x] Le script est structure (initialisation, traitement, gestion erreurs, sauvegarde)
 - [ ] Le script est versionne et accessible sur un depot Git distant
 
 #### C2. Developper des requetes SQL d'extraction
 
-- [ ] Ecrire les requetes SQL pour extraire les donnees de la base de donnees relationnelle
-- [ ] Ecrire les requetes pour extraire les donnees du systeme Big Data
-- [ ] Les requetes sont fonctionnelles et extraient exactement les donnees visees
+- [x] Ecrire les requetes SQL pour extraire les donnees de la base de donnees relationnelle
+- [x] Ecrire les requetes pour extraire les donnees du systeme Big Data
+- [x] Les requetes sont fonctionnelles et extraient exactement les donnees visees
 - [ ] Documenter les requetes (choix de selections, filtrages, jointures)
 - [ ] La documentation explicite les optimisations appliquees aux requetes
 
 #### C3. Agregation et nettoyage des donnees
 
-- [ ] Rediger les specifications techniques pour l'agregation
-- [ ] Programmer l'agregation des donnees de toutes les sources en un jeu unique
-- [ ] Programmer l'identification des entrees corrompues (partielles/manquantes)
-- [ ] Programmer la suppression des entrees corrompues
-- [ ] Programmer l'identification des formats non normalises
-- [ ] Programmer l'homogeneisation des formats (dates, unites, etc.)
-- [ ] Le script produit un jeu de donnees final unique, nettoye et normalise
+- [x] Rediger les specifications techniques pour l'agregation
+- [x] Programmer l'agregation des donnees de toutes les sources en un jeu unique
+- [x] Programmer l'identification des entrees corrompues (partielles/manquantes)
+- [x] Programmer la suppression des entrees corrompues
+- [x] Programmer l'identification des formats non normalises
+- [x] Programmer l'homogeneisation des formats (dates, unites, etc.)
+- [x] Le script produit un jeu de donnees final unique, nettoye et normalise
 - [ ] Le script est versionne sur Git
 - [ ] La documentation du script est complete (dependances, logique algo, choix de nettoyage)
 
@@ -51,16 +51,16 @@
 
 #### C4. Creation de la base de donnees (et RGPD)
 
-- [ ] Rediger les specifications techniques pour le stockage
-- [ ] Modeliser la structure des donnees selon la methode Merise (MCD/MLD)
-- [ ] Le modele physique est fonctionnel et integre sans erreur
-- [ ] Choisir un SGBD adapte aux contraintes
-- [ ] Creer la base de donnees
-- [ ] Documenter la procedure d'installation du SGBD
-- [ ] Rediger/mettre a jour le registre des traitements de donnees personnelles (RGPD)
-- [ ] Rediger les procedures de tri des donnees personnelles (detection, suppression, conformite RGPD)
-- [ ] Programmer le script d'import des donnees dans la base
-- [ ] Le script d'import est fonctionnel
+- [x] Rediger les specifications techniques pour le stockage
+- [x] Modeliser la structure des donnees selon la methode Merise (MCD/MLD)
+- [x] Le modele physique est fonctionnel et integre sans erreur
+- [x] Choisir un SGBD adapte aux contraintes
+- [x] Creer la base de donnees
+- [x] Documenter la procedure d'installation du SGBD
+- [x] Rediger/mettre a jour le registre des traitements de donnees personnelles (RGPD)
+- [x] Rediger les procedures de tri des donnees personnelles (detection, suppression, conformite RGPD)
+- [x] Programmer le script d'import des donnees dans la base
+- [x] Le script d'import est fonctionnel
 - [ ] Le script d'import est versionne et documente (dependances, commandes)
 
 #### C5. Developper une API de mise a disposition (REST)
@@ -196,7 +196,7 @@
 
 #### C14. Analyser le besoin
 
-- [ ] La modelisation des donnees respecte un formalisme (Merise/Entite-Relation)
+- [x] La modelisation des donnees respecte un formalisme (Merise/Entite-Relation)
 - [ ] La modelisation des parcours utilisateurs respecte un formalisme (Wireframes/Schema)
 - [ ] Les User Stories couvrent contexte, scenarios et criteres de validation
 - [ ] Les objectifs d'accessibilite sont integres aux criteres d'acceptation (User Stories)
@@ -284,7 +284,7 @@
 - [ ] Outil de gestion de tickets/Backlog : Github Projects
 - [ ] Outil de communication : Discord
 - [ ] Outil de wireframing/maquettage : Penpot
-- [ ] Outil de modelisation donnees/flux : Looping
+- [x] Outil de modelisation donnees/flux : Looping
 
 ### 2. Developpement & Code
 
@@ -292,9 +292,9 @@
 - [ ] Plateforme de depot distant : GitHub
 - [ ] IDE / Editeur de code : VSCode
 - [ ] OS : Windows 11 Pro (PC Fixe et Portable)
-- [ ] CPU : AMD Ryzen 9 9900X (PC Fixe)
-- [ ] RAM : 64 Go DDR5 (PC Fixe)
-- [ ] GPU : AMD Radeon RX 7900 XTX 24 Go (PC Fixe)
+- [ ] CPU : AMD Ryzen 9 7950X (PC Fixe) et AMD Ryzen AI 9 HX 370 avec NPU inclus (PC Portable)
+- [ ] RAM : 32 Gb DDR5 (PC Fixe et Portable)
+- [ ] GPU : AMD Radeon RX 7900 XTX 24 Go (PC Fixe) et chipset graphique inclus dans le CPU (PC Portable)
 - [ ] Terminal : Powershell (version la plus recente)
 - [ ] Gestionnaire de paquets/projet Python : uv (CLI Astral)
 - [ ] Generateur de documentation : Sphinx
@@ -314,11 +314,11 @@
 
 ### 4. Intelligence Artificielle (Blocs E2 & E3)
 
-- [ ] Source de Veille IA : Inoreader + Perplexity Pro
-- [ ] Service IA Pre-existant (SaaS) : HuggingFace Serverless Inference API
-- [ ] Modele IA (Code Custom) : Scikit-learn, PyTorch, TensorFlow, Hugging Face + AMD ROCm
+- [ ] Source de Veille IA : Inoreader + Task deep search auto en mode weekly avec Perplexity Pro (abonnement)
+- [ ] Service IA Pre-existant (SaaS/PaaS) : HuggingFace Serverless Inference API
+- [ ] Modele IA (Code Custom) : Scikit-learn, PyTorch, TensorFlow, Hugging Face + AMD ROCm 7.1 et 7.2 (version native Windows)
 - [ ] Librairie de test IA : Deepchecks
-- [ ] Outil de MLOps / Monitoring IA : MLFlow + Prometheus + Grafana
+- [ ] Outil de MLOps / Monitoring IA : MLFlow + Loguru (suivi experiences et logs) + Prometheus + Grafana + Loki (monitoring et logs avances pour production/modeles IA)
 - [ ] Outil de versionning de donnees : DVC (Data Version Control)
 
 ### 5. Backend & API
