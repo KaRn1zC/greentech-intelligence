@@ -173,7 +173,7 @@
 - [x] Configurer l'environnement de test
 - [x] Integrer les tests (assertions, mocks, fixtures)
 - [ ] Les tests couvrent le perimetre defini
-- [ ] Code et Donnees (si possible DVC) versionnes
+- [x] Code et Donnees (si possible DVC) versionnes
 - [ ] Documentation technique des tests redigee
 
 #### C13. Chaine de livraison continue (CI/CD pour IA)

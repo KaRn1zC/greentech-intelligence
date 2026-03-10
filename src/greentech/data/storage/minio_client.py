@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import json
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -144,4 +145,5 @@ def generate_raw_path(source_type: str, source_name: str, extension: str = "json
     now = datetime.now()
     date_str = now.strftime("%Y-%m-%d")
     timestamp = now.strftime("%Y%m%d_%H%M%S")
-    return f"{source_type}/{source_name}/{date_str}/{timestamp}.{extension}"
+    uid = uuid.uuid4().hex[:8]
+    return f"{source_type}/{source_name}/{date_str}/{timestamp}_{uid}.{extension}"

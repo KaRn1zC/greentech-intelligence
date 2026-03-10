@@ -222,14 +222,15 @@ Environnement Node.js (via npm) :
 
 ### 3.2 Preparation des Donnees & MLOps (Data Ops)
 
-- [ ] **Creation du Dataset d'Or (Golden Dataset)** :
-  - [ ] Selection manuelle de 200 articles varies depuis la base
-  - [ ] Annotation binaire manuelle (Labeling) : "Green IT" (1) ou "Non Green IT" (0)
+- [x] **Creation du Dataset d'Or (Golden Dataset)** :
+  - [x] Constitution du dataset complet (5808 articles depuis 3 sources : arXiv, NewsData.io, TechCrunch)
+  - [x] Annotation binaire par scoring multi-criteres (100+ indicateurs ponderes) : "Green IT" (1) ou "Non Green IT" (0)
+  - [x] Verification manuelle des resultats et correction iterative des faux positifs/negatifs
 - [x] **Mise en place du Versioning (DVC)** :
   - [x] Initialisation de DVC (dvc init) dans le projet
   - [x] Configuration du "Remote" DVC vers le bucket MinIO clean-data ou un dossier dedie
-  - [ ] Versioning du fichier dataset annote (dataset.csv.dvc)
-  - [ ] Push des donnees vers le stockage distant pour synchronisation entre PC Fixe et Portable
+  - [x] Versioning du fichier dataset annote (golden_dataset.csv.dvc)
+  - [x] Push des donnees vers le stockage distant (MinIO s3://models/dvc)
 
 ### 3.3 Entrainement & Competition des Modeles (Sur PC Fixe - ROCm)
 

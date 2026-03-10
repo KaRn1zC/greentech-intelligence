@@ -68,6 +68,7 @@ def create_spark_session() -> SparkSession:
         .config("spark.hadoop.fs.s3a.path.style.access", "true")
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
         .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
+        .config("spark.hadoop.fs.s3a.fast.upload.buffer", "bytebuffer")
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.driver.memory", "2g")
         .config("spark.pyspark.python", python_path)
@@ -428,7 +429,7 @@ def run_spark_cleaning() -> int:
         # --- Lecture des données brutes depuis MinIO ---
         # Source API
         try:
-            api_df = read_raw_json_from_minio(spark, settings.minio_bucket_raw, "api/newsdata")
+            api_df = read_raw_json_from_minio(spark, settings.minio_bucket_raw, "api")
             api_clean = clean_api_data(api_df)
             dataframes.append(api_clean)
             logger.info(f"API : {api_clean.count()} articles chargés")
@@ -449,7 +450,7 @@ def run_spark_cleaning() -> int:
         # Source Fichier (arXiv)
         try:
             file_df = read_raw_json_from_minio(
-                spark, settings.minio_bucket_raw, "file/arxiv_dataset"
+                spark, settings.minio_bucket_raw, "file"
             )
             file_clean = clean_file_data(file_df)
             dataframes.append(file_clean)

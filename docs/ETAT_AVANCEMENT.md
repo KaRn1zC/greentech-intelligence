@@ -1,240 +1,151 @@
-# État d'avancement du projet - Session du 2026-03-10
+# Etat d'avancement du projet - GreenTech Intelligence
 
-> **Dernière mise à jour** : 2026-03-10
-> **Rédigé par** : KaRn1zC
-
----
-
-## 📍 Où nous en sommes
-
-### ✅ ÉTAPE 1 : Installation & Configuration - **TERMINÉE**
-Toutes les dépendances et outils sont installés et configurés.
-
-### 🔄 ÉTAPE 2 : Data Factory & Gestion de Données - **EN COURS**
-
-#### Section 2.1 : Conception & Conformité - **✅ TERMINÉE**
-- ✅ Spécifications techniques rédigées (`docs/SPECIFICATIONS_TECHNIQUES.md`)
-- ✅ MCD/MLD créé et documenté
-- ✅ Script SQL `init.sql` corrigé en nomenclature française (conforme au MCD/MLD)
-- ✅ Registre RGPD complet (`docs/REGISTRE_RGPD.md`)
-- ✅ Procédures d'anonymisation documentées
-- ✅ Architecture stockage documentée (section 9 des specs)
-
-#### Section 2.2 : Infrastructure de Stockage - **✅ TERMINÉE**
-- ✅ Déploiement PostgreSQL 15 (Docker) - conteneur healthy, init.sql exécuté
-- ✅ Déploiement MinIO (Docker) - conteneur healthy, API S3 opérationnelle
-- ✅ Création des 4 buckets (raw-data, clean-data, models, mlflow)
-- ✅ Création utilisateur applicatif `greentech_app` (droits restreints)
-- ✅ Script de vérification `scripts/verify_infrastructure.py` (3/3 PASS)
-- ✅ Package Python `minio` ajouté aux dépendances
-
-#### Section 2.3 : Programmation de la Collecte - **✅ TERMINÉE**
-- ✅ Configuration dynamique SQL (table search_config + get_config_from_db)
-- ✅ Module API (httpx → NewsData.io → MinIO raw-data)
-- ✅ Module Scraping (Scrapy + Playwright → TechCrunch → MinIO raw-data)
-- ✅ Module Fichier (arXiv JSON Lines → MinIO raw-data)
-
-#### Section 2.4 : Traitement Big Data & Nettoyage - **✅ TERMINÉE**
-- ✅ Session PySpark 4.1.1 configurée avec connecteur S3A/MinIO (Hadoop 3.4.2)
-- ✅ Lecture récursive des 3 sources depuis MinIO raw-data via Spark
-- ✅ Agrégation des 3 DataFrames en jeu de données unifié
-- ✅ Pipeline de nettoyage complet (fonctions Spark SQL natives) :
-  - Suppression balises HTML (regexp_replace)
-  - Anonymisation auteurs RGPD ("Jean Dupont" → "J.D.")
-  - Normalisation dates ISO 8601
-  - Suppression entrées corrompues + déduplication par URL
-- ✅ Sauvegarde en Parquet dans MinIO clean-data
-- ✅ Test end-to-end validé (6 articles → 4 après nettoyage)
-
-#### Section 2.5 : Mise à disposition structurée (SQL) - **✅ TERMINÉE**
-- ✅ Script d'ingestion SQL async (`sql_ingester.py`) avec SQLAlchemy 2.0
-- ✅ Lecture des Parquet depuis MinIO clean-data via PyArrow
-- ✅ Mapping dynamique des sources (source_nom → id_source)
-- ✅ Upsert avec ON CONFLICT (url) DO NOTHING (idempotent)
-- ✅ Vérification post-ingestion (requêtes SQL de contrôle)
-- ✅ Test validé : 8 articles insérés (3 API + 2 Scraping + 3 arXiv)
-- ✅ Idempotence confirmée : relance = 0 doublons
+> **Derniere mise a jour** : 2026-03-10
+> **Redige par** : KaRn1zC
 
 ---
 
-## 📝 Travail effectué lors de cette session
+## Ou nous en sommes
 
-### 1. Vérification et correction du schéma SQL
+### ETAPE 1 : Installation & Configuration - **TERMINEE**
+Toutes les dependances et outils sont installes et configures.
 
-**Problème identifié** : Le fichier `scripts/sql/init.sql` utilisait des noms de colonnes en **anglais**, alors que les spécifications MCD/MLD définissaient une nomenclature **française**.
+### ETAPE 2 : Data Factory & Gestion de Donnees (Bloc E1) - **TERMINEE**
+Pipeline complet operationnel : 3 sources de collecte, nettoyage PySpark, ingestion PostgreSQL.
 
-**Action réalisée** : Correction complète du fichier `init.sql` pour aligner tous les noms de tables et colonnes avec les spécifications.
+### ETAPE 3 : Intelligence Artificielle (Blocs E2 & E3) - **EN COURS**
 
-**Fichier modifié** :
-- `scripts/sql/init.sql` (réécriture complète avec nomenclature française)
+#### Section 3.1 : Veille Technologique & Benchmark - **TERMINEE**
+- Veille Inoreader + Perplexity Pro configuree
+- Benchmark services IA realise (choix : HuggingFace Serverless API)
+- Module summarizer.py developpe et fonctionnel
 
-**Exemples de changements** :
-- `id` → `id_article`, `id_source`, `id_config`, etc.
-- `title` → `titre`
-- `content` → `contenu`
-- `is_green_it` → `est_green_it`
-- `created_at` → `date_creation`
-- `updated_at` → `date_modification`
-- Tous les index, triggers, vues mis à jour
+#### Section 3.2 : Preparation des Donnees & MLOps - **TERMINEE**
+- **Golden Dataset** : CREE et annote (5808 articles, 22 Green IT / 5786 Non Green IT)
+- **DVC** : Initialise, remote MinIO configure, dataset versionne et pousse (s3://models/dvc)
 
-### 2. Documentation de l'architecture stockage
+#### Section 3.3 : Entrainement & Competition des Modeles - **A FAIRE**
+- Scripts de training prets (DeBERTa-v3-base + Llama 3.2 3B)
+- Configuration MLflow + CodeCarbon prete
+- Necessite le GPU AMD ROCm (PC Fixe)
 
-**Action réalisée** : Ajout d'une section complète (Section 9) dans `docs/SPECIFICATIONS_TECHNIQUES.md` pour expliquer la distinction entre `init.sql` (SQL pur) et `models.py` (SQLAlchemy ORM).
+#### Section 3.4 : Validation & Packaging - **PARTIELLEMENT FAIT**
+- Tests Deepchecks ecrits
+- Packaging du modele gagnant : a faire apres entrainement
 
-**Fichier modifié** :
-- `docs/SPECIFICATIONS_TECHNIQUES.md` (ajout section 9)
-
-**Contenu ajouté** :
-- Distinction init.sql vs SQLAlchemy ORM 2.0
-- Workflow complet illustré
-- Exemples de code SQLAlchemy
-- Tableau "Quand utiliser l'un ou l'autre ?"
-- Mention d'Alembic pour les migrations
-
-### 3. Création du registre RGPD
-
-**Action réalisée** : Rédaction complète du registre des traitements de données personnelles conforme au RGPD (Article 30).
-
-**Fichier créé** :
-- `docs/REGISTRE_RGPD.md` (nouveau fichier, 10 sections)
-
-**Contenu du registre** :
-1. Informations générales sur le traitement
-2. Inventaire des traitements (2 traitements identifiés)
-3. Mesures de sécurité (techniques + organisationnelles)
-4. Procédures d'anonymisation (algorithme Python documenté)
-5. Droits des personnes (accès, rectification, effacement)
-6. Sous-traitants et tiers (NewsData.io, Hugging Face, Render)
-7. AIPD (non nécessaire - justification)
-8. Violations de données (procédure CNIL)
-9. Conformité et audits (checklist RGPD complète)
-10. Mentions légales et contacts
-
-**Points clés** :
-- Anonymisation systématique : `"John Doe"` → `"J.D."`
-- Architecture en 3 couches (raw → clean → API)
-- Durées de conservation : 90 jours (brut) / 2 ans (nettoyé)
-- Procédure de droit à l'oubli documentée
-
-### 4. Mise à jour des checklists
-
-**Fichiers modifiés** :
-- `docs/PLAN_ETAPES.md` (section 2.1 cochée)
-- `docs/CHECKLIST_SUIVI.md` (Bloc E1 - C4 : cases RGPD cochées)
+#### Section 3.5 : Deploiement MLOps - **PARTIELLEMENT FAIT**
+- Metriques de production definies
+- Configuration Prometheus preparee
 
 ---
 
-## 🎯 Prochaine étape à réaliser
+## Travail effectue lors de cette session (2026-03-10)
 
-### ÉTAPE 2.2 : Infrastructure de Stockage
+### 1. Collecte ciblee avec 120 credits API
 
-**Objectif** : Déployer PostgreSQL et MinIO via Docker pour préparer l'environnement de stockage.
+**Script** : `scripts/collect_targeted.py`
 
-**Actions à effectuer** :
+Utilisation optimale des 120 credits restants sur NewsData.io :
+- 60 requetes Green IT (mots-cles tres specifiques : data center energy, green software, carbon footprint AI, etc.)
+- 59 requetes Non Green IT (IA sante, cybersecurite, crypto, gaming, etc.)
+- 12 erreurs rate limit (429) avec reprise automatique apres 60s
+- **Resultat** : 779 articles collectes et stockes dans MinIO raw-data
 
-#### 1. Créer/mettre à jour `docker-compose.yml`
-- Définir le service PostgreSQL 15
-- Définir le service MinIO
-- Configurer les variables d'environnement
-- Monter le script `init.sql` dans PostgreSQL
-- Configurer les volumes persistants
+### 2. Affinement du systeme d'annotation
 
-#### 2. Déployer PostgreSQL
-```bash
-docker-compose up -d postgres
+**Script** : `scripts/auto_annotate_dataset.py`
+
+Systeme de scoring multi-criteres avec 100+ indicateurs ponderes :
+- Normalisation des textes (tirets vers espaces pour matcher "energy-efficient" = "energy efficient")
+- Patterns regex pour associations non adjacentes (`cooling.*data cent`)
+- Detection de prefixes "green" dans les noms de projets (GreenNLP, GreenAI, etc.)
+- Filtres renforces contre les faux positifs :
+  - Articles boursiers (watchlist, stocks to follow)
+  - Plaintes communautaires (residents, noise, dust)
+  - Rapports de marche generiques (market forecast, billion)
+- Seuil de classification releve de net >= 2.0 a >= 3.0
+- Score de confiance calcule pour chaque article (92.7% a haute confiance)
+
+### 3. Pipeline complet execute
+
 ```
-- Vérifier que le conteneur démarre
-- Vérifier que `init.sql` s'exécute correctement
-- Se connecter à la base pour vérifier les tables créées
-
-#### 3. Déployer MinIO
-```bash
-docker-compose up -d minio
+Collecte (3 sources) --> MinIO raw-data (JSON)
+  --> PySpark cleaning (dedup, normalisation, RGPD)
+    --> MinIO clean-data (Parquet)
+      --> SQL ingestion (PostgreSQL, upsert)
+        --> Auto-annotation (Golden Dataset CSV)
 ```
-- Vérifier que le conteneur démarre
-- Accéder à l'interface web (localhost:9001)
-- Créer les buckets `raw-data` et `clean-data`
 
-#### 4. Vérifications
-- Tester la connexion PostgreSQL depuis Python (SQLAlchemy)
-- Tester la connexion MinIO (boto3 ou minio-py)
-- Documenter les commandes de vérification
+**Statistiques finales** :
+
+| Source | Articles |
+|--------|----------|
+| arXiv Dataset | 5003 |
+| NewsData.io | 802 |
+| TechCrunch Climate | 3 |
+| **Total** | **5808** |
+
+**Annotation** : 22 Green IT (0.4%) / 5786 Non Green IT (99.6%)
+Confiance haute (>= 0.7) : 89.3%
+
+### 4. Corrections techniques
+
+- **Spark cleaner** : Chemin API elargi de `api/newsdata` a `api` pour inclure les sous-dossiers `newsdata_targeted_*`
+- **MinIO client** : UUID ajoute aux chemins pour eviter l'ecrasement de fichiers
+- **Spark S3A** : Buffer bytebuffer pour contourner l'erreur NativeIO Windows
 
 ---
 
-## 📂 Fichiers créés/modifiés aujourd'hui
+## Fichiers crees/modifies
 
 | Fichier | Action | Description |
 |---------|--------|-------------|
-| `scripts/sql/init.sql` | ✏️ Modifié | Réécriture complète avec nomenclature française |
-| `docs/SPECIFICATIONS_TECHNIQUES.md` | ✏️ Modifié | Ajout section 9 (Architecture stockage) |
-| `docs/REGISTRE_RGPD.md` | ✨ Créé | Registre RGPD complet (10 sections) |
-| `docs/PLAN_ETAPES.md` | ✏️ Modifié | Section 2.1 cochée |
-| `docs/CHECKLIST_SUIVI.md` | ✏️ Modifié | Bloc E1 - C4 : cases RGPD cochées |
-| `docs/ETAT_AVANCEMENT.md` | ✨ Créé | Ce fichier (mémorisation état) |
+| `scripts/collect_targeted.py` | Cree | Collecte ciblee 120 credits API |
+| `scripts/auto_annotate_dataset.py` | Cree | Annotation multi-criteres ponderes |
+| `data/golden_dataset.csv` | Cree | Dataset annote (5808 articles) |
+| `src/greentech/data/processors/spark_cleaner.py` | Modifie | Chemin API elargi + buffer bytebuffer |
+| `src/greentech/data/storage/minio_client.py` | Modifie | UUID dans generate_raw_path |
+| `.env` | Modifie | Token HuggingFace configure |
+| `docs/PLAN_ETAPES.md` | Modifie | Section 3.2 Golden Dataset cochee |
+| `docs/ETAT_AVANCEMENT.md` | Reecrit | Mise a jour complete |
 
 ---
 
-## 💡 Points importants à retenir
+## Prochaines etapes
 
-### 1. Nomenclature française confirmée
-Le projet utilise des noms de colonnes en **français** dans toute la stack :
-- SQL : `id_article`, `titre`, `contenu`, `est_green_it`, etc.
-- SQLAlchemy : Les modèles devront refléter exactement ces noms
-- API : Les schémas Pydantic utiliseront ces noms
+### Immediat (ETAPE 3.2 a finir)
+1. Versionner `data/golden_dataset.csv` avec DVC (`dvc add` + `dvc push`)
+2. Synchroniser entre PC Fixe et Portable
 
-### 2. Architecture en 2 couches
-- `init.sql` : Initialisation de la structure (une fois)
-- `models.py` : Interaction quotidienne depuis Python (SQLAlchemy ORM 2.0 async)
+### Court terme (ETAPE 3.3)
+1. Lancer l'entrainement DeBERTa-v3-base (Champion) sur GPU AMD ROCm
+2. Lancer l'entrainement Llama 3.2 3B (Challenger) avec LoRA/PEFT
+3. Benchmark final dans MLflow : Precision vs Latence vs CO2
+4. Selectionner le modele gagnant
 
-### 3. Conformité RGPD assurée
-- Registre complet et professionnel
-- Anonymisation automatique (noms → initiales)
-- Procédures documentées
-- Checklist de conformité OK
-
-### 4. Prêt pour le développement
-- Toute la conception est terminée
-- Le schéma SQL est conforme
-- Les spécifications sont complètes
-- On peut maintenant passer à l'infrastructure
+### Moyen terme (ETAPE 3.4)
+1. Packaging du modele (safetensors) + push DVC
+2. Redaction de la Model Card
+3. Tests Deepchecks sur le modele final
 
 ---
 
-## 🔧 Commandes utiles pour la reprise
+## Points importants
 
-### Vérifier l'état du projet
-```bash
-cd C:\Users\aboys\Documents\Simplon\Projet_Chef_Oeuvre\greentech-intelligence
-git status
-```
+### Desequilibre du dataset
+Le ratio 22/5786 (0.4% Green IT) est tres desequilibre. Strategies pour l'entrainement :
+- Class weights dans la loss function
+- Oversampling de la classe minoritaire
+- Data augmentation si necessaire
 
-### Lancer l'environnement
-```bash
-# Activer l'environnement uv (si nécessaire)
-uv sync
+### Credits API epuises
+Les 200 credits journaliers NewsData.io sont utilises. Pour enrichir davantage :
+- Attendre le lendemain pour de nouveaux credits
+- Ajouter d'autres sources (RSS, scraping de sites specialises Green IT)
 
-# Lancer les services Docker (quand docker-compose.yml sera créé)
-docker-compose up -d
-```
-
-### Consulter les documents de référence
-- `docs/PLAN_ETAPES.md` : Ordre précis de développement
-- `docs/CHECKLIST_SUIVI.md` : Suivi des compétences validées
-- `docs/SPECIFICATIONS_TECHNIQUES.md` : Référence technique complète
-- `docs/REGISTRE_RGPD.md` : Conformité RGPD
+### Nomenclature
+Le projet utilise des noms de colonnes en **francais** dans toute la stack (SQL, SQLAlchemy, Pydantic).
 
 ---
 
-## 📞 Pour reprendre la session
-
-**Phrase à dire** : "Reprends où on s'est arrêté"
-
-ou
-
-"Je veux continuer l'ÉTAPE 2.2 : Infrastructure de Stockage"
-
----
-
-**Date de sauvegarde** : 2026-03-10
-**Prochaine action** : ÉTAPE 2.3 - Configuration dynamique SQL + Collecte de données
+**Redige par KaRn1zC - 2026-03-10**
