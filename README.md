@@ -37,7 +37,10 @@ Application web complète pour la collecte, l'analyse et la classification autom
 - 📊 Benchmark et sélection de services IA
 
 ### Bloc E3 : Modèle IA Custom (MLOps)
-- 🤖 Classification Green IT (DeBERTa / Llama fine-tuné)
+- 🤖 Classification Green IT — 3 modèles en compétition :
+  - Champion : DeBERTa-v3-base (fine-tuning classique)
+  - Challenger 1 : Qwen2.5-3B (fine-tuning LoRA)
+  - Challenger 2 : Llama 3.2 3B (fine-tuning LoRA)
 - 📈 Tracking expériences (MLflow)
 - 🌱 Mesure empreinte carbone (CodeCarbon)
 - ✅ Tests automatisés du modèle (Deepchecks)
@@ -209,6 +212,6 @@ MIT License - voir [LICENSE](LICENSE)
 
 ## 👤 Auteur
 
-**Votre Nom**
+**Arnaud "KaRn1zC" BOY**
 - Projet de mémoire - [Titre Professionnel de niveau 6 - Développeur en Intelligence Artificielle et Data Analyst]
 - [2025-2026]

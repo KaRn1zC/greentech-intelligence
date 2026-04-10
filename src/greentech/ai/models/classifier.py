@@ -1,8 +1,9 @@
 """Classifieur Green IT — entraînement et inférence.
 
-Fournit deux stratégies de classification :
+Fournit trois stratégies de classification :
 - Champion : DeBERTa-v3-base (fine-tuning classique via Trainer)
-- Challenger : Llama 3.2 3B (fine-tuning LoRA/PEFT)
+- Challenger 1 : Qwen2.5-3B (fine-tuning LoRA/PEFT)
+- Challenger 2 : Llama 3.2 3B (fine-tuning LoRA/PEFT)
 
 Les deux modèles sont comparés via MLflow pour sélectionner le meilleur.
 

@@ -115,8 +115,8 @@
 - [x] Le service est accessible et authentifie
 - [x] Le service repond aux besoins fonctionnels
 - [x] Le monitoring est operationnel
-- [ ] La documentation technique couvre installation, acces, dependances
-- [ ] La documentation est accessible (normes handicap)
+- [x] La documentation technique couvre installation, acces, dependances
+- [x] La documentation est accessible (normes handicap)
 
 ---
 
@@ -159,11 +159,11 @@
 - [x] Definir les declencheurs de reentrainement
 - [x] Choisir l'outil de monitoring et de consolidation
 - [x] Integrer les collecteurs de donnees
-- [ ] Integrer l'outil de restitution (Dashboard type Grafana/Streamlit)
+- [x] Integrer l'outil de restitution (Dashboard type Grafana/Streamlit)
 - [ ] Configurer les alertes (email, notif)
 - [ ] L'outil de restitution respecte les enjeux d'accessibilite
-- [ ] La chaine de monitoring est testee et fonctionnelle
-- [ ] Code versionne sur Git
+- [x] La chaine de monitoring est testee et fonctionnelle
+- [x] Code versionne sur Git
 - [ ] Documentation technique (install/maintenance) et utilisateur redigee
 
 #### C12. Tests automatises du modele
@@ -172,7 +172,7 @@
 - [x] Choisir les outils de test (ex: unittest, pytest)
 - [x] Configurer l'environnement de test
 - [x] Integrer les tests (assertions, mocks, fixtures)
-- [ ] Les tests couvrent le perimetre defini
+- [x] Les tests couvrent le perimetre defini
 - [x] Code et Donnees (si possible DVC) versionnes
 - [ ] Documentation technique des tests redigee
 

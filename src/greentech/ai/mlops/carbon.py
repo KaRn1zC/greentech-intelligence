@@ -90,6 +90,8 @@ def measure_operation(
     """Arrete le tracker et retourne un rapport structure.
 
     Doit etre appele apres tracker.start() et l'execution de l'operation.
+    Lit le fichier emissions.csv genere par CodeCarbon pour extraire
+    les metriques de duree et d'energie sans acceder aux attributs prives.
 
     Args:
         tracker: Tracker CodeCarbon en cours d'execution.
@@ -102,13 +104,30 @@ def measure_operation(
     if emissions_kg is None:
         emissions_kg = 0.0
 
+    # Extraire duree et energie depuis le CSV genere par CodeCarbon
+    # (evite l'acces aux attributs prives _last_measured_time / _total_energy)
+    duree = 0.0
+    energie = 0.0
+    emissions_csv = LOGS_DIR / "emissions.csv"
+    if emissions_csv.exists():
+        try:
+            import csv
+
+            with emissions_csv.open(encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+                if rows:
+                    last = rows[-1]
+                    duree = float(last.get("duration", 0.0))
+                    energie = float(last.get("energy_consumed", 0.0))
+        except (KeyError, ValueError, OSError) as e:
+            logger.warning(f"Impossible de lire emissions.csv : {e}")
+
     report = CarbonReport(
         operation=operation,
         emissions_kg=emissions_kg,
-        duree_secondes=tracker._last_measured_time
-        if hasattr(tracker, "_last_measured_time")
-        else 0.0,
-        energie_kwh=tracker._total_energy.kWh if hasattr(tracker, "_total_energy") else 0.0,
+        duree_secondes=duree,
+        energie_kwh=energie,
     )
 
     logger.info(

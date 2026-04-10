@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Plateforme d'analyse Green IT avec Intelligence Artificielle - Classification automatique d'articles tech"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 authors = [
     { name = "Votre Nom", email = "votre.email@example.com" }
 ]
@@ -29,6 +29,10 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "asyncpg>=0.29.0",
     # === Machine Learning (Blocs E2 & E3) ===
+    "torch>=2.9.0",
+    "torchvision>=0.24.0",
+    "torchaudio>=2.9.0",
+    "sentencepiece>=0.2.0",
     "scikit-learn>=1.4.0",
     "transformers>=4.36.0",
     "huggingface-hub>=0.20.0",
@@ -59,28 +63,23 @@ dependencies = [
     "myst-parser>=2.0.0",
     "furo>=2024.1.0",
     "minio>=7.2.20",
+    "boto3>=1.41.5",
 ]
+
+# === Configuration UV pour PyTorch ROCm (AMD GPU RX 7900 XTX) ===
+# Force UV a utiliser les wheels ROCm depuis le repo AMD au lieu de PyPI
+[tool.uv.sources]
+torch = { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2/torch-2.9.1%2Brocmsdk20260116-cp312-cp312-win_amd64.whl" }
+torchvision = { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2/torchvision-0.24.1%2Brocmsdk20260116-cp312-cp312-win_amd64.whl" }
+torchaudio = { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2/torchaudio-2.9.1%2Brocmsdk20260116-cp312-cp312-win_amd64.whl" }
+
+[tool.uv]
+# Le repo AMD contient les wheels ROCm (torch, rocm_sdk_*, etc.)
+find-links = ["https://repo.radeon.com/rocm/windows/rocm-rel-7.2/"]
+# rocm et ses deps sont en pre-release (7.2.0.dev0), necessaire pour torch ROCm
+prerelease = "allow"
 
 [project.optional-dependencies]
-# PyTorch avec ROCm (PC Fixe AMD)
-rocm = [
-    "torchvision>=0.17.0",
-    "torchaudio>=2.2.0",
-]
-
-# PyTorch avec DirectML (Alternative Windows)
-directml = [
-    "torchvision>=0.17.0",
-    "torchaudio>=2.2.0",
-    "torch-directml>=0.2.0",
-]
-
-# PyTorch CPU uniquement
-cpu = [
-    "torchvision>=0.17.0",
-    "torchaudio>=2.2.0",
-]
-
 dev = [
     "ruff>=0.1.0",
     "pytest>=8.0.0",
@@ -166,4 +165,10 @@ exclude_lines = [
     "raise AssertionError",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
+]
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.22.1",
+    "bcrypt>=5.0.0",
 ]

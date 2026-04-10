@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     scraping_delay_seconds: int = 2
     api_news_key: str = ""
 
+    # --- Monitoring ---
+    loki_url: str = "http://localhost:3100"
+    prometheus_port: int = 9090
+    grafana_port: int = 3000
+
     # --- Logging ---
     log_level: str = "INFO"
 

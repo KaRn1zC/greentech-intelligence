@@ -239,28 +239,37 @@ Environnement Node.js (via npm) :
 - [x] **Configuration de l'Experience (MLFlow)** :
   - [x] Lancement du serveur MLFlow local pour tracker les metriques (Perte, Precision)
   - [x] Integration de la librairie codecarbon pour mesurer la consommation electrique reelle du GPU pendant l'entrainement
-- [x] **Entrainement du Challenger (Llama 3.2 3B)** :
-  - [x] Script de Fine-tuning utilisant PEFT (LoRA) pour adapter le modele generatif a la classification
-  - [x] Parametrage specifique pour PyTorch sur ROCm (device='cuda')
-  - [x] Enregistrement des logs et du modele final
 - [x] **Entrainement du Champion (DeBERTa-v3-base)** :
   - [x] Script de Fine-tuning classique utilisant transformers.Trainer
-  - [x] Optimisation des hyperparametres pour la classification de sequence
-  - [x] Enregistrement des logs et du modele final
-- [ ] **Benchmark Final & Selection** :
-  - [ ] Execution du script de comparaison sur le jeu de test
-  - [ ] Analyse des graphiques MLFlow : Comparaison Precision vs Latence vs CO2
-  - [ ] Selection du modele vainqueur pour la production
+  - [x] Correction du chargement fp16 → fp32 (transformers 5.1.0 charge en fp16 par defaut, causant loss=0/NaN)
+  - [x] Oversampling de la classe minoritaire (22 Green IT → 20% du dataset)
+  - [x] Entrainement reussi : F1=0.44, Accuracy=99.6%, Precision=0.40, Recall=0.50
+  - [x] Artefacts logges dans MLflow/MinIO, CodeCarbon: 97.8g CO2eq
+- [x] **Entrainement du Challenger 1 (Qwen2.5-3B)** :
+  - [x] Script de Fine-tuning utilisant PEFT (LoRA) pour adapter le modele generatif a la classification
+  - [x] Parametrage specifique pour PyTorch sur ROCm (device='cuda', bf16=True)
+  - [x] Execution de l'entrainement : F1=0.40, Accuracy=99.74%, Precision=1.00, Recall=0.25
+  - [x] Artefacts logges dans MLflow/MinIO, CodeCarbon: 108.8g CO2eq
+- [x] **Entrainement du Challenger 2 (Llama 3.2 3B)** :
+  - [x] Script de Fine-tuning utilisant PEFT (LoRA), meme architecture que Challenger 1
+  - [x] Parametrage specifique pour PyTorch sur ROCm (device='cuda', bf16=True)
+  - [x] Acces licence Meta accepte sur HuggingFace (modele gated)
+  - [x] Execution de l'entrainement : F1=0.667, Accuracy=99.83%, Precision=1.00, Recall=0.50
+  - [x] Artefacts logges dans MLflow/MinIO, CodeCarbon: 112.0g CO2eq
+- [x] **Benchmark Final & Selection** :
+  - [x] Execution du script de comparaison sur le jeu de test (3 modeles, 1162 articles)
+  - [x] Analyse des metriques MLFlow : F1 vs Latence vs CO2
+  - [x] Selection du modele vainqueur : Llama 3.2 3B + LoRA (F1=0.667)
 
 ### 3.4 Validation & Packaging (Qualite Modele)
 
 - [x] **Tests Automatises du Modele (Deepchecks)** :
   - [x] Ecriture d'une suite de tests pour verifier l'integrite du modele (Data Leakage, Biais, Robustesse au bruit)
   - [x] Generation d'un rapport de validation automatique
-- [ ] **Packaging pour Inference** :
-  - [ ] Conversion/Sauvegarde du modele gagnant dans un format optimise (ex: safetensors ou ONNX si applicable)
-  - [ ] Push du modele valide via DVC vers le stockage partage
-  - [ ] Redaction de la "Model Card" (Documentation du modele : donnees utilisees, limites, metriques)
+- [x] **Packaging pour Inference** :
+  - [x] Sauvegarde du modele gagnant en safetensors (adapter_model.safetensors, 18 Mo) dans models/production/
+  - [x] Push du modele valide via DVC vers le stockage partage (MinIO s3://models/dvc)
+  - [x] Redaction de la "Model Card" (Documentation du modele : donnees utilisees, limites, metriques)
 
 ### 3.5 Deploiement MLOps (Monitoring)
 
@@ -269,6 +278,13 @@ Environnement Node.js (via npm) :
 - [x] **Configuration du Monitoring (Prometheus)** :
   - [x] Preparation des exporteurs pour envoyer les metriques d'inference vers Prometheus
   - [x] (L'integration effective se fera lors du developpement de l'API a l'etape suivante)
+- [x] **Stack Monitoring Complete (Docker)** :
+  - [x] Prometheus (metriques), Loki (logs), Grafana (dashboards) operationnels
+  - [x] 2 dashboards Grafana provisionnes : "Metier GreenTech" + "Performance Systeme"
+  - [x] Datasources Grafana auto-provisionnees (Prometheus + Loki)
+  - [x] Integration Loguru → Loki via sink HTTP (logger.py)
+  - [x] MLflow Tracking Server Docker (PostgreSQL backend + MinIO S3 artifacts)
+  - [x] CodeCarbon integre dans le tracking MLflow (mesure CO2 par run)
 
 ---
 
@@ -324,7 +340,7 @@ Environnement Node.js (via npm) :
     1. [ ] Reception de l'URL ou du texte
     2. [ ] Declenchement du Scraping (si URL) via le module cree a l'etape 2
     3. [ ] Declenchement du nettoyage
-    4. [ ] Chargement du Modele IA Custom (DeBERTa ou Llama) pour inference
+    4. [ ] Chargement du Modele IA vainqueur (DeBERTa, Qwen ou Llama) pour inference
     5. [ ] Appel de l'API SaaS Hugging Face pour le resume
     6. [ ] Agregation des resultats et sauvegarde en base
   - [ ] Optimisation : Chargement du modele IA au demarrage de l'API (pour eviter de le recharger a chaque requete)

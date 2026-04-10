@@ -1,10 +1,13 @@
 """Module d'inférence pour le modèle de classification Green IT.
 
-Charge le modèle gagnant (sélectionné après le benchmark Champion vs Challenger)
+Charge le modèle gagnant (sélectionné après le benchmark Champion vs Challengers)
 et fournit une interface simple pour classifier les articles en production.
 Met à jour la base PostgreSQL avec les résultats de classification.
 
-Rédigé par KaRn1zC - 2026-03-10
+Le modèle de production est un lien symbolique ou une copie du vainqueur
+du benchmark (DeBERTa, Qwen+LoRA, ou Llama+LoRA) dans models/production/.
+
+Rédigé par KaRn1zC - 2026-04-10
 """
 
 from __future__ import annotations

@@ -46,10 +46,19 @@ class ExperimentConfig:
 def configure_mlflow() -> None:
     """Configure MLflow avec les paramètres du projet.
 
-    Initialise l'URI de tracking et l'expérience par défaut.
+    Initialise l'URI de tracking, l'expérience par défaut, et les
+    variables d'environnement S3/MinIO pour le stockage des artefacts.
     Doit être appelée une fois au démarrage de l'application.
     """
+    import os
+
     settings = get_settings()
+
+    # Configurer les credentials S3/MinIO pour boto3 (artefacts MLflow)
+    os.environ.setdefault("MLFLOW_S3_ENDPOINT_URL", f"http://{settings.minio_endpoint}")
+    os.environ.setdefault("AWS_ACCESS_KEY_ID", settings.minio_access_key)
+    os.environ.setdefault("AWS_SECRET_ACCESS_KEY", settings.minio_secret_key)
+
     mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
     mlflow.set_experiment(settings.mlflow_experiment_name)
 
@@ -162,14 +171,22 @@ def log_model_artifact(
     *,
     dossier_artifact: str = "model",
 ) -> None:
-    """Sauvegarde un artefact (modèle, config, etc.) dans MLflow.
+    """Sauvegarde un artefact (fichier ou dossier) dans MLflow/MinIO.
+
+    Detecte automatiquement si le chemin pointe vers un fichier ou un
+    dossier et utilise l'API appropriee (log_artifact vs log_artifacts).
 
     Args:
         chemin_local: Chemin local du fichier ou dossier à logger.
         dossier_artifact: Sous-dossier dans les artefacts MLflow.
     """
-    mlflow.log_artifact(str(chemin_local), artifact_path=dossier_artifact)
-    logger.info(f"Artefact loggé : {chemin_local} → {dossier_artifact}/")
+    path = Path(chemin_local)
+    if path.is_dir():
+        mlflow.log_artifacts(str(path), artifact_path=dossier_artifact)
+        logger.info(f"Dossier artefact loggé : {path} → {dossier_artifact}/")
+    else:
+        mlflow.log_artifact(str(path), artifact_path=dossier_artifact)
+        logger.info(f"Fichier artefact loggé : {path} → {dossier_artifact}/")
 
 
 def get_best_run(

@@ -244,9 +244,10 @@ Intégrer un service IA SaaS pour le résumé automatique et développer un mod�
 ### 3.3 Entraînement Modèles (PC Fixe - ROCm GPU)
 - [ ] Lancement serveur MLflow local
 - [ ] Intégration CodeCarbon (mesure CO2)
-- [ ] Fine-tuning Llama 3.2 3B avec LoRA (Challenger)
-- [ ] Fine-tuning DeBERTa-v3-base (Champion)
-- [ ] Benchmark final (Précision vs Latence vs CO2)
+- [ ] Fine-tuning DeBERTa-v3-base — Champion (full fine-tuning)
+- [ ] Fine-tuning Qwen2.5-3B avec LoRA — Challenger 1
+- [ ] Fine-tuning Llama 3.2 3B avec LoRA — Challenger 2
+- [ ] Benchmark final 3 modèles (F1 vs Latence vs CO2)
 - [ ] Sélection du modèle vainqueur
 
 ### 3.4 Validation & Packaging (Bloc E3 - C12)
