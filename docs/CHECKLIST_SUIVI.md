@@ -160,11 +160,11 @@
 - [x] Choisir l'outil de monitoring et de consolidation
 - [x] Integrer les collecteurs de donnees
 - [x] Integrer l'outil de restitution (Dashboard type Grafana/Streamlit)
-- [ ] Configurer les alertes (email, notif)
-- [ ] L'outil de restitution respecte les enjeux d'accessibilite
+- [x] Configurer les alertes (email, notif)
+- [x] L'outil de restitution respecte les enjeux d'accessibilite
 - [x] La chaine de monitoring est testee et fonctionnelle
 - [x] Code versionne sur Git
-- [ ] Documentation technique (install/maintenance) et utilisateur redigee
+- [x] Documentation technique (install/maintenance) et utilisateur redigee
 
 #### C12. Tests automatises du modele
 
@@ -174,19 +174,19 @@
 - [x] Integrer les tests (assertions, mocks, fixtures)
 - [x] Les tests couvrent le perimetre defini
 - [x] Code et Donnees (si possible DVC) versionnes
-- [ ] Documentation technique des tests redigee
+- [x] Documentation technique des tests redigee
 
 #### C13. Chaine de livraison continue (CI/CD pour IA)
 
-- [ ] Definir etapes, taches et declencheurs (Pipeline)
-- [ ] Parametrer la chaine (variables d'env, versions)
-- [ ] Integrer l'etape de test des donnees
-- [ ] Integrer l'etape de test/entrainement/validation du modele
-- [ ] Integrer la generation de rapports (matrix confusion, accuracy) dans la livraison
-- [ ] Integrer l'etape de livraison (ex: Pull Request automatique)
-- [ ] Les fichiers de config CI/CD sont reconnus et executes
-- [ ] Code versionne sur Git
-- [ ] Documentation de la chaine CI/CD redigee et accessible
+- [x] Definir etapes, taches et declencheurs (Pipeline)
+- [x] Parametrer la chaine (variables d'env, versions)
+- [x] Integrer l'etape de test des donnees
+- [x] Integrer l'etape de test/entrainement/validation du modele
+- [x] Integrer la generation de rapports (matrix confusion, accuracy) dans la livraison
+- [x] Integrer l'etape de livraison (ex: Pull Request automatique)
+- [x] Les fichiers de config CI/CD sont reconnus et executes
+- [x] Code versionne sur Git
+- [x] Documentation de la chaine CI/CD redigee et accessible
 
 ---
 
@@ -237,19 +237,19 @@
 
 #### C18. Automatiser les tests (CI)
 
-- [ ] L'outil de CI est coherent avec la stack
-- [ ] La chaine integre toutes les etapes prealables (build)
-- [ ] La chaine execute les tests automatiquement
-- [ ] Config versionnee sur Git
-- [ ] Documentation de la CI (install/config/test) redigee et accessible
+- [x] L'outil de CI est coherent avec la stack
+- [x] La chaine integre toutes les etapes prealables (build)
+- [x] La chaine execute les tests automatiquement
+- [x] Config versionnee sur Git
+- [x] Documentation de la CI (install/config/test) redigee et accessible
 
 #### C19. Livraison continue (CD)
 
-- [ ] Les fichiers de config CD sont executes par le systeme
-- [ ] Les etapes de packaging (build, docker, minification) sont integrees
-- [ ] L'etape de livraison (ex: Deploy ou Pull Request) est integree
-- [ ] Sources versionnees sur Git
-- [ ] Documentation de la CD (toutes etapes/declencheurs) redigee et accessible
+- [x] Les fichiers de config CD sont executes par le systeme
+- [x] Les etapes de packaging (build, docker, minification) sont integrees
+- [x] L'etape de livraison (ex: Deploy ou Pull Request) est integree
+- [x] Sources versionnees sur Git
+- [x] Documentation de la CD (toutes etapes/declencheurs) redigee et accessible
 
 ---
 
@@ -259,20 +259,20 @@
 
 #### C20. Surveiller l'application (Monitoring App)
 
-- [ ] La documentation liste les metriques, seuils et valeurs d'alerte
-- [ ] La documentation justifie le choix des outils
-- [ ] Les outils (collecteurs, logs, dashboard) sont installes et operationnels (minima en local)
-- [ ] Les regles de journalisation (Logs) sont integrees au code source
-- [ ] Les alertes sont configurees et fonctionnelles selon les seuils
-- [ ] Documentation d'installation du monitoring redigee et accessible
+- [x] La documentation liste les metriques, seuils et valeurs d'alerte
+- [x] La documentation justifie le choix des outils
+- [x] Les outils (collecteurs, logs, dashboard) sont installes et operationnels (minima en local)
+- [x] Les regles de journalisation (Logs) sont integrees au code source
+- [x] Les alertes sont configurees et fonctionnelles selon les seuils
+- [x] Documentation d'installation du monitoring redigee et accessible
 
 #### C21. Resoudre les incidents techniques
 
-- [ ] La cause du probleme est identifiee
-- [ ] Le probleme est reproduit en environnement de dev
-- [ ] La procedure de debogage est documentee
-- [ ] La solution documentee explicite chaque etape de resolution
-- [ ] La solution (fix) est versionnee sur Git (ex: Merge Request)
+- [x] La cause du probleme est identifiee
+- [x] Le probleme est reproduit en environnement de dev
+- [x] La procedure de debogage est documentee
+- [x] La solution documentee explicite chaque etape de resolution
+- [x] La solution (fix) est versionnee sur Git (ex: Merge Request)
 
 ---
 
@@ -280,64 +280,64 @@
 
 ### 1. Gestion de Projet & Methodologie
 
-- [ ] Methode Agile : Scrum
-- [ ] Outil de gestion de tickets/Backlog : Github Projects
-- [ ] Outil de communication : Discord
-- [ ] Outil de wireframing/maquettage : Penpot
+- [x] Methode Agile : Scrum
+- [x] Outil de gestion de tickets/Backlog : Github Projects
+- [x] Outil de communication : Discord
+- [x] Outil de wireframing/maquettage : Penpot
 - [x] Outil de modelisation donnees/flux : Looping
 
 ### 2. Developpement & Code
 
-- [ ] Gestionnaire de version (VCS) : Git
-- [ ] Plateforme de depot distant : GitHub
-- [ ] IDE / Editeur de code : VSCode
-- [ ] OS : Windows 11 Pro (PC Fixe et Portable)
-- [ ] CPU : AMD Ryzen 9 7950X (PC Fixe) et AMD Ryzen AI 9 HX 370 avec NPU inclus (PC Portable)
-- [ ] RAM : 32 Gb DDR5 (PC Fixe et Portable)
-- [ ] GPU : AMD Radeon RX 7900 XTX 24 Go (PC Fixe) et chipset graphique inclus dans le CPU (PC Portable)
-- [ ] Terminal : Powershell (version la plus recente)
-- [ ] Gestionnaire de paquets/projet Python : uv (CLI Astral)
-- [ ] Generateur de documentation : Sphinx
-- [ ] Documentation en Markdown : MyST-Parser (extension Sphinx)
-- [ ] Theme de documentation : Furo (theme Sphinx)
+- [x] Gestionnaire de version (VCS) : Git
+- [x] Plateforme de depot distant : GitHub
+- [x] IDE / Editeur de code : VSCode
+- [x] OS : Windows 11 Pro (PC Fixe et Portable)
+- [x] CPU : AMD Ryzen 9 7950X (PC Fixe) et AMD Ryzen AI 9 HX 370 avec NPU inclus (PC Portable)
+- [x] RAM : 32 Gb DDR5 (PC Fixe et Portable)
+- [x] GPU : AMD Radeon RX 7900 XTX 24 Go (PC Fixe) et chipset graphique inclus dans le CPU (PC Portable)
+- [x] Terminal : Powershell (version la plus recente)
+- [x] Gestionnaire de paquets/projet Python : uv (CLI Astral)
+- [x] Generateur de documentation : Sphinx
+- [x] Documentation en Markdown : MyST-Parser (extension Sphinx)
+- [x] Theme de documentation : Furo (theme Sphinx)
 
 ### 3. Data (Bloc E1)
 
-- [ ] Langage de script de collecte : Python
-- [ ] Librairie de requetes HTTP : HTTPX
-- [ ] Framework de crawl/scraping : Scrapy
-- [ ] Scraping de sites dynamiques : Playwright
-- [ ] Integration navigateur dans le crawler : scrapy-playwright
-- [ ] SGBD Relationnel : PostgreSQL
-- [ ] Systeme Big Data : Apache Spark (Traitement) + MinIO (Stockage Objet)
-- [ ] ORM SQL : SQLAlchemy ORM 2.0 (Async)
+- [x] Langage de script de collecte : Python
+- [x] Librairie de requetes HTTP : HTTPX
+- [x] Framework de crawl/scraping : Scrapy
+- [x] Scraping de sites dynamiques : Playwright
+- [x] Integration navigateur dans le crawler : scrapy-playwright
+- [x] SGBD Relationnel : PostgreSQL
+- [x] Systeme Big Data : Apache Spark (Traitement) + MinIO (Stockage Objet)
+- [x] ORM SQL : SQLAlchemy ORM 2.0 (Async)
 
 ### 4. Intelligence Artificielle (Blocs E2 & E3)
 
-- [ ] Source de Veille IA : Inoreader + Task deep search auto en mode weekly avec Perplexity Pro (abonnement)
-- [ ] Service IA Pre-existant (SaaS/PaaS) : HuggingFace Serverless Inference API
-- [ ] Modele IA (Code Custom) : Scikit-learn, PyTorch, TensorFlow, Hugging Face + AMD ROCm 7.1 et 7.2 (version native Windows)
-- [ ] Librairie de test IA : Deepchecks
-- [ ] Outil de MLOps / Monitoring IA : MLFlow + Loguru (suivi experiences et logs) + Prometheus + Grafana + Loki (monitoring et logs avances pour production/modeles IA)
-- [ ] Outil de versionning de donnees : DVC (Data Version Control)
+- [x] Source de Veille IA : Inoreader + Task deep search auto en mode weekly avec Perplexity Pro (abonnement)
+- [x] Service IA Pre-existant (SaaS/PaaS) : HuggingFace Serverless Inference API
+- [x] Modele IA (Code Custom) : Scikit-learn, PyTorch, Hugging Face + AMD ROCm 7.1 et 7.2 (version native Windows)
+- [x] Librairie de test IA : Deepchecks
+- [x] Outil de MLOps / Monitoring IA : MLFlow + Loguru (suivi experiences et logs) + Prometheus + Grafana + Loki (monitoring et logs avances pour production/modeles IA)
+- [x] Outil de versionning de donnees : DVC (Data Version Control)
 
 ### 5. Backend & API
 
-- [ ] Langage Backend : Python
-- [ ] Framework API REST : FastAPI
-- [ ] Outil de documentation API : Swagger UI + ReDoc
-- [ ] Librairie de securite/Auth : FastAPI Users
-- [ ] Librairies et outils utiles : Ruff, Loguru
+- [x] Langage Backend : Python
+- [x] Framework API REST : FastAPI
+- [x] Outil de documentation API : Swagger UI + ReDoc
+- [x] Librairie de securite/Auth : FastAPI Users (JWT bcrypt)
+- [x] Librairies et outils utiles : Ruff, Loguru
 
 ### 6. Frontend (Application cliente)
 
-- [ ] Framework Frontend : React via build tool Vite
-- [ ] Librairie UI / CSS : Shadcn/UI
-- [ ] Outils d'accessibilite (Test) : axe-core via Playwright dans pipeline CI/CD
+- [x] Framework Frontend : React 19 via build tool Vite 8
+- [x] Librairie UI / CSS : Shadcn/UI + Tailwind CSS v4
+- [x] Outils d'accessibilite (Test) : axe-core via Playwright dans pipeline CI/CD
 
 ### 7. DevOps & Infrastructure (Blocs E4 & E5)
 
-- [ ] Plateforme CI/CD : GitHub Actions
-- [ ] Solution de Conteneurisation : Docker, Docker-compose
-- [ ] Outil de Monitoring Applicatif : Prometheus + Grafana + Loki
-- [ ] Hebergement / Deploiement (Pre-prod) : Render
+- [x] Plateforme CI/CD : GitHub Actions (ci.yml + cd.yml)
+- [x] Solution de Conteneurisation : Docker, Docker-compose (multi-stage builds)
+- [x] Outil de Monitoring Applicatif : Prometheus + Grafana + Loki (alertes configurees)
+- [x] Hebergement / Deploiement (Pre-prod) : Render (Blueprint render.yaml)

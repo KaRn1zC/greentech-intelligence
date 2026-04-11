@@ -1,0 +1,68 @@
+# =============================================================================
+# GreenTech Intelligence - Regles d'Alertes Prometheus
+# =============================================================================
+
+groups:
+  - name: greentech-api-alerts
+    rules:
+      # Alerte si latence moyenne des requetes HTTP > 2 secondes
+      - alert: HighRequestLatency
+        expr: rate(greentech_request_duration_seconds_sum[5m]) / rate(greentech_request_duration_seconds_count[5m]) > 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Latence HTTP elevee"
+          description: "La latence moyenne des requetes depasse 2 secondes depuis 2 minutes."
+
+      # Alerte si taux d'erreurs 5xx > 5%
+      - alert: HighErrorRate
+        expr: rate(greentech_http_responses_total{status=~"5.."}[5m]) / rate(greentech_http_responses_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Taux d'erreurs 5xx eleve"
+          description: "Plus de 5% des requetes retournent une erreur serveur."
+
+      # Alerte si l'API ne repond plus (target down)
+      - alert: ApiDown
+        expr: up{job="greentech-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API GreenTech inaccessible"
+          description: "L'API FastAPI ne repond pas depuis plus d'1 minute."
+
+      # Alerte si le temps d'inference IA > 10 secondes
+      - alert: SlowInference
+        expr: greentech_inference_duration_seconds > 10
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Inference IA lente"
+          description: "Le temps d'inference du modele depasse 10 secondes."
+
+  - name: greentech-infra-alerts
+    rules:
+      # Alerte si PostgreSQL ne repond plus
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL inaccessible"
+          description: "La base de donnees PostgreSQL ne repond plus."
+
+      # Alerte si MinIO ne repond plus
+      - alert: MinioDown
+        expr: up{job="minio"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MinIO inaccessible"
+          description: "Le stockage objet MinIO ne repond plus."

@@ -106,6 +106,7 @@ services:
       - "9090:9090"
     volumes:
       - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -166,33 +167,40 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin123
       MLFLOW_TRACKING_URI: http://mlflow:5000
+      LOKI_URL: http://loki:3100
       SECRET_KEY: dev-secret-key-change-in-production
       DEBUG: "true"
     ports:
       - "8000:8000"
     volumes:
       - ./src:/app/src:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "greentech-api"
     networks:
       - greentech-network
     profiles:
       - full
 
-  # === Frontend (React - Dev Mode) ===
+  # === Frontend (React - Production NGINX) ===
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
     container_name: greentech-frontend
     restart: unless-stopped
     depends_on:
       - api
-    environment:
-      VITE_API_URL: http://localhost:8000
     ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - "80:80"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     networks:
       - greentech-network
     profiles:

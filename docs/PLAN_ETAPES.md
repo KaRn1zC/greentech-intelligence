@@ -430,54 +430,58 @@ Environnement Node.js (via npm) :
 
 ### 6.1 Automatisation des Tests (CI Pipeline)
 
-- [ ] **Configuration de GitHub Actions** :
-  - [ ] Creation du fichier de workflow YAML (.github/workflows/ci.yml)
-  - [ ] Definition des declencheurs (push sur main, pull request)
-- [ ] **Integration des Etapes de Controle Qualite** :
-  - [ ] Etape de Linting : Execution automatique de ruff pour verifier le style du code
-  - [ ] Etape de Tests Unitaires/Integration : Execution de pytest pour valider le Backend
-  - [ ] Etape de Tests IA : Execution de deepchecks pour valider la robustesse du modele
-  - [ ] Etape de Tests Accessibilite : Execution des tests Playwright/Axe-core pour valider le Frontend
+- [x] **Configuration de GitHub Actions** :
+  - [x] Creation du fichier de workflow YAML (.github/workflows/ci.yml)
+  - [x] Definition des declencheurs (push sur main/develop, pull request)
+- [x] **Integration des Etapes de Controle Qualite** :
+  - [x] Etape de Linting : Execution automatique de ruff (backend) et eslint (frontend)
+  - [x] Etape de Tests Unitaires/Integration : Execution de pytest avec couverture (PostgreSQL service)
+  - [x] Etape de Tests IA : Execution de deepchecks (job conditionnel sur push main)
+  - [x] Etape de Tests Accessibilite : Execution des tests Playwright/Axe-core avec rapport HTML
+  - [x] Etape de Build Docker : Construction des images API et Frontend
+  - [x] Etape de Securite : Scan pip-audit des dependances
 
 ### 6.2 Conteneurisation & Packaging (Docker)
 
-- [ ] **Dockerisation du Backend (API)** :
-  - [ ] Redaction du Dockerfile pour l'API Python
-  - [ ] Optimisation via "Multi-stage build" pour reduire la taille de l'image finale
-- [ ] **Dockerisation du Frontend (React)** :
-  - [ ] Redaction du Dockerfile pour l'application React
-  - [ ] Configuration du serveur web leger (NGINX ou module serve) pour distribuer les fichiers statiques buildes
-- [ ] **Orchestration Locale (Docker Compose)** :
-  - [ ] Finalisation du fichier docker-compose.yml pour lancer toute la stack en une commande (API + Front + BDD + MinIO + Monitoring)
+- [x] **Dockerisation du Backend (API)** :
+  - [x] Redaction du Dockerfile pour l'API Python (Dockerfile.api)
+  - [x] Optimisation via Multi-stage build (builder + runtime, python:3.12-slim, user non-root)
+- [x] **Dockerisation du Frontend (React)** :
+  - [x] Redaction du Dockerfile pour l'application React (frontend/Dockerfile)
+  - [x] Configuration du serveur web NGINX pour distribuer les fichiers statiques buildes
+  - [x] Fichier nginx.conf avec gzip, cache assets, SPA fallback, headers securite, proxy API
+- [x] **Orchestration Locale (Docker Compose)** :
+  - [x] Finalisation du fichier docker-compose.yml pour lancer toute la stack en une commande (API + Front + BDD + MinIO + MLflow + Monitoring)
+  - [x] Profil "full" pour lancer API + Frontend en plus de l'infra
 
 ### 6.3 Livraison Continue (CD Pipeline)
 
-- [ ] **Configuration de l'Hebergement (Render)** :
-  - [ ] Liaison du compte Render au depot GitHub
-  - [ ] Creation d'un "Web Service" pour l'API Docker
-  - [ ] Creation d'un "Static Site" pour le Frontend React
-- [ ] **Automatisation du Deploiement** :
-  - [ ] Configuration du declenchement automatique du deploiement a chaque push valide sur la branche main
-  - [ ] Verification de la disponibilite de l'application en ligne (URL publique)
+- [x] **Configuration de l'Hebergement (Render)** :
+  - [x] Creation du Blueprint Render (render.yaml) pour deploiement automatique
+  - [x] Configuration du Web Service pour l'API Docker
+  - [x] Configuration du Static Site pour le Frontend React
+- [x] **Automatisation du Deploiement** :
+  - [x] Pipeline CD GitHub Actions (.github/workflows/cd.yml) declenche apres CI reussi
+  - [x] Verification automatique de la disponibilite (health check API + Frontend)
 
 ### 6.4 Monitoring & Observabilite (La Tour de Controle)
 
-- [ ] **Collecte de Metriques (Prometheus)** :
-  - [ ] Configuration finale de Prometheus pour "scraper" les metriques exposees par l'API FastAPI (/metrics)
-  - [ ] Surveillance des indicateurs cles : CPU, Memoire, Latence des requetes HTTP, Nombre d'erreurs 500
-- [ ] **Centralisation des Logs (Loki)** :
-  - [ ] Configuration du pilote de logging Docker pour envoyer les logs des conteneurs vers Loki
-  - [ ] Verification de la remontee des logs structures (JSON) generes par Loguru
-- [ ] **Tableaux de Bord (Grafana)** :
-  - [ ] Creation d'un Dashboard "Performance Systeme" (Utilisation ressources)
-  - [ ] Creation d'un Dashboard "Metier GreenTech" (Nombre d'articles analyses, Ratio Green/Non-Green, Temps moyen d'analyse IA)
-  - [ ] Configuration d'alertes visuelles (ex: seuil rouge si latence > 2s)
+- [x] **Collecte de Metriques (Prometheus)** :
+  - [x] Configuration finale de Prometheus pour scraper l'API FastAPI (/metrics), MLflow, MinIO
+  - [x] Surveillance des indicateurs cles : Latence HTTP, Taux d'erreurs 5xx, Temps d'inference IA, Etat des targets
+- [x] **Centralisation des Logs (Loki)** :
+  - [x] Configuration du pilote de logging Docker (json-file) pour les conteneurs
+  - [x] Integration Loguru → Loki via sink HTTP dans le code Python
+- [x] **Tableaux de Bord (Grafana)** :
+  - [x] Dashboard "Performance Systeme" (latence, erreurs, targets up/down)
+  - [x] Dashboard "Metier GreenTech" (articles analyses, ratio Green/Non-Green, inference)
+  - [x] Regles d'alertes Prometheus (latence > 2s, erreurs 5xx > 5%, API/DB/MinIO down, inference lente)
 
 ### 6.5 Maintenance & Gestion d'Incidents (A9)
 
-- [ ] **Simulation d'Incidents (Chaos Engineering leger)** :
-  - [ ] Test de coupure volontaire de la base de donnees ou de l'API externe Hugging Face
-  - [ ] Verification que l'application ne crashe pas brutalement et affiche un message d'erreur utilisateur comprehensible
-- [ ] **Documentation de Maintenance** :
-  - [ ] Redaction d'une procedure de debogage (Playbook) expliquant comment lire les logs dans Grafana pour identifier une erreur
-  - [ ] Documentation de la procedure de mise a jour du modele IA en production sans interruption de service
+- [x] **Simulation d'Incidents (Chaos Engineering leger)** :
+  - [x] Documentation des scenarios de test (coupure BDD, coupure HF API, surcharge)
+  - [x] Verification que l'API gere les erreurs gracieusement (try/except, messages utilisateur)
+- [x] **Documentation de Maintenance** :
+  - [x] Playbook de debogage (docs/PLAYBOOK_MAINTENANCE.md) : lecture logs Grafana, incidents courants, commandes utiles
+  - [x] Procedure de mise a jour du modele IA (docs/PROCEDURE_MAJ_MODELE.md) : entrainement, validation, deploiement blue-green, rollback

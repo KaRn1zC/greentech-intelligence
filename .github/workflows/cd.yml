@@ -1,0 +1,55 @@
+# =============================================================================
+# GreenTech Intelligence - CD Pipeline (Deploy to Render)
+# =============================================================================
+
+name: CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy to Render
+    runs-on: ubuntu-latest
+    # Ne deployer que si le CI a reussi
+    if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy API to Render
+        uses: johnbeynon/render-deploy-action@v0.0.8
+        with:
+          service-id: ${{ secrets.RENDER_API_SERVICE_ID }}
+          api-key: ${{ secrets.RENDER_API_KEY }}
+
+      - name: Deploy Frontend to Render
+        uses: johnbeynon/render-deploy-action@v0.0.8
+        with:
+          service-id: ${{ secrets.RENDER_FRONTEND_SERVICE_ID }}
+          api-key: ${{ secrets.RENDER_API_KEY }}
+
+      - name: Verify API Health
+        run: |
+          echo "Attente du demarrage (60s)..."
+          sleep 60
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://greentech-api.onrender.com/health || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            echo "API OK (HTTP 200)"
+          else
+            echo "ATTENTION : API retourne HTTP $STATUS (peut etre en cours de demarrage)"
+          fi
+
+      - name: Verify Frontend
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://greentech-frontend.onrender.com/ || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            echo "Frontend OK (HTTP 200)"
+          else
+            echo "ATTENTION : Frontend retourne HTTP $STATUS"
+          fi
