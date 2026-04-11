@@ -183,65 +183,68 @@ async def summarize_article(
     Raises:
         ValueError: Si l'article n'existe pas ou n'a pas de contenu.
     """
-    own_session = session is None
-    if own_session:
-        session = async_session_factory()
+    if session is not None:
+        return await _summarize_article_impl(article_id, session)
 
-    try:
-        # Récupérer l'article
-        stmt = select(Article).where(Article.id_article == article_id)
-        result = await session.execute(stmt)
-        article = result.scalar_one_or_none()
+    async with async_session_factory() as own_session:
+        return await _summarize_article_impl(article_id, own_session)
 
-        if article is None:
-            msg = f"Article id={article_id} introuvable"
-            raise ValueError(msg)
 
-        if not article.contenu:
-            logger.warning(f"Article id={article_id} sans contenu, résumé impossible")
-            return SummaryResult(
-                id_article=article_id,
-                resume=None,
-                temps_ms=0,
-                modele=get_settings().huggingface_model_summarizer,
-                succes=False,
-                erreur="Article sans contenu",
-            )
+async def _summarize_article_impl(
+    article_id: int, session: AsyncSession
+) -> SummaryResult:
+    """Implementation interne du resume d'article avec session geree par l'appelant.
 
-        # Appeler l'API de résumé
-        summary_result = await summarize_text(article.contenu)
-        summary_result = SummaryResult(
+    Args:
+        article_id: Identifiant de l'article en base.
+        session: Session SQLAlchemy active.
+
+    Returns:
+        Resultat du resume avec les metriques.
+    """
+    stmt = select(Article).where(Article.id_article == article_id)
+    result = await session.execute(stmt)
+    article = result.scalar_one_or_none()
+
+    if article is None:
+        msg = f"Article id={article_id} introuvable"
+        raise ValueError(msg)
+
+    if not article.contenu:
+        logger.warning(f"Article id={article_id} sans contenu, résumé impossible")
+        return SummaryResult(
             id_article=article_id,
-            resume=summary_result.resume,
-            temps_ms=summary_result.temps_ms,
-            modele=summary_result.modele,
-            succes=summary_result.succes,
-            erreur=summary_result.erreur,
+            resume=None,
+            temps_ms=0,
+            modele=get_settings().huggingface_model_summarizer,
+            succes=False,
+            erreur="Article sans contenu",
         )
 
-        # Stocker le résumé en base si succès
-        if summary_result.succes and summary_result.resume:
-            stmt_update = (
-                update(Article)
-                .where(Article.id_article == article_id)
-                .values(resume=summary_result.resume)
-            )
-            await session.execute(stmt_update)
-            await session.commit()
-            logger.info(
-                f"Article id={article_id} : résumé stocké en base "
-                f"({len(summary_result.resume)} chars)"
-            )
+    summary_result = await summarize_text(article.contenu)
+    summary_result = SummaryResult(
+        id_article=article_id,
+        resume=summary_result.resume,
+        temps_ms=summary_result.temps_ms,
+        modele=summary_result.modele,
+        succes=summary_result.succes,
+        erreur=summary_result.erreur,
+    )
 
-        return summary_result
+    if summary_result.succes and summary_result.resume:
+        stmt_update = (
+            update(Article)
+            .where(Article.id_article == article_id)
+            .values(resume=summary_result.resume)
+        )
+        await session.execute(stmt_update)
+        await session.commit()
+        logger.info(
+            f"Article id={article_id} : résumé stocké en base "
+            f"({len(summary_result.resume)} chars)"
+        )
 
-    except Exception:
-        if own_session:
-            await session.rollback()
-        raise
-    finally:
-        if own_session:
-            await session.close()
+    return summary_result
 
 
 async def summarize_batch(

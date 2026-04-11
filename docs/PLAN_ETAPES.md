@@ -78,13 +78,13 @@ Librairies a ajouter au projet Python via uv :
 
 Environnement Node.js (via npm) :
 
-- [ ] Build Tool : Vite (Template React TypeScript)
-- [ ] Framework UI : React
-- [ ] Composants & Design :
-  - [ ] tailwindcss (CSS Utility-first)
-  - [ ] shadcn-ui (Librairie de composants)
-  - [ ] lucide-react (Icones)
-- [ ] Accessibilite : @axe-core/playwright
+- [x] Build Tool : Vite (Template React TypeScript)
+- [x] Framework UI : React 19
+- [x] Composants & Design :
+  - [x] tailwindcss v4 (CSS Utility-first via @tailwindcss/vite)
+  - [x] shadcn-ui (Librairie de composants, style Zinc)
+  - [x] lucide-react (Icones)
+- [x] Accessibilite : @axe-core/playwright
 
 ### 1.8 Documentation
 
@@ -294,66 +294,66 @@ Environnement Node.js (via npm) :
 
 ### 4.1 Conception de l'Architecture API (Design)
 
-- [ ] **Definition des Endpoints (Specification OpenAPI)** :
-  - [ ] Identification des routes necessaires :
-    - [ ] GET /articles : Liste des articles analyses (pagination)
-    - [ ] GET /articles/{id} : Details d'un article
-    - [ ] POST /analyze : Point d'entree pour l'analyse IA (URL ou Texte)
-    - [ ] GET /stats : Statistiques globales (Ratio Green IT)
-    - [ ] POST /auth/login : Authentification
-- [ ] **Securisation (OWASP)** :
-  - [ ] Adoption du standard OAuth2 avec jetons JWT pour l'authentification
-  - [ ] Definition des regles de validation des entrees (Input Validation) via Pydantic pour eviter les injections
+- [x] **Definition des Endpoints (Specification OpenAPI)** :
+  - [x] Identification des routes necessaires :
+    - [x] GET /articles : Liste des articles analyses (pagination)
+    - [x] GET /articles/{id} : Details d'un article
+    - [x] POST /analyze : Point d'entree pour l'analyse IA (URL ou Texte)
+    - [x] GET /stats : Statistiques globales (Ratio Green IT)
+    - [x] POST /auth/login : Authentification
+- [x] **Securisation (OWASP)** :
+  - [x] Adoption du standard OAuth2 avec jetons JWT pour l'authentification
+  - [x] Definition des regles de validation des entrees (Input Validation) via Pydantic pour eviter les injections
 
 ### 4.2 Developpement du Serveur API (FastAPI)
 
-- [ ] **Initialisation du Projet FastAPI** :
-  - [ ] Configuration de l'application principale (titre, version, description)
-  - [ ] Configuration des regles CORS pour autoriser le futur Frontend React
-- [ ] **Connexion Base de Donnees (SQLAlchemy + Asyncpg)** :
-  - [ ] Integration de la connexion asynchrone a PostgreSQL configuree a l'etape 2
-  - [ ] Creation des modeles Pydantic (Schemas) pour serialiser les reponses JSON
-- [ ] **Mise en place des Logs (Loguru)** :
-  - [ ] Configuration du logger pour remplacer les print() par des logs structures (INFO, ERROR, DEBUG)
-  - [ ] Interception des logs systeme Uvicorn pour centralisation
+- [x] **Initialisation du Projet FastAPI** :
+  - [x] Configuration de l'application principale (titre, version, description)
+  - [x] Configuration des regles CORS pour autoriser le futur Frontend React
+- [x] **Connexion Base de Donnees (SQLAlchemy + Asyncpg)** :
+  - [x] Integration de la connexion asynchrone a PostgreSQL configuree a l'etape 2
+  - [x] Creation des modeles Pydantic (Schemas) pour serialiser les reponses JSON
+- [x] **Mise en place des Logs (Loguru)** :
+  - [x] Configuration du logger pour remplacer les print() par des logs structures (INFO, ERROR, DEBUG)
+  - [x] Interception des logs systeme Uvicorn pour centralisation
 
 ### 4.3 Implementation de la Securite (Auth)
 
-- [ ] **Gestion Utilisateurs (FastAPI Users)** :
-  - [ ] Configuration du gestionnaire d'authentification (Bearer Transport)
-  - [ ] Implementation des strategies de creation de compte et de login
-  - [ ] Connexion de la table User PostgreSQL via l'ORM SQLAlchemy
-- [ ] **Protection des Routes** :
-  - [ ] Ajout de dependances de securite sur les routes sensibles (ex: POST /analyze necessite d'etre connecte)
+- [x] **Gestion Utilisateurs (FastAPI Users)** :
+  - [x] Configuration du gestionnaire d'authentification (Bearer Transport)
+  - [x] Implementation des strategies de creation de compte et de login
+  - [x] Connexion de la table User PostgreSQL via l'ORM SQLAlchemy
+- [x] **Protection des Routes** :
+  - [x] Ajout de dependances de securite sur les routes sensibles (ex: POST /analyze necessite d'etre connecte)
 
 ### 4.4 Exposition des Donnees (Bloc E1 - C5)
 
-- [ ] **Developpement des Endpoints de Lecture** :
-  - [ ] Implementation de la logique de recuperation des articles depuis la base de donnees
-  - [ ] Ajout des filtres (par date, par statut "Green IT")
-  - [ ] Gestion de la pagination pour ne pas surcharger le client
+- [x] **Developpement des Endpoints de Lecture** :
+  - [x] Implementation de la logique de recuperation des articles depuis la base de donnees
+  - [x] Ajout des filtres (par date, par statut "Green IT")
+  - [x] Gestion de la pagination pour ne pas surcharger le client
 
 ### 4.5 Integration de l'IA dans l'API (Bloc E3 - C9/C10)
 
-- [ ] **Endpoint d'Analyse (POST /analyze) - Le Coeur du Reacteur** :
-  - [ ] Developpement de la logique d'orchestration :
-    1. [ ] Reception de l'URL ou du texte
-    2. [ ] Declenchement du Scraping (si URL) via le module cree a l'etape 2
-    3. [ ] Declenchement du nettoyage
-    4. [ ] Chargement du Modele IA vainqueur (DeBERTa, Qwen ou Llama) pour inference
-    5. [ ] Appel de l'API SaaS Hugging Face pour le resume
-    6. [ ] Agregation des resultats et sauvegarde en base
-  - [ ] Optimisation : Chargement du modele IA au demarrage de l'API (pour eviter de le recharger a chaque requete)
+- [x] **Endpoint d'Analyse (POST /analyze) - Le Coeur du Reacteur** :
+  - [x] Developpement de la logique d'orchestration :
+    1. [x] Reception de l'URL ou du texte
+    2. [x] Declenchement du Scraping (si URL) via le module cree a l'etape 2
+    3. [x] Declenchement du nettoyage
+    4. [x] Chargement du Modele IA vainqueur (DeBERTa, Qwen ou Llama) pour inference
+    5. [x] Appel de l'API SaaS Hugging Face pour le resume
+    6. [x] Agregation des resultats et sauvegarde en base
+  - [x] Optimisation : Chargement du modele IA au demarrage de l'API (pour eviter de le recharger a chaque requete)
 
 ### 4.6 Documentation & Tests d'Integration
 
-- [ ] **Documentation Automatique (Swagger UI / ReDoc)** :
-  - [ ] Verification de la generation automatique de la documentation interactive sur /docs
-  - [ ] Ajout de descriptions et d'exemples pour chaque endpoint
-- [ ] **Tests API (Pytest + HTTPX)** :
-  - [ ] Ecriture de tests d'integration pour verifier que les endpoints repondent correctement (Code 200)
-  - [ ] Test des cas d'erreur (Code 401 Unauthorized, Code 422 Validation Error)
-  - [ ] Verification de la chaine complete (Input -> BDD -> Output)
+- [x] **Documentation Automatique (Swagger UI / ReDoc)** :
+  - [x] Verification de la generation automatique de la documentation interactive sur /docs
+  - [x] Ajout de descriptions et d'exemples pour chaque endpoint
+- [x] **Tests API (Pytest + HTTPX)** :
+  - [x] Ecriture de tests d'integration pour verifier que les endpoints repondent correctement (Code 200)
+  - [x] Test des cas d'erreur (Code 401 Unauthorized, Code 422 Validation Error)
+  - [x] Verification de la chaine complete (Input -> BDD -> Output)
 
 ---
 
@@ -363,64 +363,64 @@ Environnement Node.js (via npm) :
 
 ### 5.1 Initialisation de l'environnement Frontend (React & Vite)
 
-- [ ] **Creation du projet** :
-  - [ ] Generation du squelette de l'application via Vite avec le template React + TypeScript
-  - [ ] Nettoyage des fichiers par defaut pour partir sur une base propre
-- [ ] **Configuration du Styling (Tailwind CSS)** :
-  - [ ] Installation et initialisation de Tailwind CSS
-  - [ ] Configuration du fichier tailwind.config.js pour definir les chemins des contenus
-  - [ ] Ajout des directives Tailwind dans le fichier CSS principal
-- [ ] **Installation du Design System (Shadcn/UI)** :
-  - [ ] Initialisation de la CLI Shadcn/UI pour configurer les variables CSS globales (theme, radius)
-  - [ ] Choix d'un style neutre (Slate ou Zinc) pour un rendu professionnel "Green IT"
-  - [ ] Installation de la bibliotheque d'icones lucide-react
+- [x] **Creation du projet** :
+  - [x] Generation du squelette de l'application via Vite avec le template React + TypeScript
+  - [x] Nettoyage des fichiers par defaut pour partir sur une base propre
+- [x] **Configuration du Styling (Tailwind CSS)** :
+  - [x] Installation et initialisation de Tailwind CSS (v4 via @tailwindcss/vite)
+  - [x] Configuration du plugin Vite Tailwind (remplace tailwind.config.js en v4)
+  - [x] Ajout des directives Tailwind dans le fichier CSS principal (index.css)
+- [x] **Installation du Design System (Shadcn/UI)** :
+  - [x] Initialisation de la CLI Shadcn/UI pour configurer les variables CSS globales (theme, radius)
+  - [x] Choix d'un style neutre (Zinc) pour un rendu professionnel "Green IT"
+  - [x] Installation de la bibliotheque d'icones lucide-react
 
 ### 5.2 Developpement des Composants UI (Design System)
 
-- [ ] **Installation des composants Shadcn necessaires** :
-  - [ ] Ajout des composants de base via la CLI : button, input, card, badge, table, dialog, form, toast
-- [ ] **Creation du Layout Principal** :
-  - [ ] Developpement d'un composant de mise en page global incluant :
-    - [ ] Une barre de navigation (Header) responsive
-    - [ ] Un pied de page (Footer) avec mentions legales
-    - [ ] Un conteneur principal centre et responsive
+- [x] **Installation des composants Shadcn necessaires** :
+  - [x] Ajout des composants de base : button, input, card, badge, skeleton, table, dialog, label, separator, tabs, sonner (toast)
+- [x] **Creation du Layout Principal** :
+  - [x] Developpement d'un composant de mise en page global incluant :
+    - [x] Une barre de navigation (Header) responsive avec logo, nav et auth state
+    - [x] Un pied de page (Footer) avec mentions legales
+    - [x] Un conteneur principal centre et responsive (max-w-5xl)
 
 ### 5.3 Developpement des Pages & Parcours Utilisateur
 
-- [ ] **Page d'Authentification (Login)** :
-  - [ ] Creation d'un formulaire de connexion securise
-  - [ ] Integration de la logique de stockage du Token JWT (localStorage ou Cookie)
-  - [ ] Redirection automatique apres connexion reussie
-- [ ] **Page Dashboard (Accueil)** :
-  - [ ] Developpement de la zone d'action principale : Champ de saisie (URL/Texte) + Bouton "Analyser"
-  - [ ] Developpement de la section "Dernieres Analyses" affichant les articles sous forme de cartes ou tableau
-  - [ ] Integration de graphiques statistiques (ex: Camembert "Ratio Green IT") via une librairie de chart compatible
-- [ ] **Page Detail Article** :
-  - [ ] Affichage complet du resultat de l'analyse IA
-  - [ ] Mise en valeur visuelle du statut (Vert = Green IT, Rouge = Non Green)
-  - [ ] Affichage du resume genere par l'IA SaaS
-  - [ ] Affichage du score de confiance du modele IA
+- [x] **Page d'Authentification (Login)** :
+  - [x] Creation d'un formulaire de connexion securise (login + register toggle)
+  - [x] Integration de la logique de stockage du Token JWT (localStorage)
+  - [x] Redirection automatique apres connexion reussie
+- [x] **Page Dashboard (Accueil)** :
+  - [x] Developpement de la zone d'action principale : Champ de saisie (URL/Texte) + Bouton "Analyser"
+  - [x] Developpement de la section "Dernieres Analyses" affichant les articles sous forme de liste interactive
+  - [x] Integration de graphiques statistiques (Camembert "Ratio Green IT") via recharts
+- [x] **Page Detail Article** :
+  - [x] Affichage complet du resultat de l'analyse IA
+  - [x] Mise en valeur visuelle du statut (Vert = Green IT, Rouge = Non Green) via Badge colore
+  - [x] Affichage du resume genere par l'IA SaaS
+  - [x] Affichage du score de confiance du modele IA (barre de progression)
 
 ### 5.4 Integration de la Logique Metier (API & State)
 
-- [ ] **Connexion Backend (Client HTTP)** :
-  - [ ] Configuration d'une instance fetch ou axios avec l'URL de base de l'API FastAPI
-  - [ ] Mise en place d'intercepteurs pour injecter automatiquement le Token d'authentification dans les headers
-- [ ] **Gestion de l'Etat et des Requetes** :
-  - [ ] Utilisation de Hooks (useEffect, useState) ou d'une librairie (React Query) pour recuperer les donnees de l'API
-  - [ ] Gestion des etats de chargement (Skeletons/Spinners) pendant l'analyse IA
-  - [ ] Gestion des erreurs (affichage de "Toasts" en cas d'echec serveur)
+- [x] **Connexion Backend (Client HTTP)** :
+  - [x] Configuration d'une instance fetch avec l'URL de base de l'API FastAPI (lib/api.ts)
+  - [x] Mise en place d'intercepteurs pour injecter automatiquement le Token d'authentification dans les headers
+- [x] **Gestion de l'Etat et des Requetes** :
+  - [x] Utilisation de Hooks (useEffect, useState, useCallback) pour recuperer les donnees de l'API
+  - [x] Gestion des etats de chargement (Skeletons/Spinners) pendant l'analyse IA
+  - [x] Gestion des erreurs (affichage de Toasts via Sonner en cas d'echec serveur)
 
 ### 5.5 Tests & Accessibilite (Bloc E4 - A8)
 
-- [ ] **Audit d'Accessibilite Automatise (Axe-core)** :
-  - [ ] Installation de la bibliotheque @axe-core/playwright
-  - [ ] Ecriture d'un script de test Playwright qui navigue sur chaque page de l'application locale
-  - [ ] Injection du moteur Axe pour scanner la page et detecter les violations WCAG (Contraste couleurs, Labels manquants, Structure HTML)
-  - [ ] Generation d'un rapport de conformite accessibilite
-- [ ] **Verification Responsive & UX** :
-  - [ ] Test manuel de l'interface sur differentes resolutions (Mobile, Tablette, Desktop)
-  - [ ] Verification de la navigation au clavier (Tabulation) pour tous les elements interactifs
+- [x] **Audit d'Accessibilite Automatise (Axe-core)** :
+  - [x] Installation de la bibliotheque @axe-core/playwright
+  - [x] Ecriture d'un script de test Playwright qui navigue sur chaque page de l'application locale (3 pages)
+  - [x] Injection du moteur Axe pour scanner la page et detecter les violations WCAG (Contraste couleurs, Labels manquants, Structure HTML)
+  - [x] Generation d'un rapport de conformite accessibilite (HTML via Playwright reporter)
+- [x] **Verification Responsive & UX** :
+  - [x] Tests automatises de l'interface sur differentes resolutions (Mobile 375px, Tablette 768px, Desktop 1280px)
+  - [x] Verification de la navigation au clavier (Tabulation) pour tous les elements interactifs
 
 ---
 

@@ -1,0 +1,68 @@
+# =============================================================================
+# GreenTech Intelligence — API Dockerfile (multi-stage, uv)
+# =============================================================================
+# Build : docker build -f Dockerfile.api -t greentech-api .
+# Run   : docker run -p 8000:8000 --env-file .env greentech-api
+#
+# Note : le pyproject.toml reference des wheels ROCm Windows.
+# Ce Dockerfile installe les deps sans les sources ROCm (CPU-only).
+# =============================================================================
+
+# --- Stage 1 : Installation des dependances ---
+FROM python:3.12-slim AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Copier les fichiers de config en premier (cache Docker)
+COPY pyproject.toml ./
+
+# Installer les dependances sans les sources ROCm Windows
+# --no-sources ignore [tool.uv.sources] (wheels ROCm win_amd64)
+# --no-install-project installe uniquement les deps, pas le package
+RUN uv sync --no-dev --no-install-project --no-sources
+
+# Copier le code source
+COPY src/ ./src/
+
+# Installer le projet lui-meme
+RUN uv sync --no-dev --no-sources
+
+
+# --- Stage 2 : Image de production ---
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+# Creer un utilisateur non-root
+RUN groupadd --gid 1000 appuser && \
+    useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
+
+# Copier le venv et le code depuis le builder
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/src /app/src
+
+# Copier les modeles de production (peut aussi etre monte en volume)
+COPY models/production/ ./models/production/
+
+# Copier les scripts SQL d'initialisation
+COPY scripts/ ./scripts/
+
+# Repertoire pour les logs
+RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+
+# Variables d'environnement
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+USER appuser
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+
+CMD ["uvicorn", "greentech.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

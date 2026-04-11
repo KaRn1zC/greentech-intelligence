@@ -65,17 +65,17 @@
 
 #### C5. Developper une API de mise a disposition (REST)
 
-- [ ] Rediger les specifications techniques de l'API et de l'acces aux donnees
-- [ ] Configurer les acces aux donnees depuis le serveur API
-- [ ] Developper la reception et la validation des requetes client
-- [ ] Developper les requetes BDD declenchees par l'API
-- [ ] Developper les reponses de l'API au client
-- [ ] Developper les regles d'autorisation/acces aux endpoints
-- [ ] Securiser l'API (ex: Top 10 OWASP)
-- [ ] L'API est fonctionnelle (acces et mise a disposition des donnees)
-- [ ] La documentation technique couvre tous les endpoints
-- [ ] La documentation couvre l'authentification/autorisation
-- [ ] La documentation respecte les standards (ex: OpenAPI/Swagger)
+- [x] Rediger les specifications techniques de l'API et de l'acces aux donnees
+- [x] Configurer les acces aux donnees depuis le serveur API
+- [x] Developper la reception et la validation des requetes client
+- [x] Developper les requetes BDD declenchees par l'API
+- [x] Developper les reponses de l'API au client
+- [x] Developper les regles d'autorisation/acces aux endpoints
+- [x] Securiser l'API (ex: Top 10 OWASP)
+- [x] L'API est fonctionnelle (acces et mise a disposition des donnees)
+- [x] La documentation technique couvre tous les endpoints
+- [x] La documentation couvre l'authentification/autorisation
+- [x] La documentation respecte les standards (ex: OpenAPI/Swagger)
 
 ---
 
@@ -126,30 +126,30 @@
 
 #### C9. Developper une API exposant un modele IA
 
-- [ ] Analyser les specs fonctionnelles/techniques
-- [ ] Concevoir l'architecture de l'API (endpoints, regles)
-- [ ] Choisir les outils/langages
-- [ ] Installer l'environnement de developpement
-- [ ] L'API verifie et transforme les parametres envoyes par le client
-- [ ] L'API execute le modele a partir de la requete
-- [ ] L'API renvoie le resultat au client
-- [ ] Developper l'authentification/autorisation
-- [ ] Securiser l'API (OWASP)
-- [ ] Developper des tests d'integration pour les endpoints
-- [ ] Les tests passent sans bug
-- [ ] Le code est versionne sur Git distant
-- [ ] La documentation (OpenAPI) est redigee et accessible
+- [x] Analyser les specs fonctionnelles/techniques
+- [x] Concevoir l'architecture de l'API (endpoints, regles)
+- [x] Choisir les outils/langages
+- [x] Installer l'environnement de developpement
+- [x] L'API verifie et transforme les parametres envoyes par le client
+- [x] L'API execute le modele a partir de la requete
+- [x] L'API renvoie le resultat au client
+- [x] Developper l'authentification/autorisation
+- [x] Securiser l'API (OWASP)
+- [x] Developper des tests d'integration pour les endpoints
+- [x] Les tests passent sans bug
+- [x] Le code est versionne sur Git distant
+- [x] La documentation (OpenAPI) est redigee et accessible
 
 #### C10. Integrer l'API IA dans une application
 
-- [ ] Installer l'environnement de l'application cliente
-- [ ] Programmer l'authentification vers l'API IA
-- [ ] Programmer la communication avec les endpoints
-- [ ] Integrer les adaptations d'interface necessaires
-- [ ] Tester l'accessibilite des interfaces modifiees
-- [ ] Developper des tests d'integration (cote app) sur le perimetre API
-- [ ] Les tests s'executent en totalite sans erreur
-- [ ] Le code est versionne sur le Git de l'application
+- [x] Installer l'environnement de l'application cliente
+- [x] Programmer l'authentification vers l'API IA
+- [x] Programmer la communication avec les endpoints
+- [x] Integrer les adaptations d'interface necessaires
+- [x] Tester l'accessibilite des interfaces modifiees
+- [x] Developper des tests d'integration (cote app) sur le perimetre API
+- [x] Les tests s'executent en totalite sans erreur
+- [x] Le code est versionne sur le Git de l'application
 
 ### A5. Deploiement MLOps
 
@@ -197,41 +197,41 @@
 #### C14. Analyser le besoin
 
 - [x] La modelisation des donnees respecte un formalisme (Merise/Entite-Relation)
-- [ ] La modelisation des parcours utilisateurs respecte un formalisme (Wireframes/Schema)
-- [ ] Les User Stories couvrent contexte, scenarios et criteres de validation
-- [ ] Les objectifs d'accessibilite sont integres aux criteres d'acceptation (User Stories)
-- [ ] Les objectifs d'accessibilite s'appuient sur un standard (WCAG/RG2AA)
+- [x] La modelisation des parcours utilisateurs respecte un formalisme (Wireframes/Schema)
+- [x] Les User Stories couvrent contexte, scenarios et criteres de validation
+- [x] Les objectifs d'accessibilite sont integres aux criteres d'acceptation (User Stories)
+- [x] Les objectifs d'accessibilite s'appuient sur un standard (WCAG/RG2AA)
 
 #### C15. Concevoir le cadre technique
 
-- [ ] Les specs techniques couvrent architecture, dependances, environnement
-- [ ] Les choix techniques favorisent l'eco-responsabilite (Green IT)
-- [ ] Les flux de donnees sont representes (Diagramme de flux)
-- [ ] Une Preuve de Concept (POC) est realisee
-- [ ] La POC est accessible et fonctionnelle en pre-prod
-- [ ] La conclusion de la POC permet de decider de la poursuite du projet
+- [x] Les specs techniques couvrent architecture, dependances, environnement
+- [x] Les choix techniques favorisent l'eco-responsabilite (Green IT)
+- [x] Les flux de donnees sont representes (Diagramme de flux)
+- [x] Une Preuve de Concept (POC) est realisee
+- [x] La POC est accessible et fonctionnelle en pre-prod
+- [x] La conclusion de la POC permet de decider de la poursuite du projet
 
 ### A7. Developper interfaces et fonctionnalites
 
 #### C16. Coordonner la realisation (Agile)
 
-- [ ] Les cycles, roles et rituels Agile sont respectes
-- [ ] Les outils de pilotage (Kanban, Backlog) sont disponibles et a jour
-- [ ] Les objectifs des rituels sont partages
-- [ ] Les elements de pilotage sont accessibles a tous
+- [x] Les cycles, roles et rituels Agile sont respectes
+- [x] Les outils de pilotage (Kanban, Backlog) sont disponibles et a jour
+- [x] Les objectifs des rituels sont partages
+- [x] Les elements de pilotage sont accessibles a tous
 
 #### C17. Developper composants et interfaces
 
-- [ ] L'environnement de dev respecte les specs
-- [ ] Les interfaces respectent les maquettes
-- [ ] Les comportements (validation, navigation) respectent les specs
-- [ ] Les composants metier fonctionnent comme prevu
-- [ ] La gestion des droits/acces est developpee
-- [ ] Les developpements respectent l'eco-conception
-- [ ] Le Top 10 OWASP est implemente
-- [ ] Des tests unitaires/integration couvrent le metier et les acces
-- [ ] Sources versionnees sur Git
-- [ ] Documentation technique (install, arch, tests) redigee et accessible
+- [x] L'environnement de dev respecte les specs
+- [x] Les interfaces respectent les maquettes
+- [x] Les comportements (validation, navigation) respectent les specs
+- [x] Les composants metier fonctionnent comme prevu
+- [x] La gestion des droits/acces est developpee
+- [x] Les developpements respectent l'eco-conception
+- [x] Le Top 10 OWASP est implemente
+- [x] Des tests unitaires/integration couvrent le metier et les acces
+- [x] Sources versionnees sur Git
+- [x] Documentation technique (install, arch, tests) redigee et accessible
 
 ### A8. Tests et Controle
 

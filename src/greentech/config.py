@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     # --- API ---
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    cors_origins: str = "http://localhost:5173,http://localhost:3000"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Liste des origines CORS autorisees, parsee depuis la chaine."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     # --- JWT ---
     jwt_secret_key: str = "CHANGE_THIS_TO_A_RANDOM_STRING"

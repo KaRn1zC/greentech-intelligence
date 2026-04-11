@@ -1,25 +1,27 @@
-"""Module d'inférence pour le modèle de classification Green IT.
+"""Module d'inference pour le modele de classification Green IT.
 
-Charge le modèle gagnant (sélectionné après le benchmark Champion vs Challengers)
+Charge le modele gagnant (selectionne apres le benchmark Champion vs Challengers)
 et fournit une interface simple pour classifier les articles en production.
-Met à jour la base PostgreSQL avec les résultats de classification.
+Met a jour la base PostgreSQL avec les resultats de classification.
 
-Le modèle de production est un lien symbolique ou une copie du vainqueur
-du benchmark (DeBERTa, Qwen+LoRA, ou Llama+LoRA) dans models/production/.
+Le modele de production est une copie du vainqueur du benchmark
+(DeBERTa, Qwen+LoRA, ou Llama+LoRA) dans models/production/.
+La detection du type de modele (complet vs adaptateur LoRA) est automatique
+via la presence du fichier adapter_config.json.
 
-Rédigé par KaRn1zC - 2026-04-10
+Redige par KaRn1zC - 2026-04-10
 """
 
 from __future__ import annotations
 
+import json
 from datetime import UTC
 from pathlib import Path
 
 from loguru import logger
 from sqlalchemy import select, update
 
-from greentech.ai.models.classifier import PredictionResult, TrainingConfig
-from greentech.ai.models.training import ChampionClassifier
+from greentech.ai.models.classifier import BaseClassifier, PredictionResult, TrainingConfig
 from greentech.config import BASE_DIR
 from greentech.data.storage.database import async_session_factory
 from greentech.data.storage.models import Article
@@ -28,23 +30,27 @@ from greentech.data.storage.models import Article
 DEFAULT_MODEL_PATH = BASE_DIR / "models" / "production"
 
 # Instance globale du classifieur (lazy loading)
-_classifier: ChampionClassifier | None = None
+_classifier: BaseClassifier | None = None
 
 
-async def get_classifier(model_path: Path | None = None) -> ChampionClassifier:
+async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
     """Retourne le classifieur de production (singleton lazy-loaded).
 
-    Charge le modèle depuis le dossier de production au premier appel,
-    puis réutilise l'instance pour les appels suivants.
+    Detecte automatiquement le type de modele :
+    - Si adapter_config.json est present → modele LoRA (ChallengerClassifier)
+    - Sinon → modele complet (ChampionClassifier)
+
+    Charge le modele au premier appel, puis reutilise l'instance.
 
     Args:
-        model_path: Chemin vers le modèle (défaut: models/production).
+        model_path: Chemin vers le modele (defaut: models/production).
 
     Returns:
-        Instance du classifieur prête pour l'inférence.
+        Instance du classifieur prete pour l'inference.
 
     Raises:
-        FileNotFoundError: Si le modèle n'est pas trouvé.
+        FileNotFoundError: Si le modele n'est pas trouve.
+        ValueError: Si la config adapter LoRA est invalide.
     """
     global _classifier  # noqa: PLW0603
 
@@ -59,10 +65,36 @@ async def get_classifier(model_path: Path | None = None) -> ChampionClassifier:
         )
         raise FileNotFoundError(msg)
 
-    config = TrainingConfig(nom_modele=str(path))
-    _classifier = ChampionClassifier(config)
-    _classifier.load(path)
-    logger.info(f"Modèle de production chargé depuis {path}")
+    adapter_config_path = path / "adapter_config.json"
+
+    if adapter_config_path.exists():
+        # Adaptateur LoRA detecte → ChallengerClassifier
+        from greentech.ai.models.training import ChallengerClassifier
+
+        with open(adapter_config_path) as f:
+            adapter_meta = json.load(f)
+
+        base_model_name = adapter_meta.get("base_model_name_or_path")
+        if not base_model_name:
+            msg = (
+                f"adapter_config.json dans {path} ne contient pas "
+                "'base_model_name_or_path'"
+            )
+            raise ValueError(msg)
+
+        config = TrainingConfig(nom_modele=base_model_name)
+        _classifier = ChallengerClassifier(config)
+        _classifier.load(path)
+        logger.info(f"Modèle LoRA ({base_model_name}) chargé depuis {path}")
+    else:
+        # Modele complet → ChampionClassifier
+        from greentech.ai.models.training import ChampionClassifier
+
+        config = TrainingConfig(nom_modele=str(path))
+        _classifier = ChampionClassifier(config)
+        _classifier.load(path)
+        logger.info(f"Modèle complet chargé depuis {path}")
+
     return _classifier
 
 
