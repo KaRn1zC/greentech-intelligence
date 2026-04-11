@@ -1,6 +1,5 @@
 # Procedure de Mise a Jour du Modele IA en Production
 
-> **Redige par KaRn1zC - 2026-04-11**
 >
 > Cette procedure permet de deployer un nouveau modele IA sans interruption de service.
 
@@ -114,7 +113,7 @@ Apres le deploiement, verifier dans Grafana :
    - La memoire du conteneur API est stable
 
 3. **Logs Loki** :
-   ```logql
+   ```text
    {container="greentech-api"} |= "Modele charge"
    ```
    Verifier que le nouveau modele est bien charge.
@@ -151,6 +150,3 @@ git push origin main
 - [ ] Monitoring Grafana verifie (pas de regression)
 - [ ] Rollback teste ou documente
 
----
-
-**Redige par KaRn1zC - 2026-04-11**

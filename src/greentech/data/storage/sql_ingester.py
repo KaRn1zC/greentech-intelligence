@@ -7,7 +7,6 @@ les articles dans PostgreSQL avec gestion des doublons
 
 Pipeline complet : MinIO clean-data (Parquet) → PostgreSQL (articles)
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

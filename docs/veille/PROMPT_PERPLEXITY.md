@@ -1,7 +1,6 @@
 # Prompts Perplexity pour Veille Hebdomadaire
 
 > **Projet** : GreenTech Intelligence
-> **Rédigé par** : KaRn1zC - 2026-02-09
 
 ---
 

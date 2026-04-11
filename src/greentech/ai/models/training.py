@@ -17,7 +17,6 @@ Usage:
     uv run python -m greentech.ai.models.training challenger-llama # Challenger Llama seul
     uv run python -m greentech.ai.models.training benchmark        # Benchmark comparatif
 
-Redige par KaRn1zC - 2026-04-10
 """
 
 from __future__ import annotations

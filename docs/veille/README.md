@@ -89,7 +89,6 @@ docs/veille/
 # Rapport Mensuel de Veille - [MOIS ANNÉE]
 
 > **Période** : Du [DATE DÉBUT] au [DATE FIN]
-> **Rédigé par** : KaRn1zC
 > **Projet** : GreenTech Intelligence
 
 ---
@@ -219,10 +218,6 @@ Pour valider la compétence **C6 : Veille technique et réglementaire**, le jury
 
 ## 🔗 Liens Utiles
 
-- [Prompt Perplexity Pro](../ACTIONS_MANUELLES_ETAPE1.md#24--perplexity-pro-recherche-ia---configuré)
-- [Configuration Inoreader](../ACTIONS_MANUELLES_ETAPE1.md#23--inoreader-agrégateur-rss---terminé)
-- [GitHub Projects Kanban](../../GESTION_KANBAN_GITHUB.md)
+- [Prompt Perplexity Pro](PROMPT_PERPLEXITY.md)
+- [GitHub Projects Kanban](../GESTION_KANBAN_GITHUB.md)
 
----
-
-**Document rédigé par KaRn1zC - 2026-02-09**

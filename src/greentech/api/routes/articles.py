@@ -3,7 +3,6 @@
 Endpoints publics de lecture des articles avec pagination,
 filtres et recherche textuelle.
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

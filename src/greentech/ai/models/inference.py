@@ -9,7 +9,6 @@ Le modele de production est une copie du vainqueur du benchmark
 La detection du type de modele (complet vs adaptateur LoRA) est automatique
 via la presence du fichier adapter_config.json.
 
-Redige par KaRn1zC - 2026-04-10
 """
 
 from __future__ import annotations

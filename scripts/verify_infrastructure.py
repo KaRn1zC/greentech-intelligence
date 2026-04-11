@@ -3,7 +3,6 @@
 Vérifie la connectivité et le bon fonctionnement de PostgreSQL et MinIO
 après leur déploiement via Docker Compose.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 from __future__ import annotations
 

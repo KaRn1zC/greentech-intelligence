@@ -2,7 +2,6 @@
 
 Fournit un engine async et une factory de sessions pour toute l'application.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

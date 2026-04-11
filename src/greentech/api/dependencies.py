@@ -3,7 +3,6 @@
 Fournit les factories de session de base de donnees et
 l'extraction de l'utilisateur courant depuis le token JWT.
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

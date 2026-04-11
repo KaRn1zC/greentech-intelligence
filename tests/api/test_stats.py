@@ -3,7 +3,6 @@
 Couvre les scenarios : statistiques globales, quotidiennes,
 par source, health check et metriques Prometheus.
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

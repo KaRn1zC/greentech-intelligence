@@ -1,7 +1,6 @@
 # Rapport Mensuel de Veille - Mars 2026
 
 > **Periode** : Du 1er mars au 31 mars 2026
-> **Redige par** : KaRn1zC
 > **Projet** : GreenTech Intelligence
 
 ---
@@ -339,4 +338,3 @@ Actions concretes :
 
 **Prochain rapport mensuel** : 30 avril 2026
 
-**Redige par KaRn1zC - 2026-03-10**

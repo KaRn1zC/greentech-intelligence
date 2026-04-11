@@ -20,7 +20,6 @@ La définition de "Green IT" utilisée :
   véhicules électriques (sauf angle IT), énergie renouvelable générale
   (sans lien avec l'IT), rapports de marché financier, tech grand public.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

@@ -4,7 +4,6 @@ Lit un dataset JSON volumineux (arXiv Metadata, ~3.6 Go) ligne par ligne,
 filtre les publications pertinentes (catégorie cs.AI) et upload
 les données brutes vers MinIO raw-data.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

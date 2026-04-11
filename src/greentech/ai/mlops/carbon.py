@@ -4,7 +4,6 @@ Wrapper autour de CodeCarbon pour mesurer les emissions CO2 des
 operations d'inference et d'entrainement. Les metriques sont exposees
 au format Prometheus pour le monitoring en production.
 
-Redige par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

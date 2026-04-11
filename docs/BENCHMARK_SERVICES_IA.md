@@ -1,7 +1,6 @@
 # Benchmark des Services IA de Resume Automatique
 
 > **Projet** : GreenTech Intelligence
-> **Redige par** : KaRn1zC - 2026-03-10
 > **Competence validee** : C7 - Identifier des services IA (Benchmark)
 
 ---
@@ -271,6 +270,3 @@ En cas de limitation du free tier Hugging Face :
 1. **Mistral AI** (meilleur score apres HF, RGPD-compliant, heberge en France)
 2. **Self-hosting BART** sur le GPU AMD 7900 XTX via ROCm (elimine toute dependance)
 
----
-
-**Document redige par KaRn1zC - 2026-03-10**

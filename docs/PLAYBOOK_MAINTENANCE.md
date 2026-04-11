@@ -1,6 +1,5 @@
 # Playbook de Maintenance - GreenTech Intelligence
 
-> **Redige par KaRn1zC - 2026-04-11**
 >
 > Procedures operationnelles pour diagnostiquer et resoudre les incidents en production.
 
@@ -33,7 +32,7 @@ Ouvrir Grafana > Dashboard **"Performance Systeme"** et verifier :
 1. Dans Grafana, aller dans **Explore** > Selectionner la datasource **Loki**
 2. Utiliser les requetes LogQL suivantes :
 
-```logql
+```text
 # Tous les logs de l'API (derniere heure)
 {container="greentech-api"} |= ""
 
@@ -166,6 +165,3 @@ cat backup_20260411.sql | docker exec -i greentech-postgres psql -U greentech gr
 | N2 | Analyse approfondie, correction de code | KaRn1zC |
 | N3 | Infrastructure Render, incidents cloud | Support Render |
 
----
-
-**Redige par KaRn1zC - 2026-04-11**

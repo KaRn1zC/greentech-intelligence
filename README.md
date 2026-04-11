@@ -540,6 +540,35 @@ uv run ruff check src/ tests/ --fix
 uv run ruff format src/ tests/
 ```
 
+### Documentation Sphinx
+
+La documentation du projet est generee avec Sphinx, MyST-Parser (Markdown) et le theme Furo.
+
+```bash
+# Generer la documentation HTML
+cd docs
+uv run sphinx-build -b html . _build/html
+```
+
+Pour la consulter, ouvrez directement le fichier dans votre navigateur :
+
+```bash
+# Windows
+start docs/_build/html/index.html
+
+# Linux / Mac
+open docs/_build/html/index.html
+```
+
+Ou lancez un serveur local :
+
+```bash
+cd docs/_build/html
+python -m http.server 8080
+```
+
+Puis ouvrez http://localhost:8080.
+
 ---
 
 ## 11. Architecture technique
@@ -643,5 +672,3 @@ MIT License - voir [LICENSE](LICENSE)
 **Arnaud "KaRn1zC" BOY**
 
 Projet de memoire — Titre Professionnel de niveau 6 — Developpeur en Intelligence Artificielle et Data Analyst (2025-2026)
-
-Redige par KaRn1zC - 2026-04-11

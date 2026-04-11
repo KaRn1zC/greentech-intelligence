@@ -3,7 +3,6 @@
 Réplique exacte du schéma défini dans scripts/sql/init.sql
 avec la nomenclature française du MCD/MLD.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

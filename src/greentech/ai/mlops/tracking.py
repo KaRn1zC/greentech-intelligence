@@ -4,7 +4,6 @@ Configure et gère le suivi des expériences ML avec MLflow, incluant
 la mesure d'empreinte carbone via CodeCarbon. Centralise les fonctions
 de logging pour les paramètres, métriques et artefacts.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

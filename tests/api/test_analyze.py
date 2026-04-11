@@ -5,7 +5,6 @@ et les cas d'erreur (pas d'auth, input invalide, job introuvable).
 Les composants IA (classification, resume) sont mockes pour ne pas
 charger de modele reel pendant les tests.
 
-Redige par KaRn1zC - 2026-04-11
 """
 
 from __future__ import annotations

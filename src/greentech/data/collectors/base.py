@@ -4,7 +4,6 @@ Fournit la classe abstraite BaseCollector et la fonction
 get_config_from_db pour récupérer la configuration dynamique
 depuis la table search_config de PostgreSQL.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

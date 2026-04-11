@@ -3,7 +3,6 @@
 Charge automatiquement les variables depuis le fichier .env
 situé à la racine du projet.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

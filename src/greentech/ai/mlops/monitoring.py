@@ -10,7 +10,6 @@ et les performances du systeme de classification Green IT :
 Les metriques sont collectees par Prometheus et visualisees dans Grafana.
 L'integration effective avec les endpoints FastAPI se fera a l'etape 4.
 
-Redige par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

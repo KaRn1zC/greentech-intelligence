@@ -3,7 +3,6 @@
 Definit les modeles de requete et de reponse pour les endpoints /auth.
 Inclut la validation stricte des entrees (email, mot de passe).
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

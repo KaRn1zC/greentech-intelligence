@@ -1,7 +1,6 @@
 # Etat d'avancement du projet - GreenTech Intelligence
 
 > **Derniere mise a jour** : 2026-04-11
-> **Redige par** : KaRn1zC
 
 ---
 
@@ -139,6 +138,3 @@ Le ratio 22/5786 (0.4% Green IT) est tres desequilibre. Strategie appliquee :
 ### Nomenclature
 Le projet utilise des noms de colonnes en **francais** dans toute la stack (SQL, SQLAlchemy, Pydantic, TypeScript).
 
----
-
-**Redige par KaRn1zC - 2026-04-11**

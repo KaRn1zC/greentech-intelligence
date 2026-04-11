@@ -3,7 +3,6 @@
 Definit les modeles de requete et de reponse pour les endpoints /articles.
 Assure la validation des entrees et la serialisation des sorties.
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

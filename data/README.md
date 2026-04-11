@@ -26,4 +26,3 @@ uv run dvc add data/golden_dataset.csv
 git add data/golden_dataset.csv.dvc data/.gitignore
 ```
 
-Rédigé par KaRn1zC - 2026-03-10

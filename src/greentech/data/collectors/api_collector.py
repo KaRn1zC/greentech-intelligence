@@ -3,7 +3,6 @@
 Utilise httpx (client HTTP asynchrone) pour interroger l'API REST
 et sauvegarde les réponses brutes dans le bucket MinIO raw-data.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

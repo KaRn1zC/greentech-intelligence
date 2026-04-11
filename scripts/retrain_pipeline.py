@@ -26,7 +26,6 @@ Usage:
     # Combiner des etapes
     uv run python scripts/retrain_pipeline.py collect annotate train
 
-Redige par KaRn1zC - 2026-04-11
 """
 
 from __future__ import annotations

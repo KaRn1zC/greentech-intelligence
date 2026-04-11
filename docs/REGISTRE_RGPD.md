@@ -1,6 +1,5 @@
 # Registre des Traitements de Données Personnelles
 
-> **Rédigé par KaRn1zC - 2026-02-11**
 >
 > Document de conformité RGPD pour le projet GreenTech Intelligence.
 > Conformément à l'article 30 du RGPD, ce registre documente l'ensemble

@@ -204,5 +204,4 @@ Cocher les compétences C1 à C5 :
 
 ---
 
-**Document rédigé par KaRn1zC - 2026-02-09**
 **À utiliser à la fin de chaque ÉTAPE !**

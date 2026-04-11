@@ -6,7 +6,6 @@ pour respecter les limites de l'API NewsData.io (free tier).
 
 60 requêtes Green IT + 60 requêtes Non Green IT = dataset équilibré.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

@@ -6,7 +6,6 @@ les middlewares CORS, le logging Loguru et les routes.
 
 Demarrage : uv run uvicorn src.greentech.api.main:app --reload --port 8000
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

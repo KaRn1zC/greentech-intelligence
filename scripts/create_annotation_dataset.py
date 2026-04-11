@@ -4,7 +4,6 @@ Extrait les articles depuis PostgreSQL et crée un CSV avec les colonnes
 nécessaires à l'annotation manuelle (labeling Green IT / Non Green IT).
 Le fichier est ensuite versionné via DVC.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

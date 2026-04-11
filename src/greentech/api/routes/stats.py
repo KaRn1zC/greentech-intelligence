@@ -3,7 +3,6 @@
 Endpoints publics exposant les metriques globales, quotidiennes
 et par source de donnees.
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

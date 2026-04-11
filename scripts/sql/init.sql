@@ -1,7 +1,6 @@
 -- =============================================================================
 -- GreenTech Intelligence - Script d'initialisation de la base de données
 -- PostgreSQL 15+
--- Rédigé par KaRn1zC - 2026-02-11
 -- =============================================================================
 
 -- Extension pour UUID

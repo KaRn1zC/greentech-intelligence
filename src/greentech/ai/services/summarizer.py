@@ -4,7 +4,6 @@ Connecte l'application à l'API d'inférence Hugging Face pour générer
 des résumés d'articles technologiques. Le résumé est ensuite stocké
 dans la colonne `resume` de la table `articles` en base PostgreSQL.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

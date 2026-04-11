@@ -4,7 +4,6 @@ Suite de tests pour vérifier l'intégrité du modèle de classification
 Green IT : data leakage, biais, robustesse au bruit, et conformité
 des données d'entraînement.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

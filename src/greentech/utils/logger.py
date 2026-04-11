@@ -4,7 +4,6 @@ Fournit un setup unique pour le logging structure (JSON) avec envoi
 automatique vers Grafana Loki pour la centralisation des logs.
 Compatible avec le middleware HTTP de l'API FastAPI.
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

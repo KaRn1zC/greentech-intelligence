@@ -6,7 +6,6 @@ reception → nettoyage → classification IA → resume SaaS → stockage.
 Les analyses sont executees en arriere-plan pour ne pas bloquer
 la requete HTTP. Un job_id permet de suivre l'avancement.
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

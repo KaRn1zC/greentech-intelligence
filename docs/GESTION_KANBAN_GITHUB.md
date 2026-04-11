@@ -605,5 +605,4 @@ Dans l'onglet **"Backlog"** de ton Kanban, tu verras toujours :
 
 ---
 
-**Document rédigé par KaRn1zC - 2026-02-09**
 **À consulter à chaque changement d'étape !**

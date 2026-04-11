@@ -4,7 +4,6 @@ Cible le blog TechCrunch (section Climate) qui utilise un chargement
 dynamique JavaScript (infinite scroll). Playwright est nécessaire
 pour simuler le rendu navigateur et récupérer le contenu.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

@@ -6,7 +6,6 @@ de tokens JWT. Respecte les recommandations OWASP :
 - Reponses generiques pour eviter l'enumeration des comptes
 - Validation stricte des entrees via Pydantic
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

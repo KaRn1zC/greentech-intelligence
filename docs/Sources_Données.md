@@ -1,6 +1,5 @@
 # Sources de Donnees - Projet GreenTech Intelligence
 
-> **Redige par KaRn1zC - 2026-02-10**
 
 Ce document recense les trois sources de donnees externes selectionnees pour alimenter
 l'architecture Data Lakehouse du projet. Elles ont ete choisies pour leur pertinence

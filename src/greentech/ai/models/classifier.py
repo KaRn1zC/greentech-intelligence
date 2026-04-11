@@ -7,7 +7,6 @@ Fournit trois stratégies de classification :
 
 Les deux modèles sont comparés via MLflow pour sélectionner le meilleur.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

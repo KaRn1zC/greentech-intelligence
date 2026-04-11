@@ -3,7 +3,6 @@
 Gère l'upload et le download de fichiers vers les buckets
 raw-data et clean-data du Data Lake.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

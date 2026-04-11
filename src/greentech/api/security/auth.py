@@ -4,7 +4,6 @@ Fournit les fonctions de creation/verification des tokens JWT
 et de hashing/verification des mots de passe via bcrypt.
 Respecte les recommandations OWASP pour la securite des tokens.
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

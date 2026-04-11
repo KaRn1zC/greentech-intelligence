@@ -3,7 +3,6 @@
 Couvre les scenarios : inscription, connexion, acces au profil,
 deconnexion, et les cas d'erreur (doublons, mauvais identifiants).
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

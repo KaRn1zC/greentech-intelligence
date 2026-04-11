@@ -4,7 +4,6 @@ Crée un fichier Parquet dans MinIO clean-data/articles/ avec le même
 schéma que celui produit par le pipeline Spark (spark_cleaner.py).
 Utile pour le développement et la validation du script d'ingestion.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

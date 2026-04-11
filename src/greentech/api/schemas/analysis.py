@@ -2,7 +2,6 @@
 
 Definit les modeles pour les endpoints /analyze (soumission et suivi).
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

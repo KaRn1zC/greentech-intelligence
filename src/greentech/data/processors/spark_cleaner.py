@@ -5,7 +5,6 @@ applique les transformations de nettoyage (HTML, dates, encodages),
 anonymise les auteurs (RGPD) et sauvegarde le résultat nettoyé
 dans MinIO (clean-data) au format Parquet.
 
-Rédigé par KaRn1zC - 2026-03-10
 """
 
 from __future__ import annotations

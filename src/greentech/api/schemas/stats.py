@@ -2,7 +2,6 @@
 
 Definit les modeles de reponse pour les endpoints /stats.
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

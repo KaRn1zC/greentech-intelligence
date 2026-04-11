@@ -1,6 +1,5 @@
 # Specifications Techniques - Extraction & Stockage des Donnees
 
-> **Redige par KaRn1zC - 2026-02-10**
 >
 > Document de reference pour la conception du MCD et le developpement
 > des modules de collecte, nettoyage et stockage (Etape 2 - Bloc E1).
@@ -1222,7 +1221,6 @@ serait privilégié.
 
 ## 10. Documentation technique du pipeline Data (Implementation)
 
-> **Redige par KaRn1zC - 2026-03-10**
 >
 > Cette section documente la logique algorithmique de chaque script,
 > les choix d'implementation et les commandes pour executer le pipeline complet.
@@ -1479,7 +1477,7 @@ classique ne verrait que le squelette HTML vide.
 
    **Requete SQL generee** :
 
-   ```sql
+   ```text
    INSERT INTO articles (uuid, id_source, titre, url, contenu, auteur,
                           date_publication, langue, chemin_donnees_brutes)
    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)

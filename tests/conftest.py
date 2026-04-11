@@ -3,7 +3,6 @@
 Fournit un client HTTP de test, une base de donnees en memoire
 et des fixtures d'authentification reutilisables.
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations

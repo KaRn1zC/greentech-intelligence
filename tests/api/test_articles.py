@@ -3,7 +3,6 @@
 Couvre les scenarios : liste paginee, filtres, detail, recherche,
 et les cas d'erreur (article introuvable).
 
-Redige par KaRn1zC - 2026-03-13
 """
 
 from __future__ import annotations
