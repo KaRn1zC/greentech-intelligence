@@ -44,3 +44,19 @@ scrape_configs:
       - targets: ['minio:9000']
     metrics_path: '/minio/v2/metrics/cluster'
     scrape_interval: 30s
+
+  # Pushgateway : passerelle pour les metriques des jobs ephemere
+  # (pipeline de re-entrainement Llama, scripts d'annotation, etc.).
+  # Ces jobs poussent leurs metriques et Prometheus les scrape ici.
+  - job_name: 'pushgateway'
+    honor_labels: true
+    static_configs:
+      - targets: ['pushgateway:9091']
+    scrape_interval: 10s
+
+  # cAdvisor : metriques par conteneur Docker (CPU, RAM, reseau, I/O).
+  # Permet de voir la consommation de chaque service du stack.
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 15s

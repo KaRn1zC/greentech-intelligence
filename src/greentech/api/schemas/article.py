@@ -49,6 +49,7 @@ class ArticleDetail(BaseModel):
     url: str
     contenu: str | None = None
     resume: str | None = None
+    resume_ecologique: str | None = None
     auteur: str | None = None
     date_publication: datetime | None = None
     langue: str = "en"

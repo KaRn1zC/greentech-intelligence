@@ -135,6 +135,23 @@ export function ArticleDetailPage() {
             </Card>
           )}
 
+          {/* Resume aspects ecologiques (uniquement si article Green IT) */}
+          {article.resume_ecologique && (
+            <Card className="border-green-300 bg-green-50 dark:border-green-900 dark:bg-green-950/30">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base text-green-800 dark:text-green-300">
+                  <Leaf className="h-4 w-4" aria-hidden="true" />
+                  Aspects ecologiques identifies
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm leading-relaxed text-green-900 dark:text-green-100">
+                  {article.resume_ecologique}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Contenu */}
           {article.contenu && (
             <Card>

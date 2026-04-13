@@ -33,17 +33,25 @@ html_theme = "furo"
 html_title = "GreenTech Intelligence"
 html_theme_options = {
     "light_css_variables": {
+        # Couleur de marque utilisee pour headings et accents visuels uniquement.
+        # Le ratio de contraste n'a pas besoin de respecter 4.5:1 car non utilisee
+        # pour du texte courant.
         "color-brand-primary": "#16a34a",
-        "color-brand-content": "#16a34a",
+        # Couleur utilisee pour les liens du contenu : green-700 Tailwind
+        # (ratio 5.67:1 sur fond #f8f9fb) pour respecter WCAG 2.1 AA.
+        "color-brand-content": "#15803d",
     },
     "dark_css_variables": {
+        # En mode sombre, le vert clair passe le contraste sur fond tres fonce.
         "color-brand-primary": "#4ade80",
-        "color-brand-content": "#4ade80",
+        "color-brand-content": "#86efac",
     },
 }
 
-# Fichiers statiques
-html_static_path = []
+# Fichiers statiques (CSS/JS custom pour corrections d'accessibilite)
+html_static_path = ["_static"]
+html_css_files = ["a11y-overrides.css"]
+html_js_files = ["a11y-fixes.js"]
 
 # Langue
 language = "fr"

@@ -14,24 +14,65 @@
 
 ---
 
-## Etape 1 : Entrainer le nouveau modele
+## Etape 1 : Preparer le golden dataset (classification hybride)
+
+Avant d'entrainer, le golden dataset doit refleter la classification la
+plus a jour possible. Le pipeline applique une **classification hybride
+en deux etages** (cf. specs techniques section 11), puis exporte le CSV :
 
 ```bash
-# Lancer l'entrainement (exemple avec un nouveau challenger)
-uv run python -m greentech.ai.models.training challenger-llama
+# Etage 1 : pre-filtre mots-cles (marque NON_GREEN direct ou CANDIDATE)
+uv run python scripts/retrain_pipeline.py annotate
 
-# Benchmark pour comparer avec le modele actuel
-uv run python -m greentech.ai.models.training benchmark
+# Etage 2 : LLM judge Qwen sur les candidats
+# Bascule automatique sur GPU AMD local si quota HF mensuel epuise (HTTP 402).
+uv run python scripts/retrain_pipeline.py classify
+
+# Resumes general + ecologique uniquement pour les Green IT confirmes
+uv run python scripts/retrain_pipeline.py summarize
+
+# Export du CSV source de verite depuis l'etat final de la DB
+uv run python scripts/retrain_pipeline.py export-golden
 ```
 
-Verifier dans MLflow (http://localhost:5000) :
-- Le F1 score du nouveau modele est **superieur** au modele actuel (0.667)
-- Le temps d'inference est **acceptable** (< 15s sur CPU)
-- L'empreinte carbone est **documentee** (CodeCarbon)
+Le fichier `data/golden_dataset.csv` est ainsi regenere a partir de
+l'etat final de la DB (post-LLM), pas du scoring mots-cles seul.
+
+## Etape 2 : Entrainer le nouveau modele
+
+Deux modes d'entrainement sont disponibles, orchestres par `scripts/retrain_pipeline.py` :
+
+```bash
+# Mode rapide : split 80/20 stratifie (~10 min)
+uv run python scripts/retrain_pipeline.py train
+
+# Mode robuste : K-fold stratifie K=5 + modele final (~50 min)
+# Recommande pour figer une version de production, car l'evaluation moyenne
+# les bruits statistiques dus au tres faible nombre de Green IT dans le corpus.
+uv run python scripts/retrain_pipeline.py train-cv
+
+# Calcul de la baseline (modele brut sans fine-tuning, sur le dataset complet)
+uv run python scripts/retrain_pipeline.py baseline
+```
+
+Chaque run produit :
+- `models/challenger-llama/` : adapter LoRA entraine
+- `models/cv_report.json` (uniquement en mode train-cv) : metriques par fold + agregees
+- `models/baseline_metrics.json` : reference permanente du modele brut
+- MLflow : tracking des runs (http://localhost:5000)
+
+Verifier dans le rapport ou MLflow :
+- **MCC** (Matthews Correlation Coefficient) : **critere principal**, robuste au
+  desequilibre. Doit etre strictement superieur a 0 (mieux que l'aleatoire).
+- **Recall Green IT** : doit etre >= 0.5 (garde-fou metier pour ne pas rater les positifs).
+- **F1 score** : au plus -5% par rapport au meilleur modele historique.
+- **Stabilite entre folds** (K-fold uniquement) : std du MCC <= 0.15.
+- **Temps d'inference** : acceptable (< 15s sur CPU).
+- **Empreinte carbone** : documentee (CodeCarbon).
 
 ---
 
-## Etape 2 : Valider avec Deepchecks
+## Etape 3 : Valider avec Deepchecks
 
 ```bash
 # Executer la suite de tests de validation
@@ -45,12 +86,34 @@ Verifier que :
 
 ---
 
-## Etape 3 : Packager le modele
+## Etape 4 : Packager le modele (promotion conditionnelle)
+
+La promotion est **automatisee** via `retrain_pipeline.py` : le script compare les
+metriques du nouveau modele aux references et ne copie les artefacts vers
+`models/production/` que si les **4 criteres de promotion** sont satisfaits.
 
 ```bash
-# Copier les artefacts du nouveau modele
-cp -r models/challenger-llama/* models/production/
+# Benchmark + promotion automatique si tous les criteres sont OK
+uv run python scripts/retrain_pipeline.py auto-promote
 
+# Ou pour forcer la promotion manuelle (contournement des criteres)
+uv run python scripts/retrain_pipeline.py promote
+```
+
+**Criteres de promotion** (cf. `scripts/retrain_pipeline.py`) :
+
+| # | Critere | Constante | Raison |
+|---|---------|-----------|--------|
+| 1 | `MCC_nouveau >= MCC_ancien - epsilon` | `MCC_EPSILON = 0.01` | Metrique principale, robuste au desequilibre |
+| 2 | `Recall_Green_IT >= 0.5` | `MIN_RECALL_GREEN_IT = 0.5` | Garde-fou metier : detecter les vrais positifs |
+| 3 | `F1_nouveau >= F1_ancien * 0.95` | `F1_REGRESSION_TOLERANCE = 0.95` | Protection contre regression F1 |
+| 4 | `std(MCC) entre folds <= 0.15` | `MAX_MCC_STD = 0.15` | Stabilite CV (applique si K-fold utilise) |
+
+Le script archive automatiquement l'ancien modele dans `models/versions/<tag>/`
+avant de le remplacer. Le fichier `models/best_metrics.json` est mis a jour
+avec les metriques du nouveau modele.
+
+```bash
 # Mettre a jour la Model Card
 # Editer models/production/README.md avec les nouvelles metriques
 
@@ -61,7 +124,7 @@ dvc push
 
 ---
 
-## Etape 4 : Deployer sans interruption (Blue-Green)
+## Etape 5 : Deployer sans interruption (Blue-Green)
 
 ### Option A : Deploiement local (Docker)
 
@@ -100,7 +163,7 @@ git push origin main
 
 ---
 
-## Etape 5 : Verifier en production
+## Etape 6 : Verifier en production
 
 Apres le deploiement, verifier dans Grafana :
 
@@ -140,7 +203,10 @@ git push origin main
 
 ## Checklist de mise a jour
 
-- [ ] Nouveau modele entraine et benchmark > modele actuel
+- [ ] Nouveau modele entraine (de preference via `train-cv` pour la robustesse)
+- [ ] Baseline recalculee si besoin (`retrain_pipeline.py baseline`)
+- [ ] Benchmark execute et verdict "nouveau_retenu" dans `data/benchmark_versions.json`
+- [ ] 4 criteres de promotion satisfaits (MCC, recall Green IT, non-regression F1, stabilite CV)
 - [ ] Tests Deepchecks passes
 - [ ] Model Card mise a jour
 - [ ] DVC push effectue

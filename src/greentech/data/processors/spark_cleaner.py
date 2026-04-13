@@ -491,6 +491,10 @@ if __name__ == "__main__":
     import os
     import sys
 
+    from greentech.utils.logger import setup_logging
+
+    setup_logging(level="INFO", enable_loki=False)
+
     # Configurer JAVA_HOME si nécessaire
     java_home = os.environ.get("JAVA_HOME", "")
     if not java_home:

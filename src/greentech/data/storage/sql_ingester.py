@@ -425,4 +425,7 @@ async def run_sql_ingestion() -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    from greentech.utils.logger import setup_logging
+
+    setup_logging(level="INFO", enable_loki=False)
     asyncio.run(run_sql_ingestion())

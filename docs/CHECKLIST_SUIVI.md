@@ -94,6 +94,7 @@
 - [x] Configurer les outils d'agregation
 - [x] Rediger des syntheses des informations collectees
 - [x] Communiquer les syntheses aux parties prenantes (format accessible)
+- [x] Les sources identifiees respectent les criteres de fiabilite (auteur identifie, date recente, sources citees, confirmation par d'autres sites de confiance)
 
 #### C7. Identifier des services IA (Benchmark)
 
@@ -139,6 +140,8 @@
 - [x] Les tests passent sans bug
 - [x] Le code est versionne sur Git distant
 - [x] La documentation (OpenAPI) est redigee et accessible
+- [x] La documentation respecte les standards du modele choisi (OpenAPI/Swagger)
+- [x] La documentation est communiquee dans un format respectant les recommandations d'accessibilite (Valentin Haüy / Microsoft)
 
 #### C10. Integrer l'API IA dans une application
 
@@ -160,11 +163,15 @@
 - [x] Choisir l'outil de monitoring et de consolidation
 - [x] Integrer les collecteurs de donnees
 - [x] Integrer l'outil de restitution (Dashboard type Grafana/Streamlit)
+- [x] Au moins un vecteur de restitution des metriques en temps reel est propose
+- [x] Les metriques monitorees sont expliquees sans erreur d'interpretation
 - [x] Configurer les alertes (email, notif)
 - [x] L'outil de restitution respecte les enjeux d'accessibilite
+- [x] La chaine de monitoring est d'abord testee dans un bac a sable / environnement dedie
 - [x] La chaine de monitoring est testee et fonctionnelle
 - [x] Code versionne sur Git
 - [x] Documentation technique (install/maintenance) et utilisateur redigee
+- [x] Documentation communiquee dans un format respectant les recommandations d'accessibilite
 
 #### C12. Tests automatises du modele
 
@@ -175,6 +182,8 @@
 - [x] Les tests couvrent le perimetre defini
 - [x] Code et Donnees (si possible DVC) versionnes
 - [x] Documentation technique des tests redigee
+- [x] Documentation couvre la procedure d'installation, l'execution des tests et le calcul de la couverture
+- [x] Documentation communiquee dans un format respectant les recommandations d'accessibilite
 
 #### C13. Chaine de livraison continue (CI/CD pour IA)
 
@@ -183,10 +192,11 @@
 - [x] Integrer l'etape de test des donnees
 - [x] Integrer l'etape de test/entrainement/validation du modele
 - [x] Integrer la generation de rapports (matrix confusion, accuracy) dans la livraison
-- [x] Integrer l'etape de livraison (ex: Pull Request automatique)
+- [x] Integrer l'etape de livraison (ex: Pull Request automatique) avec rapports d'evaluation attaches
 - [x] Les fichiers de config CI/CD sont reconnus et executes
 - [x] Code versionne sur Git
-- [x] Documentation de la chaine CI/CD redigee et accessible
+- [x] Documentation de la chaine CI/CD redigee
+- [x] Documentation communiquee dans un format respectant les recommandations d'accessibilite
 
 ---
 
@@ -227,11 +237,13 @@
 - [x] Les comportements (validation, navigation) respectent les specs
 - [x] Les composants metier fonctionnent comme prevu
 - [x] La gestion des droits/acces est developpee
-- [x] Les developpements respectent l'eco-conception
+- [x] Les flux de donnees sont integres selon les specs
+- [x] Les developpements respectent l'eco-conception (eco-index / Green IT)
 - [x] Le Top 10 OWASP est implemente
 - [x] Des tests unitaires/integration couvrent le metier et les acces
 - [x] Sources versionnees sur Git
-- [x] Documentation technique (install, arch, tests) redigee et accessible
+- [x] Documentation technique (install, arch, tests) redigee
+- [x] Documentation communiquee dans un format respectant les recommandations d'accessibilite (Valentin Haüy / Microsoft)
 
 ### A8. Tests et Controle
 
@@ -241,7 +253,8 @@
 - [x] La chaine integre toutes les etapes prealables (build)
 - [x] La chaine execute les tests automatiquement
 - [x] Config versionnee sur Git
-- [x] Documentation de la CI (install/config/test) redigee et accessible
+- [x] Documentation de la CI (install/config/test) redigee
+- [x] Documentation communiquee dans un format respectant les recommandations d'accessibilite (Valentin Haüy / Microsoft)
 
 #### C19. Livraison continue (CD)
 
@@ -249,7 +262,8 @@
 - [x] Les etapes de packaging (build, docker, minification) sont integrees
 - [x] L'etape de livraison (ex: Deploy ou Pull Request) est integree
 - [x] Sources versionnees sur Git
-- [x] Documentation de la CD (toutes etapes/declencheurs) redigee et accessible
+- [x] Documentation de la CD (toutes etapes/declencheurs) redigee
+- [x] Documentation communiquee dans un format respectant les recommandations d'accessibilite
 
 ---
 
@@ -262,9 +276,11 @@
 - [x] La documentation liste les metriques, seuils et valeurs d'alerte
 - [x] La documentation justifie le choix des outils
 - [x] Les outils (collecteurs, logs, dashboard) sont installes et operationnels (minima en local)
-- [x] Les regles de journalisation (Logs) sont integrees au code source
+- [x] Les regles de journalisation (Logs) sont integrees au code source, en fonction des metriques a surveiller
 - [x] Les alertes sont configurees et fonctionnelles selon les seuils
-- [x] Documentation d'installation du monitoring redigee et accessible
+- [x] Le monitoring respecte les normes de gestion des donnees personnelles (RGPD)
+- [x] Documentation d'installation du monitoring redigee
+- [x] Documentation communiquee dans un format respectant les recommandations d'accessibilite
 
 #### C21. Resoudre les incidents techniques
 

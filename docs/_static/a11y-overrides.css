@@ -1,0 +1,75 @@
+/*
+ * Overrides CSS pour ameliorer l'accessibilite de la documentation Sphinx.
+ *
+ * Furo utilise --color-brand-primary pour les liens de navigation (sidebar,
+ * toctree, etc.). La valeur par defaut du projet (#16a34a) ne respecte pas
+ * le ratio de contraste 4.5:1 WCAG 2.1 AA sur fond clair. On force une teinte
+ * plus sombre (green-700 Tailwind, ratio 5.67:1) uniquement pour les liens,
+ * tout en conservant le vert vif #16a34a comme couleur de marque sur les
+ * accents visuels (bordures, barres).
+ */
+
+/* === Mode clair === */
+body:not([data-theme="dark"]) .sidebar-tree a.reference,
+body:not([data-theme="dark"]) .sidebar-tree a.current,
+body:not([data-theme="dark"]) .toctree-l1 > a.reference,
+body:not([data-theme="dark"]) .toctree-l2 > a.reference,
+body:not([data-theme="dark"]) .toctree-l3 > a.reference,
+body:not([data-theme="dark"]) a.reference.internal,
+body:not([data-theme="dark"]) a.reference.external {
+  /* green-700 Tailwind, ratio 5.67:1 sur #f8f9fb */
+  color: #15803d;
+}
+
+body:not([data-theme="dark"]) .sidebar-tree a.reference:hover,
+body:not([data-theme="dark"]) a.reference.internal:hover,
+body:not([data-theme="dark"]) a.reference.external:hover {
+  /* green-800 Tailwind, ratio encore plus eleve au hover */
+  color: #166534;
+}
+
+/* === Mode sombre === */
+@media (prefers-color-scheme: dark) {
+  body[data-theme="auto"] .sidebar-tree a.reference,
+  body[data-theme="auto"] a.reference.internal,
+  body[data-theme="auto"] a.reference.external,
+  body[data-theme="dark"] .sidebar-tree a.reference,
+  body[data-theme="dark"] a.reference.internal,
+  body[data-theme="dark"] a.reference.external {
+    /* green-300 Tailwind, ratio suffisant sur fond sombre */
+    color: #86efac;
+  }
+}
+
+body[data-theme="dark"] .sidebar-tree a.reference,
+body[data-theme="dark"] a.reference.internal,
+body[data-theme="dark"] a.reference.external {
+  color: #86efac;
+}
+
+/* === Focus visible renforce pour la navigation clavier (WCAG 2.1 AA - 2.4.7) === */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid #15803d;
+  outline-offset: 2px;
+}
+
+body[data-theme="dark"] a:focus-visible,
+body[data-theme="dark"] button:focus-visible {
+  outline-color: #86efac;
+}
+
+/* === Soulignement explicite des liens dans le contenu (WCAG 1.4.1) === */
+.content a.reference.internal,
+.content a.reference.external,
+main a.reference.internal,
+main a.reference.external,
+article a.reference.internal,
+article a.reference.external {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

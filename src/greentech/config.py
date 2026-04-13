@@ -58,8 +58,31 @@ class Settings(BaseSettings):
 
     # --- Hugging Face ---
     huggingface_token: str = ""
-    huggingface_model_summarizer: str = "facebook/bart-large-cnn"
+    # Architecture mono-modele : un seul LLM instructif est utilise pour les
+    # deux types de resumes (general et aspects ecologiques). Cela garantit
+    # la coherence linguistique (tout en francais), la coherence qualitative
+    # (meme niveau de generation entre les 2 blocs) et simplifie l'infrastructure.
+    # `Qwen/Qwen2.5-7B-Instruct` est disponible via HF Inference Providers
+    # sans activation ni demande d'acces (licence Apache-2.0).
+    huggingface_model_summarizer: str = "Qwen/Qwen2.5-7B-Instruct"
+    # Le modele de resume ecologique pointe vers le meme modele : deux appels
+    # paralleles avec des prompts distincts (plutot qu'un seul appel JSON pour
+    # conserver une implementation simple et robuste aux erreurs individuelles).
+    huggingface_model_green_summarizer: str = "Qwen/Qwen2.5-7B-Instruct"
     huggingface_model_classifier: str = "microsoft/deberta-v3-base"
+    # LLM judge pour l'etage 2 de classification Green IT : verifie les articles
+    # marques CANDIDATE par le pre-filtre mots-cles. Meme modele Qwen instructif
+    # que les summarizers pour limiter le nombre de services a maintenir.
+    huggingface_model_classifier_llm: str = "Qwen/Qwen2.5-7B-Instruct"
+    # Modele utilise en fallback local (GPU AMD ROCm) lorsque le quota mensuel
+    # HF Inference Providers est epuise (erreur HTTP 402). On conserve
+    # exactement le MEME modele que celui appele via HF (Qwen2.5-7B-Instruct)
+    # pour garantir une continuite qualitative totale entre les deux backends :
+    # les resumes et les verdicts de classification ont la meme qualite
+    # selon que l'on passe par le cloud ou par le GPU local. En FP16 sur la
+    # RX 7900 XTX (24 Go VRAM), le 7B occupe environ 14 Go, ce qui laisse
+    # une marge confortable pour le contexte et les activations.
+    huggingface_model_local_fallback: str = "Qwen/Qwen2.5-7B-Instruct"
 
     # --- API ---
     api_host: str = "0.0.0.0"
@@ -68,8 +91,23 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> list[str]:
-        """Liste des origines CORS autorisees, parsee depuis la chaine."""
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        """Liste des origines CORS autorisees, parsee depuis la chaine.
+
+        Accepte deux formats pour etre robuste aux erreurs de config :
+        - CSV : "http://a.com,http://b.com"
+        - JSON array : '["http://a.com","http://b.com"]' (format Pydantic historique)
+        """
+        import json
+
+        raw = self.cors_origins.strip()
+        if raw.startswith("[") and raw.endswith("]"):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    return [str(o).strip() for o in parsed if str(o).strip()]
+            except json.JSONDecodeError:
+                pass
+        return [o.strip() for o in raw.split(",") if o.strip()]
 
     # --- JWT ---
     jwt_secret_key: str = "CHANGE_THIS_TO_A_RANDOM_STRING"

@@ -187,3 +187,6 @@ dmypy.json
 # === Codecarbon ===
 emissions.csv
 codecarbon.log
+
+# === Plugins LLM-Code ===
+scripts/_patch_security_hook.py

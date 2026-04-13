@@ -32,6 +32,24 @@ MAX_RESULTS_PER_REQUEST = 10
 # Timeout pour les requêtes HTTP (secondes)
 HTTP_TIMEOUT = 30.0
 
+# Rate limiting : NewsData.io plan gratuit = 30 requetes / 15 minutes.
+# Un delai de 2s entre requetes respecte confortablement cette contrainte.
+MIN_DELAY_BETWEEN_REQUESTS = 2.0
+
+# Retry avec backoff exponentiel sur erreur 429 (Too Many Requests)
+MAX_RETRIES_ON_RATE_LIMIT = 3
+INITIAL_BACKOFF_SECONDS = 5.0
+BACKOFF_MULTIPLIER = 2.0
+
+
+class RateLimitExceededError(Exception):
+    """Leve quand l'API refuse les requetes apres plusieurs retries avec backoff.
+
+    Signale que le budget de requetes est definitivement epuise pour la fenetre
+    en cours (ex. 30 req/15min sur NewsData.io gratuit). Le collecteur interrompt
+    alors la boucle plutot que de continuer a hammerer l'API inutilement.
+    """
+
 
 class ApiCollector(BaseCollector):
     """Collecteur de données via l'API NewsData.io.
@@ -70,9 +88,14 @@ class ApiCollector(BaseCollector):
             return result
 
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-            for keyword in keywords:
+            for idx, keyword in enumerate(keywords):
+                # Rate limit client-side pour respecter la limite NewsData.io
+                # (30 req/15min = 1 req toutes les 30s max, on prend 2s de marge)
+                if idx > 0:
+                    await asyncio.sleep(MIN_DELAY_BETWEEN_REQUESTS)
+
                 try:
-                    articles = await self._fetch_articles(client, keyword)
+                    articles = await self._fetch_articles_with_retry(client, keyword)
                     if not articles:
                         logger.info(f"Aucun article trouvé pour '{keyword}'")
                         continue
@@ -95,6 +118,18 @@ class ApiCollector(BaseCollector):
 
                     logger.info(f"'{keyword}' : {len(articles)} articles collectés -> {path}")
 
+                except RateLimitExceededError as e:
+                    # Le budget NewsData est epuise : inutile de continuer les autres mots-cles
+                    error_msg = (
+                        f"Rate limit NewsData.io definitivement atteint pour '{keyword}' : {e}"
+                    )
+                    logger.error(error_msg)
+                    result.errors.append(error_msg)
+                    logger.warning(
+                        "Arret de la collecte API : reessayez plus tard "
+                        "(limite gratuite NewsData.io = 30 requetes / 15 min)"
+                    )
+                    break
                 except Exception as e:
                     error_msg = f"Erreur collecte '{keyword}' : {e}"
                     logger.error(error_msg)
@@ -105,6 +140,50 @@ class ApiCollector(BaseCollector):
             f"{len(result.errors)} erreurs"
         )
         return result
+
+    async def _fetch_articles_with_retry(
+        self,
+        client: httpx.AsyncClient,
+        keyword: str,
+    ) -> list[dict[str, Any]]:
+        """Appelle `_fetch_articles` avec retry exponentiel sur erreur 429.
+
+        NewsData.io renvoie 429 quand la limite de requetes est atteinte. Dans
+        ce cas, on patiente (backoff exponentiel) et on reessaie. Si plusieurs
+        retries consecutifs echouent, on leve `RateLimitExceededError` pour
+        interrompre proprement la collecte (continuer ne fera qu'aggraver).
+
+        Args:
+            client: Client HTTP asynchrone partage entre requetes.
+            keyword: Mot-cle a rechercher.
+
+        Returns:
+            Liste des articles retournes par l'API.
+
+        Raises:
+            RateLimitExceededError: Si on atteint le nombre max de retries.
+            httpx.HTTPStatusError: Sur toute autre erreur HTTP non-429.
+        """
+        backoff = INITIAL_BACKOFF_SECONDS
+        for attempt in range(1, MAX_RETRIES_ON_RATE_LIMIT + 1):
+            try:
+                return await self._fetch_articles(client, keyword)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code != 429:
+                    raise
+                # NewsData.io peut fournir un header Retry-After indiquant la duree d'attente
+                retry_after = e.response.headers.get("Retry-After")
+                wait_seconds = float(retry_after) if retry_after else backoff
+                logger.warning(
+                    f"429 Too Many Requests sur '{keyword}' "
+                    f"(tentative {attempt}/{MAX_RETRIES_ON_RATE_LIMIT}), "
+                    f"attente {wait_seconds:.1f}s avant retry"
+                )
+                await asyncio.sleep(wait_seconds)
+                backoff *= BACKOFF_MULTIPLIER
+
+        msg = f"Rate limit persistant apres {MAX_RETRIES_ON_RATE_LIMIT} tentatives"
+        raise RateLimitExceededError(msg)
 
     async def _fetch_articles(
         self,
@@ -209,4 +288,7 @@ async def run_api_collection() -> CollectResult:
 
 
 if __name__ == "__main__":
+    from greentech.utils.logger import setup_logging
+
+    setup_logging(level="INFO", enable_loki=False)
     asyncio.run(run_api_collection())

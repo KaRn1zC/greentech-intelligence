@@ -129,6 +129,47 @@ services:
     networks:
       - greentech-network
 
+  # === Pushgateway (Métriques jobs éphémères) ===
+  # Les scripts de re-entrainement et le pipeline poussent leurs métriques ici,
+  # Prometheus scrape ensuite cette instance. Indispensable pour les jobs qui
+  # ne tournent pas en continu (donc inscrapables directement).
+  pushgateway:
+    image: prom/pushgateway:latest
+    container_name: greentech-pushgateway
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+    command:
+      - '--web.enable-admin-api'
+      - '--persistence.file=/data/pushgateway.data'
+      - '--persistence.interval=5m'
+    volumes:
+      - pushgateway-data:/data
+    networks:
+      - greentech-network
+
+  # === cAdvisor (Métriques par conteneur) ===
+  # Expose des métriques Prometheus sur la consommation CPU/RAM/réseau/disque
+  # de chaque conteneur Docker. Permet de surveiller l'empreinte de chaque
+  # service du stack depuis Grafana.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: greentech-cadvisor
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "8090:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    networks:
+      - greentech-network
+
   # === Grafana (Dashboards) ===
   grafana:
     image: grafana/grafana:latest
@@ -212,6 +253,8 @@ volumes:
     name: greentech-postgres-data
   minio-data:
     name: greentech-minio-data
+  pushgateway-data:
+    name: greentech-pushgateway-data
   prometheus-data:
     name: greentech-prometheus-data
   grafana-data:

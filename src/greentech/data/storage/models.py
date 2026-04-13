@@ -90,6 +90,9 @@ class Article(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     contenu: Mapped[str | None] = mapped_column(Text, nullable=True)
     resume: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Resume oriente "aspects ecologiques" genere par un LLM instructif (HF SaaS)
+    # lorsque l'article est classifie Green IT. Complementaire au `resume` general.
+    resume_ecologique: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Métadonnées
     auteur: Mapped[str | None] = mapped_column(String(200), nullable=True)

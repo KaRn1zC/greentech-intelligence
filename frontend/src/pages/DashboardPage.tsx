@@ -5,10 +5,12 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts"
 import {
   BarChart3,
   ExternalLink,
+  FileUp,
   Leaf,
   Loader2,
   Search,
   SendHorizonal,
+  X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -25,6 +27,7 @@ import {
   getArticles,
   getStats,
   submitAnalysis,
+  submitAnalysisFile,
   getAnalysisStatus,
 } from "@/lib/api"
 import type {
@@ -32,6 +35,9 @@ import type {
   AnalysisResult,
   GlobalStats,
 } from "@/types/api"
+
+const ACCEPTED_FILE_EXTENSIONS = ".txt,.md,.pdf,.docx,.html,.htm"
+const MAX_FILE_SIZE_MB = 10
 
 const PIE_COLORS = ["#16a34a", "#dc2626", "#a1a1aa"]
 
@@ -52,10 +58,12 @@ export function DashboardPage() {
 
 function AnalyzeSection() {
   const [input, setInput] = useState("")
+  const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [error, setError] = useState("")
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -66,47 +74,74 @@ function AnalyzeSection() {
 
   useEffect(() => () => stopPolling(), [stopPolling])
 
+  const startPolling = (jobId: string) => {
+    pollRef.current = setInterval(async () => {
+      try {
+        const status = await getAnalysisStatus(jobId)
+        if (status.statut === "termine") {
+          stopPolling()
+          setResult(status)
+          setLoading(false)
+          toast.success(
+            status.est_green_it ? "Article classe Green IT" : "Article classe Non Green IT",
+          )
+        } else if (status.statut === "erreur") {
+          stopPolling()
+          setResult(status)
+          setLoading(false)
+          toast.error(status.erreur || "Echec de l'analyse")
+        }
+      } catch {
+        stopPolling()
+        setError("Erreur lors du suivi de l'analyse.")
+        setLoading(false)
+        toast.error("Erreur lors du suivi de l'analyse")
+      }
+    }, 2000)
+  }
+
   const handleSubmit = async () => {
-    if (!input.trim()) return
+    if (!input.trim() && !file) return
     setLoading(true)
     setError("")
     setResult(null)
     stopPolling()
 
     try {
-      const isUrl = input.startsWith("http://") || input.startsWith("https://")
-      const job = await submitAnalysis(
-        isUrl ? { url: input } : { texte: input },
-      )
-
-      pollRef.current = setInterval(async () => {
-        try {
-          const status = await getAnalysisStatus(job.job_id)
-          if (status.statut === "termine") {
-            stopPolling()
-            setResult(status)
-            setLoading(false)
-            toast.success(
-              status.est_green_it ? "Article classe Green IT" : "Article classe Non Green IT",
-            )
-          } else if (status.statut === "erreur") {
-            stopPolling()
-            setResult(status)
-            setLoading(false)
-            toast.error(status.erreur || "Echec de l'analyse")
-          }
-        } catch {
-          stopPolling()
-          setError("Erreur lors du suivi de l'analyse.")
-          setLoading(false)
-          toast.error("Erreur lors du suivi de l'analyse")
-        }
-      }, 2000)
-    } catch {
-      setError("Impossible de soumettre l'analyse.")
+      let job
+      if (file) {
+        job = await submitAnalysisFile(file)
+      } else {
+        const isUrl = input.startsWith("http://") || input.startsWith("https://")
+        job = await submitAnalysis(isUrl ? { url: input } : { texte: input })
+      }
+      startPolling(job.job_id)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Impossible de soumettre l'analyse."
+      setError(message)
       setLoading(false)
-      toast.error("Impossible de soumettre l'analyse")
+      toast.error(message)
     }
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0] ?? null
+    if (!selected) {
+      setFile(null)
+      return
+    }
+    if (selected.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+      toast.error(`Fichier trop volumineux (max ${MAX_FILE_SIZE_MB} Mo)`)
+      e.target.value = ""
+      return
+    }
+    setFile(selected)
+    setInput("")
+  }
+
+  const clearFile = () => {
+    setFile(null)
+    if (fileInputRef.current) fileInputRef.current.value = ""
   }
 
   return (
@@ -117,7 +152,7 @@ function AnalyzeSection() {
           Analyser un article
         </CardTitle>
         <CardDescription>
-          Collez une URL ou du texte pour obtenir la classification Green IT
+          Collez une URL, du texte, ou deposez un fichier pour obtenir la classification Green IT
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -129,13 +164,26 @@ function AnalyzeSection() {
             id="analyze-input"
             placeholder="https://... ou collez le texte de l'article (50 car. min)"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value)
+              if (e.target.value && file) clearFile()
+            }}
             onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
             aria-describedby="analyze-help"
+            disabled={!!file}
           />
           <Button
+            type="button"
+            variant="outline"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading}
+            aria-label="Choisir un fichier a analyser"
+          >
+            <FileUp className="h-4 w-4" />
+          </Button>
+          <Button
             onClick={handleSubmit}
-            disabled={loading || !input.trim()}
+            disabled={loading || (!input.trim() && !file)}
             aria-label="Lancer l'analyse"
           >
             {loading ? (
@@ -145,9 +193,39 @@ function AnalyzeSection() {
             )}
           </Button>
         </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPTED_FILE_EXTENSIONS}
+          onChange={handleFileChange}
+          className="hidden"
+          aria-label="Fichier a analyser"
+        />
+
         <p id="analyze-help" className="sr-only">
-          Saisissez une URL commencant par http ou du texte d'au moins 50 caracteres
+          Saisissez une URL commencant par http, du texte d'au moins 50 caracteres,
+          ou deposez un fichier (.txt, .md, .pdf, .docx, .html)
         </p>
+
+        {file && (
+          <div className="flex items-center justify-between rounded-md border bg-muted/50 px-3 py-2 text-sm">
+            <span className="truncate">
+              <FileUp className="mr-2 inline h-4 w-4" />
+              {file.name} ({(file.size / 1024).toFixed(1)} Ko)
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={clearFile}
+              aria-label="Retirer le fichier"
+              disabled={loading}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
 
         {loading && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -171,7 +249,23 @@ function AnalyzeSection() {
               </p>
             )}
             {result.resume && (
-              <p className="text-sm">{result.resume}</p>
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Resume de l'article
+                </p>
+                <p className="text-sm">{result.resume}</p>
+              </div>
+            )}
+            {result.resume_ecologique && (
+              <div className="space-y-1 rounded-md border border-green-200 bg-green-50 p-3 dark:border-green-900 dark:bg-green-950/30">
+                <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-green-700 dark:text-green-400">
+                  <Leaf className="h-3 w-3" aria-hidden="true" />
+                  Aspects ecologiques identifies
+                </p>
+                <p className="text-sm text-green-900 dark:text-green-100">
+                  {result.resume_ecologique}
+                </p>
+              </div>
             )}
             {result.id_article && (
               <Link

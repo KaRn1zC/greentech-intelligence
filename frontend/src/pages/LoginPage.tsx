@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react"
-import { useNavigate } from "react-router-dom"
+import { Navigate, useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { Leaf, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -19,9 +19,10 @@ export function LoginPage() {
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
 
+  // Redirection declarative pour eviter "setState during render" de react-router
+  // (navigate(...) pendant le render declenche un update du routeur parent).
   if (isAuthenticated) {
-    navigate("/", { replace: true })
-    return null
+    return <Navigate to="/" replace />
   }
 
   const handleSubmit = async (e: FormEvent) => {

@@ -1,0 +1,126 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "GreenTech Intelligence" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - img [ref=e7]
+          - generic [ref=e10]: GreenTech Intelligence
+        - navigation [ref=e11]:
+          - link "Dashboard" [ref=e12] [cursor=pointer]:
+            - /url: /
+          - generic [ref=e50]:
+            - generic [ref=e51]:
+              - img [ref=e52]
+              - text: playwright-test@example.com
+            - button "Deconnexion" [ref=e55]:
+              - img
+              - generic [ref=e56]: Deconnexion
+    - main [ref=e14]:
+      - generic [ref=e57]:
+        - heading "Dashboard" [level=1] [ref=e58]
+        - generic [ref=e59]:
+          - generic [ref=e60]:
+            - generic [ref=e61]:
+              - img [ref=e62]
+              - text: Analyser un article
+            - generic [ref=e65]: Collez une URL, du texte, ou deposez un fichier pour obtenir la classification Green IT
+          - generic [ref=e66]:
+            - generic [ref=e67]:
+              - generic [ref=e68]: URL ou texte de l'article a analyser
+              - textbox "URL ou texte de l'article a analyser" [ref=e69]:
+                - /placeholder: https://... ou collez le texte de l'article (50 car. min)
+              - button "Choisir un fichier a analyser" [ref=e70]:
+                - img
+              - button "Lancer l'analyse" [disabled]:
+                - img
+            - paragraph [ref=e71]: Saisissez une URL commencant par http, du texte d'au moins 50 caracteres, ou deposez un fichier (.txt, .md, .pdf, .docx, .html)
+        - generic [ref=e72]:
+          - generic [ref=e73]:
+            - generic [ref=e74]:
+              - generic [ref=e75]:
+                - img [ref=e76]
+                - text: Statistiques
+              - generic [ref=e78]: 6024 articles au total
+            - generic [ref=e80]:
+              - application [ref=e82]
+              - generic [ref=e95]:
+                - generic [ref=e96]: "Green IT : 350"
+                - generic [ref=e98]: "Non Green IT : 4861"
+                - generic [ref=e100]: "En attente : 813"
+                - paragraph [ref=e102]: 6.7% Green IT
+          - generic [ref=e103]:
+            - generic [ref=e105]:
+              - img [ref=e106]
+              - text: Articles recents
+            - list [ref=e110]:
+              - listitem [ref=e111]:
+                - link "Every fusion startup that has raised over $100M TechCrunch Climate En attente" [ref=e112] [cursor=pointer]:
+                  - /url: /articles/39772
+                  - generic [ref=e113]:
+                    - paragraph [ref=e114]: Every fusion startup that has raised over $100M
+                    - paragraph [ref=e115]: TechCrunch Climate
+                  - generic [ref=e116]: En attente
+              - listitem [ref=e117]:
+                - link "AI companies are building huge natural gas plants to power data centers. What could go wrong? TechCrunch Climate En attente" [ref=e118] [cursor=pointer]:
+                  - /url: /articles/39769
+                  - generic [ref=e119]:
+                    - paragraph [ref=e120]: AI companies are building huge natural gas plants to power data centers. What could go wrong?
+                    - paragraph [ref=e121]: TechCrunch Climate
+                  - generic [ref=e122]: En attente
+              - listitem [ref=e123]:
+                - 'link "Startup Battlefield 200 applications open: a chance for VC access, TechCrunch coverage, and $100K TechCrunch Climate En attente" [ref=e124] [cursor=pointer]':
+                  - /url: /articles/39770
+                  - generic [ref=e125]:
+                    - paragraph [ref=e126]: "Startup Battlefield 200 applications open: a chance for VC access, TechCrunch coverage, and $100K"
+                    - paragraph [ref=e127]: TechCrunch Climate
+                  - generic [ref=e128]: En attente
+              - listitem [ref=e129]:
+                - link "Radify’s sci-fi plasma reactors could break China’s dominance of rare-earth elements TechCrunch Climate En attente" [ref=e130] [cursor=pointer]:
+                  - /url: /articles/39771
+                  - generic [ref=e131]:
+                    - paragraph [ref=e132]: Radify’s sci-fi plasma reactors could break China’s dominance of rare-earth elements
+                    - paragraph [ref=e133]: TechCrunch Climate
+                  - generic [ref=e134]: En attente
+              - listitem [ref=e135]:
+                - link "Why a former AirPods engineer is now building heat pumps TechCrunch Climate En attente" [ref=e136] [cursor=pointer]:
+                  - /url: /articles/37728
+                  - generic [ref=e137]:
+                    - paragraph [ref=e138]: Why a former AirPods engineer is now building heat pumps
+                    - paragraph [ref=e139]: TechCrunch Climate
+                  - generic [ref=e140]: En attente
+              - listitem [ref=e141]:
+                - link "Battery recycler Ascend Elements files for bankruptcy TechCrunch Climate En attente" [ref=e142] [cursor=pointer]:
+                  - /url: /articles/37729
+                  - generic [ref=e143]:
+                    - paragraph [ref=e144]: Battery recycler Ascend Elements files for bankruptcy
+                    - paragraph [ref=e145]: TechCrunch Climate
+                  - generic [ref=e146]: En attente
+              - listitem [ref=e147]:
+                - 'link "Last 24 hours: Save up to $500 on your TechCrunch Disrupt 2026 pass TechCrunch Climate En attente" [ref=e148] [cursor=pointer]':
+                  - /url: /articles/37730
+                  - generic [ref=e149]:
+                    - paragraph [ref=e150]: "Last 24 hours: Save up to $500 on your TechCrunch Disrupt 2026 pass"
+                    - paragraph [ref=e151]: TechCrunch Climate
+                  - generic [ref=e152]: En attente
+              - listitem [ref=e153]:
+                - link "Arinna raises $4M seed round to solve the space power problem TechCrunch Climate En attente" [ref=e154] [cursor=pointer]:
+                  - /url: /articles/37726
+                  - generic [ref=e155]:
+                    - paragraph [ref=e156]: Arinna raises $4M seed round to solve the space power problem
+                    - paragraph [ref=e157]: TechCrunch Climate
+                  - generic [ref=e158]: En attente
+    - contentinfo [ref=e33]:
+      - generic [ref=e34]:
+        - generic [ref=e35]:
+          - img [ref=e36]
+          - generic [ref=e39]: GreenTech Intelligence
+        - paragraph [ref=e40]: Plateforme d'analyse Green IT — Projet Chef d'Oeuvre
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=e159]:
+        - img [ref=e161]
+        - generic [ref=e164]: Connexion reussie
+      - listitem [ref=e165]:
+        - img [ref=e167]
+        - generic [ref=e170]: Compte cree avec succes

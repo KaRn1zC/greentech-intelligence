@@ -9,23 +9,35 @@ Le pipeline garantit que l'application utilise toujours la meilleure version
 entrainee du modele, jamais une regression.
 
 Usage:
-    # Pipeline complet (collecte, annotation, entrainement, benchmark, promotion auto)
+    # Pipeline complet recommande
     uv run python scripts/retrain_pipeline.py
 
     # Etapes individuelles
-    uv run python scripts/retrain_pipeline.py collect       # Collecte depuis les sources
-    uv run python scripts/retrain_pipeline.py annotate      # Re-annotation du dataset
-    uv run python scripts/retrain_pipeline.py train         # Re-entrainement Llama
-    uv run python scripts/retrain_pipeline.py benchmark     # Benchmark nouveau vs production vs baseline
-    uv run python scripts/retrain_pipeline.py promote       # Promotion manuelle (force)
-    uv run python scripts/retrain_pipeline.py baseline      # Calculer les metriques du modele de base
+    uv run python scripts/retrain_pipeline.py collect        # Collecte depuis les sources
+    uv run python scripts/retrain_pipeline.py annotate       # Etage 1 : pre-filtre mots-cles (binaire)
+    uv run python scripts/retrain_pipeline.py classify       # Etage 2 : LLM judge sur les candidats
+    uv run python scripts/retrain_pipeline.py summarize      # Resumes Green IT confirmes uniquement
+    uv run python scripts/retrain_pipeline.py export-golden  # Regenere golden_dataset.csv depuis la DB
+    uv run python scripts/retrain_pipeline.py baseline       # Metriques du modele brut
+    uv run python scripts/retrain_pipeline.py train          # Entrainement rapide (split 80/20)
+    uv run python scripts/retrain_pipeline.py train-cv       # Entrainement robuste (K-fold stratifie K=5)
+    uv run python scripts/retrain_pipeline.py benchmark      # Benchmark nouveau vs production vs baseline
+    uv run python scripts/retrain_pipeline.py auto-promote   # Benchmark + promotion conditionnelle
+    uv run python scripts/retrain_pipeline.py promote        # Promotion manuelle (forcee)
 
     # Ingerer un fichier manuellement
     uv run python scripts/retrain_pipeline.py ingest-file data/mon_fichier.json
 
-    # Combiner des etapes
-    uv run python scripts/retrain_pipeline.py collect annotate train
+    # Combiner des etapes (workflow recommande apres ajout de nouvelles donnees)
+    uv run python scripts/retrain_pipeline.py collect annotate classify summarize export-golden train-cv auto-promote
 
+Notes:
+    - `train`    : entrainement 80/20 rapide, evaluation fragile (4 Green IT au test)
+    - `train-cv` : entrainement K-fold (~5x plus long) mais evaluation robuste sur
+                   les 22 Green IT grace a la rotation train/test et a la moyenne
+                   sur les folds. Recommande pour figer une version du modele.
+    - `baseline` : evalue Llama brut sur l'integralite du dataset (5808 articles).
+                   Pas de data leakage car le modele n'a rien appris.
 """
 
 from __future__ import annotations
@@ -53,6 +65,51 @@ LLAMA_TRAIN_DIR = MODELS_DIR / "challenger-llama"
 # Fichiers de reference pour les metriques
 BEST_METRICS_FILE = MODELS_DIR / "best_metrics.json"
 BASELINE_METRICS_FILE = MODELS_DIR / "baseline_metrics.json"
+
+# =============================================================================
+# CRITERES DE PROMOTION
+# =============================================================================
+# Contexte : dataset fortement desequilibre (~0.4% de Green IT).
+# Dans ce cas, le F1 seul est bruite (22 positifs = chaque prediction pese lourd).
+# On combine trois criteres pour garantir qu'un modele promu est reellement meilleur
+# ET reste utile metier (ne triche pas en predisant tout en Non Green IT).
+#
+#   1. MCC (Matthews Correlation Coefficient) : metrique principale, robuste au
+#      desequilibre. Bornee entre -1 (pire que l'aleatoire) et +1 (parfait).
+#      Un modele qui predit une seule classe obtient MCC = 0.
+#
+#   2. Recall Green IT : garde-fou metier. Rater un article Green IT (faux negatif)
+#      est plus couteux que de produire un faux positif, donc on impose un plancher.
+#
+#   3. F1 (non-regression) : on tolere une legere baisse du F1 si MCC progresse,
+#      mais on refuse une regression majeure.
+MCC_EPSILON = 0.01  # Tolerance d'egalite sur le MCC (absorbe le bruit statistique)
+MIN_RECALL_GREEN_IT = 0.5  # Plancher de recall sur la classe minoritaire
+F1_REGRESSION_TOLERANCE = 0.95  # On accepte jusqu'a -5% de F1 si MCC progresse
+
+# Plafond d'ecart-type MCC entre folds (garde-fou de stabilite CV).
+# Le seuil est adaptatif : avec un dataset tres desequilibre (peu de positifs),
+# chaque fold n'a qu'une poignee de Green IT en test, ce qui rend la variance
+# inter-folds mecaniquement elevee meme pour un bon modele. Tant qu'on n'a pas
+# au moins 50 Green IT, on tolere un ecart-type de 0.25 ; au-dela, on revient
+# au seuil strict 0.15 qui detecte une vraie instabilite du modele.
+SMALL_DATASET_GREEN_THRESHOLD = 50
+MAX_MCC_STD_SMALL = 0.25  # Seuil tolerant pour datasets avec peu de Green IT
+MAX_MCC_STD_LARGE = 0.15  # Seuil strict pour datasets de taille suffisante
+
+
+def _max_mcc_std(n_green: int | None) -> float:
+    """Calcule le plafond MCC std a appliquer en fonction du nombre de positifs.
+
+    Args:
+        n_green: Nombre de Green IT dans le dataset complet (ou None si inconnu).
+
+    Returns:
+        0.25 si moins de 50 Green IT, 0.15 sinon (defaut conservateur si None).
+    """
+    if n_green is None or n_green < SMALL_DATASET_GREEN_THRESHOLD:
+        return MAX_MCC_STD_SMALL
+    return MAX_MCC_STD_LARGE
 
 
 # =============================================================================
@@ -118,7 +175,171 @@ def _save_best_metrics(metrics: dict, version_tag: str) -> None:
         "metrics": metrics,
     }
     BEST_METRICS_FILE.write_text(json.dumps(data, indent=2))
-    logger.info(f"Meilleur modele enregistre : {version_tag} (F1={metrics['f1']:.4f})")
+    logger.info(
+        f"Meilleur modele enregistre : {version_tag} "
+        f"(MCC={metrics.get('mcc', 0.0):.4f}, F1={metrics['f1']:.4f})"
+    )
+
+
+def _compute_detailed_metrics(
+    y_true: list[int],
+    y_pred: list[int],
+    latencies_ms: list[float] | None = None,
+) -> dict[str, float | int]:
+    """Calcule un jeu complet de metriques pour comparer les versions d'un modele.
+
+    Produit :
+    - MCC (Matthews Correlation Coefficient) : metrique principale, robuste au
+      desequilibre de classes, recommandee par la litterature sur ce type de probleme.
+    - F1, accuracy, balanced_accuracy, precision, recall, specificite.
+    - Matrice de confusion (TP/TN/FP/FN).
+    - Distribution reelle vs predite par classe.
+
+    Args:
+        y_true: Labels reels (0 = Non Green IT, 1 = Green IT).
+        y_pred: Labels predits par le modele.
+        latencies_ms: Latences d'inference en millisecondes (optionnel).
+
+    Returns:
+        Dictionnaire contenant toutes les metriques ci-dessus, pret a etre
+        serialise en JSON ou compare entre versions.
+    """
+    import numpy as np
+    from sklearn.metrics import (
+        accuracy_score,
+        balanced_accuracy_score,
+        confusion_matrix,
+        f1_score,
+        matthews_corrcoef,
+        precision_score,
+        recall_score,
+    )
+
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    tn, fp, fn, tp = cm.ravel()
+
+    nb_reels_green_it = int(sum(1 for lbl in y_true if lbl == 1))
+    nb_reels_non_green_it = int(sum(1 for lbl in y_true if lbl == 0))
+    nb_pred_green_it = int(sum(1 for p in y_pred if p == 1))
+    nb_pred_non_green_it = int(sum(1 for p in y_pred if p == 0))
+
+    specificite = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+
+    metrics: dict[str, float | int] = {
+        # Metriques principales
+        "mcc": float(matthews_corrcoef(y_true, y_pred)),
+        "f1": float(f1_score(y_true, y_pred, average="binary", zero_division=0)),
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
+        "precision": float(precision_score(y_true, y_pred, average="binary", zero_division=0)),
+        "recall": float(recall_score(y_true, y_pred, average="binary", zero_division=0)),
+        "specificite": specificite,
+        # Matrice de confusion
+        "vrais_positifs": int(tp),
+        "vrais_negatifs": int(tn),
+        "faux_positifs": int(fp),
+        "faux_negatifs": int(fn),
+        # Distribution reelle vs predite
+        "nb_reels_green_it": nb_reels_green_it,
+        "nb_reels_non_green_it": nb_reels_non_green_it,
+        "nb_predictions_green_it": nb_pred_green_it,
+        "nb_predictions_non_green_it": nb_pred_non_green_it,
+        "total_echantillons": len(y_true),
+    }
+
+    if latencies_ms:
+        metrics["latence_moyenne_ms"] = float(np.mean(latencies_ms))
+
+    return metrics
+
+
+def _log_detailed_metrics(metrics: dict, titre: str) -> None:
+    """Affiche un rapport detaille des metriques dans les logs.
+
+    Tolere les dictionnaires partiels (anciens formats) : les champs absents
+    sont affiches comme "N/A" plutot que de faire echouer le rapport.
+
+    Args:
+        metrics: Dictionnaire produit par `_compute_detailed_metrics`,
+            ou dictionnaire legacy avec un sous-ensemble des cles.
+        titre: Titre du bloc affiche (ex. "Modele de base", "Nouveau modele").
+    """
+
+    def _fmt(key: str, fmt: str = ".4f") -> str:
+        val = metrics.get(key)
+        if val is None:
+            return "N/A"
+        return format(val, fmt)
+
+    def _pct(key: str) -> str:
+        val = metrics.get(key)
+        if val is None:
+            return ""
+        return f"  ({val * 100:.2f}%)"
+
+    def _int(key: str) -> str:
+        val = metrics.get(key)
+        return str(val) if val is not None else "N/A"
+
+    logger.info("")
+    logger.info("-" * 72)
+    logger.info(f"  {titre}")
+    logger.info("-" * 72)
+    logger.info(f"  MCC (critere principal)  : {_fmt('mcc')}")
+    logger.info(f"  F1-score                 : {_fmt('f1')}")
+    logger.info(f"  Accuracy (reussite)      : {_fmt('accuracy')}{_pct('accuracy')}")
+    logger.info(
+        f"  Balanced accuracy        : {_fmt('balanced_accuracy')}{_pct('balanced_accuracy')}"
+    )
+    logger.info(f"  Precision (fiabilite)    : {_fmt('precision')}{_pct('precision')}")
+    logger.info(f"  Recall (rappel)          : {_fmt('recall')}{_pct('recall')}")
+    logger.info(f"  Specificite              : {_fmt('specificite')}{_pct('specificite')}")
+
+    has_confusion = all(
+        k in metrics for k in ("vrais_positifs", "vrais_negatifs", "faux_positifs", "faux_negatifs")
+    )
+    if has_confusion:
+        total = metrics.get("total_echantillons", 0)
+        logger.info("")
+        logger.info(f"  Matrice de confusion (sur {total} articles) :")
+        logger.info(
+            f"    Vrais positifs  (Green IT correctement detectes)     : {_int('vrais_positifs')}"
+        )
+        logger.info(
+            f"    Vrais negatifs  (Non Green IT correctement detectes) : {_int('vrais_negatifs')}"
+        )
+        logger.info(
+            f"    Faux positifs   (Non Green IT classes Green IT)      : {_int('faux_positifs')}"
+        )
+        logger.info(
+            f"    Faux negatifs   (Green IT classes Non Green IT)      : {_int('faux_negatifs')}"
+        )
+
+    has_distribution = all(
+        k in metrics
+        for k in (
+            "nb_reels_green_it",
+            "nb_reels_non_green_it",
+            "nb_predictions_green_it",
+            "nb_predictions_non_green_it",
+        )
+    )
+    if has_distribution:
+        logger.info("")
+        logger.info("  Distribution :")
+        logger.info(
+            f"    Reels    : Green IT = {metrics['nb_reels_green_it']:>5d}  |  "
+            f"Non Green IT = {metrics['nb_reels_non_green_it']:>5d}"
+        )
+        logger.info(
+            f"    Predits  : Green IT = {metrics['nb_predictions_green_it']:>5d}  |  "
+            f"Non Green IT = {metrics['nb_predictions_non_green_it']:>5d}"
+        )
+
+    if "latence_moyenne_ms" in metrics:
+        logger.info("")
+        logger.info(f"  Latence moyenne       : {_fmt('latence_moyenne_ms', '.2f')} ms")
+    logger.info("-" * 72)
 
 
 # =============================================================================
@@ -176,16 +397,63 @@ def step_ingest_file(file_path: str) -> bool:
 
 
 # =============================================================================
-# ANNOTATION
+# ANNOTATION (pipeline de classification hybride en deux etages)
 # =============================================================================
 
 
 def step_annotate() -> bool:
-    """Re-annote l'integralite du corpus et regenere golden_dataset.csv."""
+    """Etage 1 : pre-filtre mots-cles permissif.
+
+    Applique le scoring multi-criteres sur tous les articles non encore
+    classifies pour decider : NON_GREEN (rejet direct) ou CANDIDATE (a
+    envoyer au LLM judge). Ecrit le resultat dans la colonne
+    `articles.modele_classification = 'keyword_filter'`.
+    """
     logger.info("=" * 70)
-    logger.info("  RE-ANNOTATION DU GOLDEN DATASET")
+    logger.info("  PRE-FILTRE MOTS-CLES (etage 1)")
     logger.info("=" * 70)
     return _run_script("scripts/auto_annotate_dataset.py")
+
+
+def step_classify() -> bool:
+    """Etage 2 : verification LLM des candidats.
+
+    Interroge `Qwen/Qwen2.5-7B-Instruct` via HF Serverless pour classifier
+    definitivement les articles marques CANDIDATE par l'etage 1. Met a jour
+    `est_green_it` et passe `modele_classification` a
+    `'keyword_filter+qwen_llm_judge'`.
+    """
+    logger.info("=" * 70)
+    logger.info("  LLM JUDGE - VERIFICATION DES CANDIDATS (etage 2)")
+    logger.info("=" * 70)
+    return _run_script("scripts/classify_candidates.py")
+
+
+def step_summarize_green() -> bool:
+    """Genere les resumes (general + ecologique) pour les articles Green IT.
+
+    Applique le summarizer Qwen uniquement aux articles confirmes Green IT
+    (`est_green_it = true`) qui n'ont pas encore de `resume`. Appelle en
+    parallele `summarize_article` et `summarize_green_for_article` via
+    `asyncio.gather` pour chaque article.
+    """
+    logger.info("=" * 70)
+    logger.info("  RESUMES DES ARTICLES GREEN IT CONFIRMES")
+    logger.info("=" * 70)
+    return _run_module("greentech.ai.services.summarizer")
+
+
+def step_export_golden() -> bool:
+    """Regenere `data/golden_dataset.csv` depuis l'etat final de la DB.
+
+    A executer apres la classification hybride pour produire un golden
+    dataset qui reflete les decisions du LLM (et non plus du pre-filtre
+    seul). Ce CSV est la source de verite pour l'entrainement Llama.
+    """
+    logger.info("=" * 70)
+    logger.info("  EXPORT GOLDEN DATASET (DB -> CSV)")
+    logger.info("=" * 70)
+    return _run_script("scripts/export_golden_dataset.py")
 
 
 # =============================================================================
@@ -226,11 +494,137 @@ def step_archive_current_production() -> str | None:
 
 
 def step_train() -> bool:
-    """Re-entraine Llama 3.2 3B + LoRA sur le dataset courant."""
+    """Re-entraine Llama 3.2 3B + LoRA sur le dataset courant (split 80/20)."""
     logger.info("=" * 70)
-    logger.info("  RE-ENTRAINEMENT LLAMA 3.2 3B + LoRA")
+    logger.info("  RE-ENTRAINEMENT LLAMA 3.2 3B + LoRA (split 80/20)")
     logger.info("=" * 70)
     return _run_module("greentech.ai.models.training", "challenger-llama")
+
+
+# Fichier ou stocker le rapport K-fold complet (folds + moyennes + metriques globales)
+CV_REPORT_FILE = MODELS_DIR / "cv_report.json"
+
+
+async def step_train_cv(
+    n_splits: int = 5,
+    random_state: int = 42,
+    train_final: bool = True,
+) -> dict | None:
+    """Entraine Llama 3.2 3B + LoRA via K-fold stratifie (K=5 par defaut).
+
+    Chaque fold est entraine avec oversampling de la classe minoritaire, puis
+    evalue sur le test du fold (sans oversampling). Les metriques agregees
+    (moyenne + ecart-type sur K folds) servent de reference pour la promotion.
+
+    Un modele final est re-entraine sur l'integralite des donnees et sauvegarde
+    dans `models/challenger-llama/`, pret pour la promotion en production si
+    les criteres sont satisfaits.
+
+    Args:
+        n_splits: Nombre de folds (defaut 5).
+        random_state: Seed pour la reproductibilite du split.
+        train_final: Si True, entraine un modele final sur tout le dataset apres le K-fold.
+
+    Returns:
+        Rapport complet du K-fold, ou None en cas d'erreur.
+    """
+    from greentech.ai.models.training import train_challenger_with_cv
+
+    logger.info("=" * 70)
+    logger.info(f"  RE-ENTRAINEMENT LLAMA 3.2 3B + LoRA (K-fold K={n_splits})")
+    logger.info("=" * 70)
+
+    try:
+        rapport = await train_challenger_with_cv(
+            model_type="challenger-llama",
+            n_splits=n_splits,
+            random_state=random_state,
+            train_final=train_final,
+        )
+    except Exception as exc:
+        logger.exception(f"K-fold echoue : {exc}")
+        return None
+
+    rapport["date"] = datetime.now(UTC).isoformat()
+    CV_REPORT_FILE.write_text(json.dumps(rapport, indent=2, default=str))
+    logger.info(f"Rapport K-fold sauvegarde : {CV_REPORT_FILE}")
+
+    _log_cv_report(rapport)
+    return rapport
+
+
+def _is_cv_report_fresh() -> bool:
+    """Verifie que le rapport CV est plus recent que le modele entraine.
+
+    Un rapport obsolete (anterieur a un entrainement 80/20 ulterieur) ne doit
+    pas etre utilise pour la decision de promotion.
+    """
+    if not CV_REPORT_FILE.exists():
+        return False
+    adapter_file = LLAMA_TRAIN_DIR / "adapter_config.json"
+    if not adapter_file.exists():
+        return False
+    return CV_REPORT_FILE.stat().st_mtime >= adapter_file.stat().st_mtime - 60
+
+
+def _log_cv_variability(aggregated: dict) -> None:
+    """Affiche la stabilite des metriques entre folds."""
+    logger.info("")
+    logger.info("  Stabilite entre folds (+/- ecart-type) :")
+    for key in ("mcc", "f1", "recall"):
+        if key in aggregated:
+            stats = aggregated[key]
+            logger.info(
+                f"    {key:<8}: moy={stats['mean']:.4f}  std={stats['std']:.4f}  "
+                f"min={stats['min']:.4f}  max={stats['max']:.4f}"
+            )
+
+
+def _log_cv_report(rapport: dict) -> None:
+    """Affiche un resume lisible du rapport K-fold dans les logs."""
+    aggregated = rapport["aggregated"]
+    global_m = rapport["global"]
+    folds = rapport["folds"]
+
+    logger.info("")
+    logger.info("=" * 72)
+    logger.info(f"  RAPPORT K-FOLD ({rapport['n_splits']} folds)")
+    logger.info("=" * 72)
+    logger.info("  Metriques par fold :")
+    logger.info(f"    {'Fold':<6}{'n_test':<10}{'n_green':<10}{'MCC':<12}{'F1':<12}{'Recall':<12}")
+    for f in folds:
+        logger.info(
+            f"    {f['fold']:<6}{f['n_test']:<10}{f['n_green_test']:<10}"
+            f"{f['mcc']:<12.4f}{f['f1']:<12.4f}{f['recall']:<12.4f}"
+        )
+
+    logger.info("")
+    logger.info("  Moyennes sur les folds (+/- ecart-type) :")
+    for key in ("mcc", "f1", "balanced_accuracy", "precision", "recall", "specificite"):
+        stats = aggregated[key]
+        logger.info(
+            f"    {key:<20}: {stats['mean']:.4f} "
+            f"(+/- {stats['std']:.4f}, "
+            f"min={stats['min']:.4f}, max={stats['max']:.4f})"
+        )
+
+    logger.info("")
+    logger.info("  Metriques globales (concatenation des predictions des folds) :")
+    logger.info(f"    MCC global         : {global_m['mcc']:.4f}")
+    logger.info(f"    F1 global          : {global_m['f1']:.4f}")
+    logger.info(f"    Balanced accuracy  : {global_m['balanced_accuracy']:.4f}")
+    logger.info(f"    Recall Green IT    : {global_m['recall']:.4f}")
+    logger.info(f"    Precision          : {global_m['precision']:.4f}")
+    logger.info(f"    Specificite        : {global_m['specificite']:.4f}")
+    logger.info("")
+    logger.info("  Matrice de confusion globale (K folds agreges) :")
+    logger.info(f"    TP = {global_m['vrais_positifs']}  |  FN = {global_m['faux_negatifs']}")
+    logger.info(f"    FP = {global_m['faux_positifs']}  |  TN = {global_m['vrais_negatifs']}")
+
+    if rapport.get("final_model_trained"):
+        logger.info("")
+        logger.info("  Modele final entraine sur l'integralite du dataset : OK")
+    logger.info("=" * 72)
 
 
 # =============================================================================
@@ -238,26 +632,47 @@ def step_train() -> bool:
 # =============================================================================
 
 
-async def step_baseline() -> dict[str, float]:
-    """Calcule les metriques du modele de base SANS fine-tuning (reference permanente)."""
-    existing = _load_json(BASELINE_METRICS_FILE)
-    if existing:
-        logger.info(f"Baseline deja calculee (F1={existing['metrics']['f1']:.4f}), reutilisation")
-        return existing["metrics"]
+async def step_baseline(force: bool = False) -> dict[str, float | int]:
+    """Calcule les metriques du modele de base SANS fine-tuning (reference permanente).
 
-    import numpy as np
+    Args:
+        force: Si True, recalcule meme si une baseline existe deja.
+
+    Returns:
+        Dictionnaire complet des metriques (F1, accuracy, precision, recall,
+        specificite, matrice de confusion, distribution des predictions).
+    """
+    existing = _load_json(BASELINE_METRICS_FILE)
+    required_keys = {"mcc", "specificite", "balanced_accuracy"}
+    # L'ancien format evaluait sur le test split 20% ; le nouveau format evalue
+    # sur l'integralite du dataset (aucun data leakage possible pour un modele
+    # non entraine, et la metrique est beaucoup plus stable).
+    correct_scope = existing.get("evaluation_scope") == "full_dataset" if existing else False
+    legacy_format = bool(existing) and (
+        not required_keys.issubset(existing.get("metrics", {}).keys()) or not correct_scope
+    )
+    if existing and not force and not legacy_format:
+        logger.info(
+            f"Baseline deja calculee (MCC={existing['metrics'].get('mcc', 0.0):.4f}, "
+            f"F1={existing['metrics']['f1']:.4f}), reutilisation"
+        )
+        _log_detailed_metrics(existing["metrics"], "Baseline (rechargee)")
+        return existing["metrics"]
+    if legacy_format:
+        logger.info("Baseline en ancien format detectee, recalcul sur l'integralite du dataset")
+
     import torch
-    from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-    from greentech.ai.models.training import load_golden_dataset
+    from greentech.ai.models.training import load_full_dataset
     from greentech.config import get_settings
 
     logger.info("=" * 70)
     logger.info("  CALCUL BASELINE : Llama 3.2 3B SANS fine-tuning")
+    logger.info("  Portee            : TOUT le dataset (aucun data leakage possible)")
     logger.info("=" * 70)
 
-    _, _, test_texts, test_labels = load_golden_dataset(oversample=False)
+    all_texts, all_labels = load_full_dataset()
     hf_token = get_settings().huggingface_token or None
     model_name = "meta-llama/Llama-3.2-3B"
 
@@ -269,7 +684,7 @@ async def step_baseline() -> dict[str, float]:
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
         num_labels=2,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,
         token=hf_token,
     )
     model.config.pad_token_id = tokenizer.pad_token_id
@@ -277,28 +692,35 @@ async def step_baseline() -> dict[str, float]:
     model.to(device)
     model.eval()
 
-    preds = []
-    latencies = []
-    for text in test_texts:
+    logger.info(f"Evaluation sur {len(all_texts)} articles...")
+    preds: list[int] = []
+    latencies: list[float] = []
+    for idx, text in enumerate(all_texts, 1):
+        if idx % 500 == 0:
+            logger.info(f"  Avancement : {idx}/{len(all_texts)} articles")
         start = time.perf_counter()
         inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512, padding=True)
         inputs = {k: v.to(device) for k, v in inputs.items()}
         with torch.no_grad():
             outputs = model(**inputs)
         preds.append(torch.softmax(outputs.logits, dim=-1).argmax(dim=-1).item())
-        latencies.append(int((time.perf_counter() - start) * 1000))
+        latencies.append((time.perf_counter() - start) * 1000)
 
-    metrics = {
-        "f1": f1_score(test_labels, preds, average="binary", zero_division=0),
-        "accuracy": accuracy_score(test_labels, preds),
-        "precision": precision_score(test_labels, preds, average="binary", zero_division=0),
-        "recall": recall_score(test_labels, preds, average="binary", zero_division=0),
-        "latence_moyenne_ms": float(np.mean(latencies)),
+    metrics = _compute_detailed_metrics(all_labels, preds, latencies)
+    _log_detailed_metrics(metrics, f"Baseline : {model_name} (sans fine-tuning, dataset complet)")
+
+    data = {
+        "model": model_name,
+        "date": datetime.now(UTC).isoformat(),
+        "evaluation_scope": "full_dataset",
+        "n_articles": len(all_texts),
+        "metrics": metrics,
     }
-
-    data = {"model": model_name, "date": datetime.now(UTC).isoformat(), "metrics": metrics}
     BASELINE_METRICS_FILE.write_text(json.dumps(data, indent=2))
-    logger.info(f"Baseline sauvegardee : F1={metrics['f1']:.4f}")
+    logger.info(
+        f"Baseline sauvegardee : MCC={metrics['mcc']:.4f}, F1={metrics['f1']:.4f}, "
+        f"Recall={metrics['recall']:.4f} (n={len(all_texts)})"
+    )
 
     del model
     if torch.cuda.is_available():
@@ -314,17 +736,10 @@ async def step_baseline() -> dict[str, float]:
 async def _evaluate_new_model(
     test_texts: list[str],
     test_labels: list[int],
-) -> dict[str, float]:
+) -> dict[str, float | int]:
     """Evalue le modele fraichement entraine sur le test set."""
-    import numpy as np
     import torch
-    from sklearn.metrics import (
-        accuracy_score,
-        classification_report,
-        f1_score,
-        precision_score,
-        recall_score,
-    )
+    from sklearn.metrics import classification_report
 
     from greentech.ai.models.classifier import TrainingConfig
     from greentech.ai.models.training import ChallengerClassifier
@@ -334,28 +749,25 @@ async def _evaluate_new_model(
     )
     classifier.load(LLAMA_TRAIN_DIR)
 
-    preds = []
-    latencies = []
+    preds: list[int] = []
+    latencies: list[float] = []
     for text in test_texts:
         pred = await classifier.predict(text)
         preds.append(pred.label.value)
         latencies.append(pred.temps_ms)
 
-    metrics = {
-        "f1": f1_score(test_labels, preds, average="binary", zero_division=0),
-        "accuracy": accuracy_score(test_labels, preds),
-        "precision": precision_score(test_labels, preds, average="binary", zero_division=0),
-        "recall": recall_score(test_labels, preds, average="binary", zero_division=0),
-        "latence_moyenne_ms": float(np.mean(latencies)),
-    }
+    metrics = _compute_detailed_metrics(test_labels, preds, latencies)
+    _log_detailed_metrics(metrics, "Nouveau modele (post-entrainement)")
 
-    logger.info(f"  F1={metrics['f1']:.4f}  Accuracy={metrics['accuracy']:.4f}")
+    logger.info("")
+    logger.info("  Rapport de classification detaille (sklearn) :")
     logger.info(
         "\n"
         + classification_report(
             test_labels,
             preds,
             target_names=["Non Green IT", "Green IT"],
+            zero_division=0,
         )
     )
 
@@ -365,8 +777,181 @@ async def _evaluate_new_model(
     return metrics
 
 
+def _evaluate_promotion_criteria(
+    new_metrics: dict,
+    best_metrics: dict | None,
+) -> dict:
+    """Evalue si le nouveau modele doit etre promu selon 3 criteres combines.
+
+    Le critere composite est concu pour un dataset fortement desequilibre :
+    - Le MCC est plus stable que le F1 face au desequilibre (litterature
+      Chicco & Jurman 2020).
+    - Le garde-fou recall evite qu'un modele "tricheur" (qui predit tout en
+      Non Green IT et obtient un bon score global) soit retenu.
+    - La tolerance F1 accepte un leger recul si le MCC progresse, mais refuse
+      une regression majeure.
+
+    Args:
+        new_metrics: Metriques du nouveau modele (avec cles 'mcc', 'f1', 'recall').
+        best_metrics: Metriques du meilleur modele historique, ou None si
+            aucun modele n'a encore ete promu.
+
+    Returns:
+        Dictionnaire avec :
+        - 'retenu' (bool) : True si le nouveau modele doit etre promu
+        - 'criteres' (list) : detail de chaque critere evalue
+        - 'raison' (str) : explication du verdict
+    """
+    criteres: list[dict] = []
+
+    # Critere 1 : MCC (robuste au desequilibre)
+    mcc_nouveau = float(new_metrics.get("mcc", 0.0))
+    if best_metrics is not None and "mcc" in best_metrics:
+        mcc_ancien = float(best_metrics["mcc"])
+        mcc_pass = mcc_nouveau >= (mcc_ancien - MCC_EPSILON)
+        criteres.append(
+            {
+                "nom": "MCC >= MCC_ancien - epsilon",
+                "valeur_nouveau": mcc_nouveau,
+                "valeur_reference": mcc_ancien,
+                "seuil": mcc_ancien - MCC_EPSILON,
+                "pass": mcc_pass,
+                "description": (
+                    f"MCC nouveau={mcc_nouveau:.4f} vs ancien={mcc_ancien:.4f} "
+                    f"(tolerance={MCC_EPSILON})"
+                ),
+            }
+        )
+    else:
+        mcc_pass = mcc_nouveau > 0.0  # Premier modele : au moins mieux que l'aleatoire
+        criteres.append(
+            {
+                "nom": "MCC > 0 (premier modele)",
+                "valeur_nouveau": mcc_nouveau,
+                "valeur_reference": None,
+                "seuil": 0.0,
+                "pass": mcc_pass,
+                "description": (
+                    f"Premier modele : MCC={mcc_nouveau:.4f} doit etre > 0 (mieux que l'aleatoire)"
+                ),
+            }
+        )
+
+    # Critere 2 : Recall Green IT (garde-fou metier)
+    recall_nouveau = float(new_metrics.get("recall", 0.0))
+    recall_pass = recall_nouveau >= MIN_RECALL_GREEN_IT
+    criteres.append(
+        {
+            "nom": f"Recall Green IT >= {MIN_RECALL_GREEN_IT}",
+            "valeur_nouveau": recall_nouveau,
+            "valeur_reference": None,
+            "seuil": MIN_RECALL_GREEN_IT,
+            "pass": recall_pass,
+            "description": (
+                f"Recall sur Green IT={recall_nouveau:.4f} "
+                f"(plancher={MIN_RECALL_GREEN_IT}, evite les faux negatifs)"
+            ),
+        }
+    )
+
+    # Critere 3 : Non-regression F1 (seulement si on a une reference)
+    f1_nouveau = float(new_metrics.get("f1", 0.0))
+    if best_metrics is not None and "f1" in best_metrics:
+        f1_ancien = float(best_metrics["f1"])
+        f1_seuil = f1_ancien * F1_REGRESSION_TOLERANCE
+        f1_pass = f1_nouveau >= f1_seuil
+        criteres.append(
+            {
+                "nom": f"F1 >= F1_ancien * {F1_REGRESSION_TOLERANCE}",
+                "valeur_nouveau": f1_nouveau,
+                "valeur_reference": f1_ancien,
+                "seuil": f1_seuil,
+                "pass": f1_pass,
+                "description": (
+                    f"F1 nouveau={f1_nouveau:.4f} vs ancien={f1_ancien:.4f} "
+                    f"(tolerance={int((1 - F1_REGRESSION_TOLERANCE) * 100)}%, "
+                    f"seuil={f1_seuil:.4f})"
+                ),
+            }
+        )
+    else:
+        f1_pass = True
+        criteres.append(
+            {
+                "nom": "Non-regression F1 (non applicable)",
+                "valeur_nouveau": f1_nouveau,
+                "valeur_reference": None,
+                "seuil": None,
+                "pass": True,
+                "description": "Pas de modele de reference, critere ignore",
+            }
+        )
+
+    # Critere 4 (optionnel) : stabilite entre folds si on dispose des metriques CV
+    cv_aggregated = new_metrics.get("cv_aggregated")
+    if cv_aggregated and "mcc" in cv_aggregated:
+        mcc_std = float(cv_aggregated["mcc"].get("std", 0.0))
+        # Le plafond depend du nombre de Green IT : avec peu de positifs, la
+        # variance inter-folds est mecanique, on tolere donc un seuil plus large.
+        n_green = int(new_metrics.get("vrais_positifs", 0) + new_metrics.get("faux_negatifs", 0))
+        max_std = _max_mcc_std(n_green)
+        stability_pass = mcc_std <= max_std
+        criteres.append(
+            {
+                "nom": f"Stabilite CV (std MCC <= {max_std})",
+                "valeur_nouveau": mcc_std,
+                "valeur_reference": None,
+                "seuil": max_std,
+                "pass": stability_pass,
+                "description": (
+                    f"Ecart-type du MCC sur les folds = {mcc_std:.4f} "
+                    f"(plafond={max_std} ajuste pour {n_green} Green IT, "
+                    "au-dela = performance instable)"
+                ),
+            }
+        )
+
+    retenu = all(c["pass"] for c in criteres)
+    if retenu:
+        raison = "Tous les criteres de promotion sont satisfaits"
+    else:
+        echecs = [c["nom"] for c in criteres if not c["pass"]]
+        raison = f"Critere(s) echoue(s) : {', '.join(echecs)}"
+
+    return {"retenu": retenu, "criteres": criteres, "raison": raison}
+
+
+def _log_promotion_verdict(verdict: dict) -> None:
+    """Affiche le detail de l'evaluation des criteres de promotion."""
+    logger.info("")
+    logger.info("-" * 80)
+    logger.info("  EVALUATION DES CRITERES DE PROMOTION")
+    logger.info("-" * 80)
+
+    for i, critere in enumerate(verdict["criteres"], 1):
+        statut = "OK   " if critere["pass"] else "ECHEC"
+        logger.info(f"  [{statut}] {i}. {critere['nom']}")
+        logger.info(f"          {critere['description']}")
+
+    logger.info("")
+    if verdict["retenu"]:
+        logger.info("  VERDICT : NOUVEAU MODELE RETENU")
+        logger.info(f"           {verdict['raison']}")
+    else:
+        logger.warning("  VERDICT : ANCIEN MODELE CONSERVE")
+        logger.warning(f"           {verdict['raison']}")
+
+
 async def step_benchmark() -> dict | None:
     """Compare le nouveau modele au meilleur historique et au baseline.
+
+    Applique un critere composite (MCC + recall Green IT + non-regression F1
+    + stabilite CV si disponible) adapte au desequilibre extreme du dataset.
+
+    Si un rapport K-fold recent (`cv_report.json`) est present et plus recent
+    que le modele entraine, ses metriques agregees sont utilisees au lieu
+    d'une evaluation sur un split 80/20. Cela donne une comparaison plus
+    robuste basee sur 5 folds de validation.
 
     Returns:
         Resultats avec verdict (nouveau_est_meilleur: bool), ou None si erreur.
@@ -381,57 +966,87 @@ async def step_benchmark() -> dict | None:
         logger.error(f"Modele entraine introuvable dans {LLAMA_TRAIN_DIR}")
         return None
 
-    _, _, test_texts, test_labels = load_golden_dataset(oversample=False)
-    logger.info(f"Test set : {len(test_texts)} articles")
+    # Si un rapport K-fold recent existe, on l'utilise en priorite (beaucoup plus fiable)
+    cv_report = _load_json(CV_REPORT_FILE)
+    new_metrics: dict
 
-    logger.info("\nNouveau modele (post-entrainement) :")
-    new_metrics = await _evaluate_new_model(test_texts, test_labels)
+    if cv_report and _is_cv_report_fresh():
+        logger.info(f"Utilisation du rapport K-fold ({cv_report.get('n_splits')} folds)")
+        new_metrics = dict(cv_report["global"])
+        new_metrics["cv_aggregated"] = cv_report["aggregated"]
+        new_metrics["cv_folds"] = cv_report["folds"]
+        test_set_size = sum(f["n_test"] for f in cv_report["folds"])
+        new_metrics["total_echantillons"] = test_set_size
+        _log_detailed_metrics(new_metrics, "Nouveau modele (K-fold CV)")
+        _log_cv_variability(cv_report["aggregated"])
+    else:
+        if cv_report:
+            logger.warning(
+                "Rapport CV present mais obsolete vs le modele entraine, "
+                "basculement sur evaluation test-split 80/20"
+            )
+        _, _, test_texts, test_labels = load_golden_dataset(oversample=False)
+        test_set_size = len(test_texts)
+        logger.info(f"Test set : {test_set_size} articles")
+        new_metrics = await _evaluate_new_model(test_texts, test_labels)
 
     best_ref = _load_json(BEST_METRICS_FILE)
     baseline_ref = _load_json(BASELINE_METRICS_FILE)
 
-    # Rapport
-    logger.info("\n" + "=" * 80)
-    logger.info("  RAPPORT COMPARATIF")
+    logger.info("")
+    logger.info("=" * 80)
+    logger.info("  RAPPORT COMPARATIF DETAILLE")
     logger.info("=" * 80)
 
     if baseline_ref:
-        b = baseline_ref["metrics"]
-        gain = new_metrics["f1"] - b["f1"]
-        logger.info(f"\n  Baseline (sans fine-tuning) : F1={b['f1']:.4f}")
-        logger.info(f"  Gain du fine-tuning         : {'+' if gain >= 0 else ''}{gain:.4f} F1")
+        _log_detailed_metrics(
+            baseline_ref["metrics"],
+            "Baseline (Llama 3.2 3B sans fine-tuning)",
+        )
+        baseline_metrics = baseline_ref["metrics"]
+        gain_f1 = new_metrics["f1"] - baseline_metrics["f1"]
+        gain_mcc = new_metrics["mcc"] - baseline_metrics.get("mcc", 0.0)
+        logger.info(
+            f"  >>> Gain du fine-tuning vs baseline : "
+            f"{'+' if gain_mcc >= 0 else ''}{gain_mcc:.4f} MCC, "
+            f"{'+' if gain_f1 >= 0 else ''}{gain_f1:.4f} F1"
+        )
 
     if best_ref:
-        old = best_ref["metrics"]
-        delta = new_metrics["f1"] - old["f1"]
-        logger.info(f"\n  Meilleur precedent ({best_ref['version']}) : F1={old['f1']:.4f}")
-        logger.info(f"  Delta                       : {'+' if delta >= 0 else ''}{delta:.4f} F1")
-    else:
-        delta = 1.0
+        _log_detailed_metrics(
+            best_ref["metrics"],
+            f"Meilleur precedent ({best_ref['version']})",
+        )
+        old_metrics = best_ref["metrics"]
+        delta_mcc = new_metrics["mcc"] - old_metrics.get("mcc", 0.0)
+        delta_f1 = new_metrics["f1"] - old_metrics["f1"]
+        logger.info(
+            f"  >>> Delta vs meilleur precedent : "
+            f"{'+' if delta_mcc >= 0 else ''}{delta_mcc:.4f} MCC, "
+            f"{'+' if delta_f1 >= 0 else ''}{delta_f1:.4f} F1"
+        )
 
-    logger.info(f"\n  Nouveau modele              : F1={new_metrics['f1']:.4f}")
-
-    nouveau_est_meilleur = delta >= 0
-
-    logger.info("\n" + "-" * 80)
-    if nouveau_est_meilleur:
-        logger.info("  VERDICT : NOUVEAU MODELE RETENU")
-    else:
-        logger.warning("  VERDICT : ANCIEN MODELE CONSERVE (regression)")
+    verdict = _evaluate_promotion_criteria(
+        new_metrics,
+        best_ref["metrics"] if best_ref else None,
+    )
+    _log_promotion_verdict(verdict)
     logger.info("=" * 80)
 
     report = {
         "date": datetime.now(UTC).isoformat(),
-        "test_set_size": len(test_texts),
+        "test_set_size": test_set_size,
         "nouveau": new_metrics,
         "meilleur_precedent": best_ref["metrics"] if best_ref else None,
         "baseline": baseline_ref["metrics"] if baseline_ref else None,
-        "verdict": "nouveau_retenu" if nouveau_est_meilleur else "ancien_conserve",
+        "verdict": "nouveau_retenu" if verdict["retenu"] else "ancien_conserve",
+        "criteres_promotion": verdict["criteres"],
+        "raison": verdict["raison"],
     }
     report_path = BASE_DIR / "data" / "benchmark_versions.json"
     report_path.write_text(json.dumps(report, indent=2))
 
-    return {"nouveau": new_metrics, "nouveau_est_meilleur": nouveau_est_meilleur}
+    return {"nouveau": new_metrics, "nouveau_est_meilleur": verdict["retenu"]}
 
 
 # =============================================================================
@@ -476,7 +1091,12 @@ async def step_auto_promote() -> bool:
     }
     (PRODUCTION_DIR / "promotion_info.json").write_text(json.dumps(meta, indent=2))
 
-    logger.info(f"NOUVEAU MODELE PROMU : {version_tag} (F1={new_metrics['f1']:.4f})")
+    logger.info(
+        f"NOUVEAU MODELE PROMU : {version_tag} "
+        f"(MCC={new_metrics.get('mcc', 0.0):.4f}, "
+        f"F1={new_metrics['f1']:.4f}, "
+        f"Recall Green IT={new_metrics.get('recall', 0.0):.4f})"
+    )
     logger.info("Redemarrez l'API pour charger le nouveau modele.")
     return True
 
@@ -553,16 +1173,30 @@ async def run_pipeline(steps: list[str]) -> None:
         if step_name == "baseline":
             await step_baseline()
             continue
+        if step_name == "train-cv":
+            logger.info("\n>>> Re-entrainement Llama (K-fold CV)...")
+            if await step_train_cv() is None:
+                logger.error("Interrompu a : train-cv")
+                return
+            continue
 
         sync_steps = {
             "collect": ("Collecte des donnees", step_collect),
-            "annotate": ("Re-annotation du dataset", step_annotate),
-            "train": ("Re-entrainement Llama", step_train),
+            "annotate": ("Pre-filtre mots-cles (etage 1)", step_annotate),
+            "classify": ("LLM judge - verification candidats (etage 2)", step_classify),
+            "summarize": ("Resumes Green IT confirmes", step_summarize_green),
+            "export-golden": ("Export golden_dataset.csv", step_export_golden),
+            "train": ("Re-entrainement Llama (split 80/20)", step_train),
             "promote": ("Promotion forcee", step_force_promote),
         }
 
         if step_name not in sync_steps:
-            valid = list(sync_steps.keys()) + ["benchmark", "auto-promote", "baseline"]
+            valid = list(sync_steps.keys()) + [
+                "benchmark",
+                "auto-promote",
+                "baseline",
+                "train-cv",
+            ]
             logger.error(f"Etape inconnue : {step_name}")
             logger.info(f"Valides : {', '.join(valid)}, ingest-file <path>")
             return
@@ -582,6 +1216,14 @@ async def run_pipeline(steps: list[str]) -> None:
 
 def main() -> None:
     """Point d'entree CLI."""
+    # Activer le logging persistant : console + fichier rotatif logs/greentech_<date>.log
+    # (+ Loki si accessible). Sans cet appel, loguru n'ecrit que sur stderr.
+    from greentech.utils.logger import setup_logging
+
+    # Loki active : les logs de l'orchestrateur sont centralises dans Grafana
+    # pour suivre l'avancement du pipeline en direct via l'Explore Loki.
+    setup_logging(level="INFO", enable_loki=True)
+
     args = sys.argv[1:]
 
     processed: list[str] = []
@@ -595,7 +1237,23 @@ def main() -> None:
             i += 1
 
     if not processed:
-        processed = ["collect", "annotate", "train", "auto-promote"]
+        # Pipeline complet recommande :
+        # 1. collect        : collecte depuis toutes les sources
+        # 2. annotate       : pre-filtre mots-cles (etage 1, binaire CANDIDATE/NON_GREEN)
+        # 3. classify       : LLM judge sur les candidats (etage 2, decision finale)
+        # 4. summarize      : resumes general + ecologique sur les Green IT confirmes
+        # 5. export-golden  : regenere golden_dataset.csv depuis la DB post-classification
+        # 6. train-cv       : re-entraine Llama avec K-fold CV sur le nouveau golden
+        # 7. auto-promote   : benchmark et promotion conditionnelle
+        processed = [
+            "collect",
+            "annotate",
+            "classify",
+            "summarize",
+            "export-golden",
+            "train-cv",
+            "auto-promote",
+        ]
 
     asyncio.run(run_pipeline(processed))
 

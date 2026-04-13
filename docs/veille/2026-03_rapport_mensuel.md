@@ -3,6 +3,13 @@
 > **Periode** : Du 1er mars au 31 mars 2026
 > **Projet** : GreenTech Intelligence
 
+> **Note historique (ajoutee le 2026-04-13)** : Ce rapport reflete l'etat des
+> choix techniques au 31 mars 2026. Certaines orientations mentionnees ici
+> (notamment **BART-large-CNN** comme modele de resume) ont evolue depuis.
+> Le modele de resume a ete migre vers **Qwen2.5-7B-Instruct** suite aux
+> crash tests. Consulter `docs/BENCHMARK_SERVICES_IA.md` sections 8 et 9
+> pour l'historique complet de cette migration.
+
 ---
 
 ## Vue d'Ensemble du Mois

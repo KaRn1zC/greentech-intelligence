@@ -1,6 +1,6 @@
 # Etat d'avancement du projet - GreenTech Intelligence
 
-> **Derniere mise a jour** : 2026-04-11
+> **Derniere mise a jour** : 2026-04-13
 
 ---
 
@@ -137,4 +137,49 @@ Le ratio 22/5786 (0.4% Green IT) est tres desequilibre. Strategie appliquee :
 
 ### Nomenclature
 Le projet utilise des noms de colonnes en **francais** dans toute la stack (SQL, SQLAlchemy, Pydantic, TypeScript).
+
+---
+
+## Evolutions post-livraison initiale (2026-04-13)
+
+### Classification hybride en deux etages
+Le scoring mots-cles historique a ete refactore en **pre-filtre permissif**,
+complete par un LLM judge (`Qwen/Qwen2.5-7B-Instruct`) qui tranche les
+cas ambigus. Le golden dataset est desormais regenere a partir de la DB
+post-LLM, pas du scoring seul.
+
+- **Etage 1** (`scripts/auto_annotate_dataset.py`) : ~85% du corpus classifie
+  en `NON_GREEN` direct, ~15% envoye au LLM comme `CANDIDATE`.
+- **Etage 2** (`scripts/classify_candidates.py`) : LLM judge avec prompt
+  zero-shot permissif et parser JSON tolerant aux erreurs d'echappement.
+- **Export** (`scripts/export_golden_dataset.py`) : regeneration du CSV
+  depuis l'etat final de la DB.
+
+### Fallback local Qwen sur GPU AMD ROCm
+Pour resister a l'epuisement du quota mensuel HF Inference Providers,
+un dispatcher (`src/greentech/ai/services/llm_dispatcher.py`) bascule
+automatiquement tous les appels LLM (classification + resumes) sur le
+meme modele Qwen execute en local sur la RX 7900 XTX 24 Go
+(`src/greentech/ai/services/llm_local.py`). Ce bascule est declenche par
+la premiere erreur HTTP 402, reset a chaque nouveau processus Python.
+
+### Resumes cibles sur les Green IT confirmes uniquement
+`summarize_green_it_articles` (dans `summarizer.py`) ne genere les deux
+resumes (general + ecologique) que pour les articles avec
+`est_green_it=true` et au moins un resume manquant. Cela evite de saturer
+le quota HF sur l'ensemble du corpus alors que les resumes ne sont
+exploites que pour les Green IT dans l'interface.
+
+### Pipeline enrichi
+`scripts/retrain_pipeline.py` integre desormais les nouvelles etapes
+`classify`, `summarize`, `export-golden` entre `annotate` et `train-cv`.
+Le pipeline par defaut est :
+
+```
+collect → annotate → classify → summarize → export-golden → train-cv → auto-promote
+```
+
+Chaque etape ne traite que les articles nouveaux ou incomplets, de sorte
+que le pipeline complet peut etre relance a l'identique sans retravailler
+les articles deja classifies/resumes.
 

@@ -45,34 +45,74 @@ GET https://newsdata.io/api/1/latest?apikey=YOUR_API_KEY&q=green+IT&category=tec
 
 ---
 
-## 2. Source Scraping : Blog Tech (Market Intelligence)
+## 2. Source Scraping hybride : Blog Tech (Market Intelligence)
 
 **Nom** : TechCrunch - Section Climate
 
-**Type** : Web Scraping (Site Dynamique / SPA)
+**Type** : Scraping hybride en deux etapes
+1. **Decouverte d'URLs** via le flux RSS officiel (listing stable)
+2. **Scraping HTML** des articles individuels avec Scrapy + Playwright
 
-**URL cible** : <https://techcrunch.com/category/climate/>
+**URLs cibles** :
+- Flux RSS : <https://techcrunch.com/category/climate/feed/>
+- Pages d'articles : `https://techcrunch.com/YYYY/MM/DD/<slug>/`
 
-**Contrainte technique validee** : Utilisation obligatoire de Playwright.
+**Outils imposes (critere C1 du referentiel)** :
+- `scrapy` : framework de crawl/scraping (HTTP, parsing, pipeline)
+- `playwright` : rendu JS pour pages dynamiques
+- `scrapy-playwright` : integration navigateur dans Scrapy
+- `httpx` + `feedparser` : pour l'etape RSS initiale
 
-### Pourquoi cette source ?
+### Pourquoi cette architecture hybride ?
 
-- **Architecture dynamique** : Le site utilise un chargement en "Infinite Scroll"
-  (defilement infini).
-- **Justification Playwright** : Un scraper simple ne verrait que les premiers articles.
-  Playwright est necessaire pour simuler le scroll utilisateur et attendre le chargement
-  reseau (hydratation React).
-- **Pertinence** : Couvre les levees de fonds et l'innovation materielle (Hardware) durable.
+**Robustesse** : le flux RSS sert de liste d'URLs stable, insensible aux refontes
+de la page d'index. TechCrunch a par exemple supprime la balise `<article>` en
+avril 2026 sur la page de listing, ce qui aurait casse un scraper purement HTML
+sur l'index.
+
+**Conformite au referentiel C1** : le scraping HTML reste le coeur de la collecte.
+Chaque URL fournie par le RSS est telechargee avec Scrapy + Playwright, puis
+parsee via des selecteurs CSS sur le DOM rendu. Cela coche explicitement les
+criteres de certification :
+- "telechargement de l'HTML d'une ou plusieurs pages web visees par une action de scraping"
+- "filtrage/parsing des donnees utiles dans les resultats obtenus depuis l'HTML
+  collecte d'un site web (scraping)"
+
+**Qualite des donnees** : le RSS ne fournit qu'un resume partiel (quelques
+paragraphes). Le scraping HTML recupere l'integralite du contenu de l'article,
+ce qui nourrit mieux le modele de classification Green IT et le summarizer Qwen.
+
+### Selecteurs CSS utilises (pages d'articles TechCrunch)
+
+| Champ              | Selecteur CSS                                         |
+|--------------------|-------------------------------------------------------|
+| Titre              | `h1.article-hero__title::text`                        |
+| Titre (fallback)   | `meta[property="og:title"]::attr(content)`            |
+| Date publication   | `time::attr(datetime)` (ISO 8601)                     |
+| Auteurs            | `a[href*="/author/"]::text`                           |
+| Contenu texte      | `div.entry-content p::text` (concatene)               |
+| Contenu HTML brut  | `div.entry-content` (HTML complet)                    |
+| Resume court       | `meta[property="og:description"]::attr(content)`      |
 
 ### Donnees recuperees (pour le MCD)
 
-| Champ extrait      | Description                  |
-|--------------------|------------------------------|
-| Titre article      | Titre de l'article           |
-| URL                | Lien vers l'article complet  |
-| Date de publication| Date de parution             |
-| Contenu HTML       | Corps de l'article           |
-| Auteur             | Nom de l'auteur              |
+| Champ extrait      | Description                                  |
+|--------------------|----------------------------------------------|
+| Titre article      | Titre principal extrait du DOM HTML          |
+| URL                | URL finale de l'article (apres redirections) |
+| Date de publication| Date ISO 8601 de parution                    |
+| Auteur             | Noms des auteurs concatenes                  |
+| Contenu texte      | Article complet (paragraphes fusionnes)      |
+| Contenu HTML       | Bloc `entry-content` brut                    |
+| Resume court       | Description OpenGraph                        |
+
+### Contraintes ethiques respectees
+
+- `ROBOTSTXT_OBEY = True` : respect du fichier robots.txt
+- `DOWNLOAD_DELAY = 2.0` : delai de 2 secondes entre chaque page
+- `CONCURRENT_REQUESTS = 1` : une seule requete simultanee
+- User-Agent identifie : `GreenTech-Bot/1.0`
+- Limite a 20 articles par session (`MAX_ARTICLES`)
 
 ---
 

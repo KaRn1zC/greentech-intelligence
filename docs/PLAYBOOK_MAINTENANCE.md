@@ -110,17 +110,43 @@ up
 - **Modele non charge** : Premiere requete apres demarrage
   - Solution : Le modele est charge en lazy-loading, la premiere inference est plus lente
 
-### Incident : L'API Hugging Face (resume) echoue
+### Incident : L'API Hugging Face (resume ou LLM judge) echoue
 
 **Diagnostic** :
-1. Logs : `{container="greentech-api"} |= "summarizer" |= "ERROR"`
+1. Logs : `{container="greentech-api"} |= "summarizer" |= "ERROR"` ou `|= "classifier_llm"`
 2. Verifier le token : La variable `HUGGINGFACE_TOKEN` est-elle definie ?
+3. Verifier le quota : `{container="greentech-api"} |= "Quota HF"` (bascule locale detectee)
 
 **Causes possibles** :
-- **Rate limit** : L'API gratuite a des limites
-  - Solution : Attendre ou passer a un plan payant
-- **Token expire** : Renouveler le token sur huggingface.co
-- **API indisponible** : Verifier https://status.huggingface.co
+- **Quota mensuel epuise (HTTP 402)** : le dispatcher bascule **automatiquement**
+  sur le modele Qwen local (GPU AMD ROCm). Aucune action manuelle necessaire
+  tant que le PC fixe est accessible.
+  - Verifier la disponibilite du GPU : `nvidia-smi` / `rocm-smi` (ou Task Manager Windows).
+  - Verifier le chargement du modele : `grep "Modele local charge" logs/greentech_*.log`
+  - Pour revenir a HF avant le reset mensuel : souscrire au plan PRO (9 USD/mois,
+    20x plus de credits) ou attendre le debut du mois suivant.
+- **Rate limit** (HTTP 429, temporaire) : retry automatique avec backoff exponentiel.
+- **Token expire** : Renouveler le token sur huggingface.co.
+- **API indisponible** : Verifier https://status.huggingface.co. Le fallback
+  local ne se declenche que sur le 402, pas sur les autres erreurs, donc
+  utiliser `reset_hf_quota_flag()` depuis un shell Python si besoin de forcer
+  la bascule locale temporairement.
+
+### Incident : Le modele local Qwen ne se charge pas
+
+**Diagnostic** :
+1. Logs : `{container="greentech-api"} |= "llm_local"`
+2. Verifier la VRAM disponible (24 Go sur RX 7900 XTX)
+3. Verifier que ROCm est bien installe : `uv run python -c "import torch; print(torch.cuda.is_available())"`
+
+**Causes possibles** :
+- **ROCm non disponible** : Le dispatcher tombera sur DirectML puis CPU
+  (beaucoup plus lent mais fonctionnel).
+- **VRAM insuffisante** : Un autre processus occupe la VRAM.
+  Solution : `nvidia-smi` ou Task Manager > Details > GPU memory.
+- **Modele non telecharge** : Le cache `~/.cache/huggingface/hub` doit
+  contenir `models--Qwen--Qwen2.5-7B-Instruct` (~15 Go). Sinon il se
+  telecharge au premier usage.
 
 ---
 

@@ -1,77 +1,82 @@
-"""Annotation automatique du Golden Dataset par scoring multi-critères.
+"""Pre-filtre de classification Green IT par scoring multi-criteres (etage 1).
 
-Classifie chaque article comme Green IT (1) ou Non Green IT (0)
-en combinant plusieurs signaux pondérés :
-  - Indicateurs positifs (Green IT) dans le titre et le contenu
-  - Indicateurs négatifs (Non Green IT) dans le titre et le contenu
-  - Règles contextuelles par source (arXiv vs actualités)
-  - Score de confiance pour identifier les cas ambigus
+Ce module constitue le **premier etage** du pipeline de classification hybride :
+il applique un scoring par mots-cles afin de distinguer rapidement les articles
+manifestement Non Green IT des articles **candidats** qui meritent une
+verification plus fine par un LLM (etage 2 : `classify_candidates.py`).
 
-La définition de "Green IT" utilisée :
-  Un article est Green IT si son SUJET PRINCIPAL concerne la réduction
-  de l'impact environnemental des technologies numériques, OU l'usage
-  du numérique au service de la transition écologique.
+Philosophie du pre-filtre
+-------------------------
 
-  Cela inclut : efficacité énergétique des infrastructures IT, empreinte
-  carbone du numérique, sobriété numérique, éco-conception logicielle,
-  e-waste, énergies renouvelables pour les data centers, IA frugale.
+Le pre-filtre est volontairement **permissif** cote Green IT : il maximise le
+recall au detriment de la precision. Un article avec le moindre signal Green
+est marque `CANDIDATE` et envoye au LLM pour verification definitive. Seuls
+les articles manifestement non-pertinents (bourse, crypto, rapports de marche,
+gaming, etc.) sont ecartes directement en `NON_GREEN`.
 
-  Cela exclut : recherche IA/ML générale (même si "efficient"),
-  véhicules électriques (sauf angle IT), énergie renouvelable générale
-  (sans lien avec l'IT), rapports de marché financier, tech grand public.
+Ce compromis est assume : le pre-filtre seul genere des faux positifs, mais
+le LLM les corrige a l'etage suivant. En contrepartie, on est quasi-certain
+de ne rater **aucun** vrai Green IT, ce qui est crucial pour la qualite du
+golden dataset d'entrainement Llama.
+
+Definition retenue du Green IT
+------------------------------
+
+Un article est Green IT si son sujet principal concerne :
+
+- la reduction de l'impact environnemental des technologies numeriques
+  (efficacite energetique, empreinte carbone, sobriete numerique,
+  eco-conception logicielle, IA frugale, e-waste) ;
+- OU l'usage du numerique au service de la transition ecologique
+  (mais uniquement si l'angle IT est central, pas juste mentionne).
+
+Sont exclus : recherche IA/ML generale sans angle energie, vehicules
+electriques hors angle IT, energie renouvelable generale, rapports boursiers,
+tech grand public sans dimension environnementale.
+
+Sortie
+------
+
+Chaque article est marque en base :
+
+- `modele_classification = "keyword_filter"` : le pre-filtre l'a traite
+- `est_green_it = False` : classe NON_GREEN par le pre-filtre (pas besoin LLM)
+- `est_green_it = NULL` : classe CANDIDATE, en attente de verification LLM
 
 """
 
 from __future__ import annotations
 
 import asyncio
-import csv
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from enum import StrEnum
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select, update
 
-from greentech.config import BASE_DIR
 from greentech.data.storage.database import async_session_factory
 from greentech.data.storage.models import Article, Source
 
-OUTPUT_DIR = BASE_DIR / "data"
-OUTPUT_FILE = OUTPUT_DIR / "golden_dataset.csv"
-
-CSV_HEADERS = [
-    "id_article",
-    "titre",
-    "url",
-    "contenu_extrait",
-    "source_nom",
-    "date_publication",
-    "label_green_it",
-    "score_confiance",
-    "raison",
-]
-
-EXTRAIT_MAX_CHARS = 500
-
-
 # =============================================================================
-# INDICATEURS PONDÉRÉS
+# INDICATEURS PONDERES
 # =============================================================================
+
 
 @dataclass(frozen=True)
 class Indicator:
-    """Un indicateur de classification avec son poids et sa catégorie."""
+    """Un indicateur de classification avec son poids et sa categorie."""
+
     pattern: str
     weight: float
     category: str
 
 
 # --- INDICATEURS GREEN IT (positifs) ---
-# Poids : 5 = signal très fort, 3 = signal moyen, 1 = signal faible
+# Poids : 5 = signal tres fort, 3 = signal moyen, 1 = signal faible
 
 GREEN_INDICATORS: list[Indicator] = [
-    # === Efficacité énergétique IT (core Green IT) ===
+    # === Efficacite energetique IT (core Green IT) ===
     Indicator("green it", 5.0, "core"),
     Indicator("green computing", 5.0, "core"),
     Indicator("green software", 5.0, "core"),
@@ -94,11 +99,11 @@ GREEN_INDICATORS: list[Indicator] = [
     Indicator("eco-conception", 4.0, "core"),
     Indicator("eco-responsible", 3.0, "core"),
     Indicator("digital sobriety", 5.0, "core"),
-    Indicator("sobriété numérique", 5.0, "core"),
+    Indicator("sobriete numerique", 5.0, "core"),
     Indicator("frugal ai", 4.0, "core"),
     Indicator("frugal computing", 4.0, "core"),
 
-    # === Empreinte carbone du numérique ===
+    # === Empreinte carbone du numerique ===
     Indicator("carbon footprint software", 5.0, "carbon"),
     Indicator("carbon footprint ai", 5.0, "carbon"),
     Indicator("carbon footprint data cent", 5.0, "carbon"),
@@ -116,12 +121,13 @@ GREEN_INDICATORS: list[Indicator] = [
     Indicator("carbon cost training", 4.0, "carbon"),
     Indicator("carbon cost model", 4.0, "carbon"),
     Indicator("net zero data cent", 5.0, "carbon"),
-    Indicator("net-zero technology", 3.0, "carbon"),
     Indicator("low carbon computing", 4.0, "carbon"),
     Indicator("codecarbon", 4.0, "carbon"),
     Indicator("carbon tracker", 3.0, "carbon"),
+    Indicator("carbon emission", 2.0, "carbon"),
+    Indicator("carbon reduction", 2.0, "carbon"),
 
-    # === Efficacité énergétique (contexte IT) ===
+    # === Efficacite energetique (contexte IT) ===
     Indicator("energy efficient server", 5.0, "energy"),
     Indicator("energy efficient data cent", 5.0, "energy"),
     Indicator("energy efficient computing", 5.0, "energy"),
@@ -147,6 +153,8 @@ GREEN_INDICATORS: list[Indicator] = [
     Indicator("low power inference", 4.0, "energy"),
     Indicator("energy saving server", 4.0, "energy"),
     Indicator("electricity consumption ict", 4.0, "energy"),
+    Indicator("energy saving", 2.0, "energy"),
+    Indicator("energy reduction", 2.0, "energy"),
 
     # === Data center vert ===
     Indicator("cooling.*data cent", 4.0, "datacenter"),
@@ -162,8 +170,11 @@ GREEN_INDICATORS: list[Indicator] = [
     Indicator("solar powered comput", 4.0, "datacenter"),
     Indicator("wind power data cent", 4.0, "datacenter"),
     Indicator("green hydrogen data cent", 4.0, "datacenter"),
+    Indicator("data centre.*energy", 2.0, "datacenter"),
+    Indicator("data centre.*cool", 2.0, "datacenter"),
+    Indicator("data centre.*green", 2.0, "datacenter"),
 
-    # === E-waste / économie circulaire ===
+    # === E-waste / economie circulaire ===
     Indicator("e-waste", 4.0, "ewaste"),
     Indicator("electronic waste", 4.0, "ewaste"),
     Indicator("circular economy electronic", 4.0, "ewaste"),
@@ -174,56 +185,79 @@ GREEN_INDICATORS: list[Indicator] = [
     Indicator("sustainable hardware", 3.0, "ewaste"),
 
     # === Signaux contextuels (titres courants) ===
-    Indicator("green tech", 3.0, "moderate"),
+    Indicator("green tech", 2.0, "moderate"),
     Indicator("green loan.*data cent", 3.0, "moderate"),
     Indicator("green energy data cent", 3.0, "moderate"),
     Indicator("green energy server", 3.0, "moderate"),
-    Indicator("clean tech", 2.0, "moderate"),
-    Indicator("cleantech", 2.0, "moderate"),
-    Indicator("climate tech", 3.0, "moderate"),
-    Indicator("energy monitor", 3.0, "moderate"),
-    Indicator("energy saving", 3.0, "energy"),
-    Indicator("energy reduction", 3.0, "energy"),
-    Indicator("heat and energy", 2.0, "energy"),
-    Indicator("cuts heat", 2.0, "energy"),
-    Indicator("reduce heat", 2.0, "energy"),
-    Indicator("reduce power", 2.0, "energy"),
-    Indicator("solar powered", 3.0, "datacenter"),
-    Indicator("wind powered", 3.0, "datacenter"),
-    Indicator("data centre.*energy", 2.0, "datacenter"),
-    Indicator("data centre.*cool", 2.0, "datacenter"),
-    Indicator("data centre.*green", 2.0, "datacenter"),
+    Indicator("clean tech", 1.5, "moderate"),
+    Indicator("cleantech", 1.5, "moderate"),
+    Indicator("climate tech", 2.0, "moderate"),
+    Indicator("energy monitor", 2.0, "moderate"),
 
-    # === Signaux modérés (besoin de contexte) ===
-    Indicator("environmental impact.*technolog", 3.0, "moderate"),
-    Indicator("environmental impact.*digital", 3.0, "moderate"),
-    Indicator("environmental impact.*ai", 3.0, "moderate"),
-    Indicator("environmental impact.*computing", 3.0, "moderate"),
+    # === Signaux moderes (besoin de contexte) ===
+    Indicator("environmental impact.*technolog", 2.5, "moderate"),
+    Indicator("environmental impact.*digital", 2.5, "moderate"),
+    Indicator("environmental impact.*ai", 2.5, "moderate"),
+    Indicator("environmental impact.*computing", 2.5, "moderate"),
     Indicator("digital pollution", 3.0, "moderate"),
     Indicator("digital carbon", 3.0, "moderate"),
     Indicator("ict sustainability", 3.0, "moderate"),
-    Indicator("climate.*software", 2.0, "moderate"),
-    Indicator("sustainable digitali", 3.0, "moderate"),
-    Indicator("carbon emission", 3.0, "carbon"),
-    Indicator("carbon reduction", 3.0, "carbon"),
-    Indicator("reduce.*carbon", 2.0, "carbon"),
-    Indicator("net zero", 2.0, "carbon"),
+    Indicator("climate.*software", 1.5, "moderate"),
+    Indicator("sustainable digitali", 2.5, "moderate"),
+
+    # === Signaux faibles elargis (capturer plus large en etage 1) ===
+    # Ces indicateurs a petit poids ne suffisent pas seuls a declencher une
+    # candidature, mais ils s'additionnent avec d'autres signaux pour passer
+    # le seuil permissif CANDIDATE_MIN_GREEN_SCORE.
+    Indicator("power consumption", 1.0, "weak"),
+    Indicator("power efficiency", 1.0, "weak"),
+    Indicator("energy cost", 1.0, "weak"),
+    Indicator("kwh", 1.0, "weak"),
+    Indicator("megawatt", 1.0, "weak"),
+    Indicator("gigawatt", 1.5, "weak"),
+    Indicator("co2", 1.0, "weak"),
+    Indicator("greenhouse gas", 1.5, "weak"),
+    Indicator("sustainability report", 1.5, "weak"),
+    Indicator("environmental cost", 1.5, "weak"),
+    Indicator("ecological", 1.0, "weak"),
+    Indicator("renewable", 1.0, "weak"),
+    Indicator("photovoltaic", 1.0, "weak"),
+    Indicator("heat recovery", 1.5, "weak"),
+    Indicator("thermal efficiency", 1.5, "weak"),
+    Indicator("low latency energy", 1.5, "weak"),
+    Indicator("compress.*model.*energy", 2.0, "weak"),
+    Indicator("pruning.*energy", 2.0, "weak"),
+    Indicator("quantization.*energy", 2.0, "weak"),
+    Indicator("model compression", 1.0, "weak"),
+    Indicator("inference cost", 1.5, "weak"),
+    Indicator("training cost", 1.0, "weak"),
+    Indicator("gpu hours", 1.0, "weak"),
+    Indicator("server farm", 1.5, "weak"),
+    Indicator("edge computing", 1.0, "weak"),
+    Indicator("tinyml", 2.0, "weak"),
+    Indicator("on-device inference", 1.5, "weak"),
+    Indicator("hardware accelerator", 1.0, "weak"),
+    Indicator("heat dissipation", 1.5, "weak"),
+    Indicator("datacenter", 1.0, "weak"),
+    Indicator("data center", 1.0, "weak"),
+    Indicator("data-center", 1.0, "weak"),
 ]
 
-# --- INDICATEURS NON GREEN IT (négatifs) ---
-NON_GREEN_INDICATORS: list[Indicator] = [
-    # === IA/ML générale ===
-    Indicator("large language model", 2.0, "general_ai"),
-    Indicator("transformer architecture", 2.0, "general_ai"),
-    Indicator("reinforcement learning", 2.0, "general_ai"),
-    Indicator("neural network architecture", 2.0, "general_ai"),
-    Indicator("attention mechanism", 2.0, "general_ai"),
-    Indicator("benchmark accuracy", 2.0, "general_ai"),
-    Indicator("state-of-the-art", 1.5, "general_ai"),
-    Indicator("fine-tuning", 1.0, "general_ai"),
-    Indicator("pre-training", 1.0, "general_ai"),
+# --- INDICATEURS NON GREEN IT (negatifs) ---
+# On reserve les poids tres forts (>=4) aux signaux qui justifient
+# un rejet direct (passage en NON_GREEN sans appel LLM).
 
-    # === Cybersécurité ===
+NON_GREEN_INDICATORS: list[Indicator] = [
+    # === IA/ML generale (signal faible, ne doit pas exclure seul) ===
+    Indicator("large language model", 1.0, "general_ai"),
+    Indicator("transformer architecture", 1.0, "general_ai"),
+    Indicator("reinforcement learning", 1.0, "general_ai"),
+    Indicator("neural network architecture", 1.0, "general_ai"),
+    Indicator("attention mechanism", 1.0, "general_ai"),
+    Indicator("benchmark accuracy", 1.5, "general_ai"),
+    Indicator("state-of-the-art", 1.0, "general_ai"),
+
+    # === Cybersecurite (signal moyen, presque jamais Green IT) ===
     Indicator("cybersecurity", 3.0, "cyber"),
     Indicator("ransomware", 4.0, "cyber"),
     Indicator("malware", 4.0, "cyber"),
@@ -232,33 +266,36 @@ NON_GREEN_INDICATORS: list[Indicator] = [
     Indicator("zero trust", 3.0, "cyber"),
     Indicator("vulnerability", 2.0, "cyber"),
 
-    # === Crypto / finance ===
-    Indicator("cryptocurrency", 4.0, "crypto"),
-    Indicator("bitcoin", 4.0, "crypto"),
-    Indicator("ethereum", 4.0, "crypto"),
-    Indicator("nft", 3.0, "crypto"),
-    Indicator("decentralized finance", 3.0, "crypto"),
-    Indicator("stock market", 3.0, "finance"),
+    # === Crypto / finance (signal fort = rejet dur) ===
+    Indicator("cryptocurrency", 5.0, "crypto"),
+    Indicator("bitcoin", 5.0, "crypto"),
+    Indicator("ethereum", 5.0, "crypto"),
+    Indicator("dogecoin", 5.0, "crypto"),
+    Indicator("nft", 4.0, "crypto"),
+    Indicator("decentralized finance", 4.0, "crypto"),
+    Indicator("stablecoin", 5.0, "crypto"),
+    Indicator("blockchain", 2.0, "crypto"),
+    Indicator("stock market", 4.0, "finance"),
     Indicator("trading algorithm", 3.0, "finance"),
     Indicator("fintech", 2.0, "finance"),
     Indicator("fraud detection", 2.0, "finance"),
 
     # === Divertissement / consumer ===
-    Indicator("video game", 4.0, "entertainment"),
-    Indicator("gaming", 2.0, "entertainment"),
-    Indicator("esport", 3.0, "entertainment"),
-    Indicator("virtual reality", 2.0, "entertainment"),
-    Indicator("augmented reality", 2.0, "entertainment"),
-    Indicator("metaverse", 3.0, "entertainment"),
+    Indicator("video game", 5.0, "entertainment"),
+    Indicator("gaming", 3.0, "entertainment"),
+    Indicator("esport", 4.0, "entertainment"),
+    Indicator("virtual reality", 2.5, "entertainment"),
+    Indicator("augmented reality", 2.5, "entertainment"),
+    Indicator("metaverse", 4.0, "entertainment"),
     Indicator("streaming platform", 3.0, "entertainment"),
     Indicator("social media", 2.0, "entertainment"),
-    Indicator("tiktok", 4.0, "entertainment"),
-    Indicator("instagram", 3.0, "entertainment"),
+    Indicator("tiktok", 5.0, "entertainment"),
+    Indicator("instagram", 4.0, "entertainment"),
     Indicator("smartphone", 2.0, "consumer"),
     Indicator("iphone", 3.0, "consumer"),
     Indicator("wearable", 2.0, "consumer"),
 
-    # === Domaines spécifiques ===
+    # === Domaines specifiques ===
     Indicator("healthcare.*ai", 2.0, "domain"),
     Indicator("medical.*ai", 2.0, "domain"),
     Indicator("drug discovery", 3.0, "domain"),
@@ -269,30 +306,33 @@ NON_GREEN_INDICATORS: list[Indicator] = [
     Indicator("space.*satellite", 2.0, "domain"),
     Indicator("robotics", 1.5, "domain"),
 
-    # === Business / marché / finance (bruit) ===
-    Indicator("market research report", 4.0, "business"),
-    Indicator("market size.*billion", 3.0, "business"),
-    Indicator("market forecast", 4.0, "business"),
+    # === Business / marche / finance (signal fort = rejet dur) ===
+    Indicator("market research report", 5.0, "business"),
+    Indicator("market size.*billion", 5.0, "business"),
+    Indicator("market forecast", 5.0, "business"),
     Indicator("business opportunit", 3.0, "business"),
     Indicator("venture capital", 2.0, "business"),
     Indicator("funding round", 2.0, "business"),
     Indicator("ipo", 2.0, "business"),
-    Indicator("epidemiology.*pipeline", 4.0, "business"),
+    Indicator("epidemiology.*pipeline", 5.0, "business"),
+    Indicator("market disruptor", 4.0, "business"),
 
-    # === Bourse / investissement ===
-    Indicator("stock.*watchlist", 5.0, "finance"),
-    Indicator("stocks to.*watch", 5.0, "finance"),
-    Indicator("stocks to.*add", 5.0, "finance"),
-    Indicator("stocks to.*follow", 5.0, "finance"),
-    Indicator("stocks to.*buy", 5.0, "finance"),
-    Indicator("investor.*stock", 3.0, "finance"),
-    Indicator("stock.*investor", 3.0, "finance"),
-    Indicator("good bet.*investor", 3.0, "finance"),
-    Indicator("share price", 3.0, "finance"),
-    Indicator("stock exchange", 3.0, "finance"),
+    # === Bourse / investissement (rejet dur) ===
+    Indicator("stock.*watchlist", 6.0, "finance"),
+    Indicator("stocks to.*watch", 6.0, "finance"),
+    Indicator("stocks to.*add", 6.0, "finance"),
+    Indicator("stocks to.*follow", 6.0, "finance"),
+    Indicator("stocks to.*buy", 6.0, "finance"),
+    Indicator("investor.*stock", 4.0, "finance"),
+    Indicator("stock.*investor", 4.0, "finance"),
+    Indicator("good bet.*investor", 4.0, "finance"),
+    Indicator("share price", 4.0, "finance"),
+    Indicator("stock exchange", 4.0, "finance"),
     Indicator("remain in focus", 3.0, "finance"),
+    Indicator("price prediction", 4.0, "finance"),
+    Indicator("hype.*elon musk", 5.0, "finance"),
 
-    # === Communauté / nuisance (pas de Green IT) ===
+    # === Communaute / nuisance (pas de Green IT) ===
     Indicator("resident.*complain", 3.0, "community"),
     Indicator("resident.*choke", 3.0, "community"),
     Indicator("noise.*data cent", 3.0, "community"),
@@ -302,19 +342,34 @@ NON_GREEN_INDICATORS: list[Indicator] = [
 ]
 
 
+# Seuils de decision du pre-filtre binaire.
+# On est volontairement permissif : mieux vaut envoyer un article douteux
+# au LLM que de rater un vrai Green IT au pre-filtre. Le LLM corrigera
+# les faux positifs a l'etage 2.
+NON_GREEN_SCORE_THRESHOLD = 12.0  # Signal anti-Green tres fort necessaire pour exclure
+CANDIDATE_MIN_GREEN_SCORE = 0.1  # Tout signal Green, meme infime, declenche le LLM
+
+
 # =============================================================================
 # MOTEUR DE CLASSIFICATION
 # =============================================================================
 
 
-@dataclass
-class ClassificationResult:
-    """Résultat de classification d'un article."""
-    label: int  # 1 = Green IT, 0 = Non Green IT
-    confidence: float  # 0.0 à 1.0
+class PrefilterStatus(StrEnum):
+    """Statut de sortie du pre-filtre mots-cles (etage 1)."""
+
+    NON_GREEN = "NON_GREEN"
+    CANDIDATE = "CANDIDATE"
+
+
+@dataclass(frozen=True)
+class PrefilterResult:
+    """Resultat du pre-filtre pour un article."""
+
+    status: PrefilterStatus
     green_score: float
     non_green_score: float
-    reason: str  # Explication courte
+    reason: str
     matched_green: list[str]
     matched_non_green: list[str]
 
@@ -322,16 +377,13 @@ class ClassificationResult:
 def _normalize_text(text: str) -> str:
     """Normalise un texte pour le matching d'indicateurs.
 
-    Remplace les tirets par des espaces, supprime la ponctuation
-    et normalise les espaces multiples pour que "energy-efficient"
-    matche "energy efficient".
+    Remplace les tirets par des espaces, supprime la ponctuation parasite
+    et normalise les espaces multiples pour que `energy-efficient` matche
+    aussi `energy efficient`.
     """
     text = text.lower().strip()
-    # Tirets → espaces (energy-efficient → energy efficient)
-    text = text.replace("-", " ").replace("–", " ").replace("—", " ")
-    # Supprimer apostrophes typographiques
+    text = text.replace("-", " ").replace("\u2013", " ").replace("\u2014", " ")
     text = text.replace("\u2019", "'").replace("\u2018", "'")
-    # Normaliser les espaces multiples
     text = re.sub(r"\s+", " ", text)
     return text
 
@@ -339,17 +391,18 @@ def _normalize_text(text: str) -> str:
 def _score_text(
     text: str,
     indicators: list[Indicator],
+    *,
     title_mode: bool = False,
 ) -> tuple[float, list[str]]:
     """Calcule le score d'un texte contre une liste d'indicateurs.
 
     Args:
-        text: Texte déjà normalisé via _normalize_text().
-        indicators: Liste d'indicateurs à chercher.
+        text: Texte deja normalise via `_normalize_text`.
+        indicators: Liste d'indicateurs a chercher.
         title_mode: Si True, applique un multiplicateur x2.5 (titre > contenu).
 
     Returns:
-        Tuple (score, liste des indicateurs matchés).
+        Tuple (score total, liste des indicateurs matches).
     """
     score = 0.0
     matched: list[str] = []
@@ -367,43 +420,35 @@ def _score_text(
     return score, matched
 
 
-def classify_article(
+def prefilter_article(
     titre: str,
     contenu: str,
     source_nom: str = "",
-) -> ClassificationResult:
-    """Classifie un article avec scoring multi-critères.
-
-    Le processus :
-    1. Score le titre (poids x2.5) et le contenu (poids x1) séparément
-    2. Applique des ajustements contextuels par source
-    3. Calcule un score net et une confiance
+) -> PrefilterResult:
+    """Applique le pre-filtre binaire (etage 1) sur un article.
 
     Args:
         titre: Titre de l'article.
-        contenu: Contenu complet.
-        source_nom: Nom de la source (pour ajustements contextuels).
+        contenu: Contenu complet (peut etre tronque en amont).
+        source_nom: Nom de la source pour ajustements contextuels.
 
     Returns:
-        Résultat détaillé de la classification.
+        Verdict du pre-filtre : `NON_GREEN` (rejet direct) ou `CANDIDATE`
+        (a faire verifier par le LLM).
     """
-    titre_norm = _normalize_text(titre)
+    titre_norm = _normalize_text(titre or "")
     contenu_norm = _normalize_text(contenu or "")
 
-    # --- Scoring du titre ---
+    # Scoring titre (x2.5) et contenu (x1)
     green_title, green_title_matches = _score_text(
         titre_norm, GREEN_INDICATORS, title_mode=True
     )
     non_green_title, non_green_title_matches = _score_text(
         titre_norm, NON_GREEN_INDICATORS, title_mode=True
     )
-
-    # --- Scoring du contenu ---
-    green_content, green_content_matches = _score_text(
-        contenu_norm, GREEN_INDICATORS, title_mode=False
-    )
+    green_content, green_content_matches = _score_text(contenu_norm, GREEN_INDICATORS)
     non_green_content, non_green_content_matches = _score_text(
-        contenu_norm, NON_GREEN_INDICATORS, title_mode=False
+        contenu_norm, NON_GREEN_INDICATORS
     )
 
     green_score = green_title + green_content
@@ -412,93 +457,87 @@ def classify_article(
     all_green = green_title_matches + green_content_matches
     all_non_green = non_green_title_matches + non_green_content_matches
 
-    # --- Ajustements contextuels ---
-
-    # Titres de projets/papiers commençant par "green" (GreenNLP, GreenAI, etc.)
+    # Ajustement : projets/produits commencant par "green" (GreenNLP, GreenAI, ...)
     if re.search(r"\bgreen\w+\b", titre_norm):
-        green_score += 5.0
+        green_score += 3.0
         all_green.append("green_prefix_project(core)")
 
-    # arXiv : les articles de recherche IA sont majoritairement Non Green IT
-    # sauf si un signal Green fort est détecté
+    # arXiv : on NE penalise plus systematiquement les papiers de recherche.
+    # Beaucoup d'articles arXiv portent reellement sur le Green IT (IA frugale,
+    # quantization visant l'energie, etc.). En cas de signal energetique dans
+    # le contenu, on renforce le score pour que le LLM juge en derniere instance.
     if "arxiv" in source_nom.lower():
-        # Pénalité de base pour arXiv (biais vers Non Green IT)
-        non_green_score += 3.0
-
-        # Mots qui indiquent de l'efficacité algorithmique (pas énergétique)
-        algo_efficiency_terms = [
-            "efficient algorithm", "efficient method", "efficient approach",
-            "computationally efficient", "sample efficient", "parameter efficient",
-            "communication efficient", "efficient training",
-            "efficient representation", "efficient learning",
-        ]
-        for term in algo_efficiency_terms:
-            if term in titre_norm or term in contenu_norm:
-                # Ces termes parlent d'efficacité computationnelle, pas d'énergie
-                # Réduire le score Green si on les a matchés par erreur
-                non_green_score += 1.5
-                break
-
-        # Si le contenu mentionne spécifiquement l'énergie/carbone -> annuler la pénalité
-        energy_terms = ["energy", "carbon", "emission", "electricity", "watt",
-                        "kwh", "power consumption", "environmental"]
+        # Signal de presence concrete de vocabulaire energetique/carbone
+        energy_terms = (
+            "energy",
+            "carbon",
+            "emission",
+            "electricity",
+            "watt",
+            "kwh",
+            "power consumption",
+            "environmental",
+            "co2",
+            "sustainability",
+            "renewable",
+            "efficient",
+        )
         energy_count = sum(1 for t in energy_terms if t in contenu_norm)
         if energy_count >= 2:
-            green_score += 3.0  # Compensation : vraiment un sujet Green
+            green_score += 2.0  # Bonus plus genereux pour laisser passer au LLM
+        elif energy_count == 1:
+            green_score += 0.5
 
-    # Rapports de marché et articles boursiers : rarement du vrai Green IT
-    if any(t in titre_norm for t in ["market report", "market size", "billion",
-                                       "market research", "epidemiology",
-                                       "market forecast", "watchlist",
-                                       "stocks to", "stock", "investor"]):
+    # Rapports boursiers / market reports -> rejet dur
+    market_markers = (
+        "market report",
+        "market size",
+        "billion",
+        "market research",
+        "epidemiology",
+        "market forecast",
+        "watchlist",
+        "stocks to",
+        "price prediction",
+        "good bet for investors",
+    )
+    if any(t in titre_norm for t in market_markers):
         non_green_score += 5.0
 
-    # --- Décision finale ---
-    net_score = green_score - non_green_score
-
-    if net_score >= 5.0:
-        label = 1
-        reason = f"Fort signal Green IT (net={net_score:.1f})"
-    elif net_score >= 3.0:
-        label = 1
-        reason = f"Signal Green IT modéré (net={net_score:.1f})"
-    elif net_score <= -5.0:
-        label = 0
-        reason = f"Fort signal Non Green IT (net={net_score:.1f})"
-    elif net_score <= -1.0:
-        label = 0
-        reason = f"Signal Non Green IT modéré (net={net_score:.1f})"
-    elif green_score > 0 and non_green_score == 0:
-        label = 1
-        reason = f"Signal Green IT uniquement (green={green_score:.1f})"
+    # Decision binaire (permissive cote CANDIDATE)
+    # - Si signal Green a un minimum present ET pas de domination ecrasante des
+    #   indicateurs anti-Green, on envoie au LLM pour decider.
+    # - Sinon : NON_GREEN direct, sans appel LLM.
+    if green_score >= CANDIDATE_MIN_GREEN_SCORE and non_green_score < (
+        green_score + NON_GREEN_SCORE_THRESHOLD
+    ):
+        status = PrefilterStatus.CANDIDATE
+        reason = (
+            f"Candidate (green={green_score:.1f}, non_green={non_green_score:.1f}) "
+            "-> verification LLM requise"
+        )
     else:
-        label = 0
-        reason = f"Pas de signal Green IT clair (net={net_score:.1f})"
-
-    # Confiance : basée sur l'écart entre les scores
-    total = green_score + non_green_score
-    if total > 0:
-        if label == 1:
-            confidence = min(green_score / total, 1.0)
+        status = PrefilterStatus.NON_GREEN
+        if green_score == 0:
+            reason = "Aucun signal Green IT detecte"
+        elif non_green_score >= (green_score + NON_GREEN_SCORE_THRESHOLD):
+            reason = (
+                f"Signal anti-Green domine (green={green_score:.1f}, "
+                f"non_green={non_green_score:.1f})"
+            )
         else:
-            confidence = min(non_green_score / total, 1.0)
-    else:
-        confidence = 0.5  # Aucun indicateur trouvé
+            reason = (
+                f"Signal Green trop faible (green={green_score:.1f} < "
+                f"{CANDIDATE_MIN_GREEN_SCORE})"
+            )
 
-    # Ajuster la confiance par la magnitude
-    if abs(net_score) >= 10:
-        confidence = min(confidence + 0.2, 1.0)
-    elif abs(net_score) <= 2:
-        confidence = max(confidence - 0.15, 0.3)
-
-    return ClassificationResult(
-        label=label,
-        confidence=round(confidence, 3),
+    return PrefilterResult(
+        status=status,
         green_score=round(green_score, 2),
         non_green_score=round(non_green_score, 2),
         reason=reason,
-        matched_green=list(set(all_green)),
-        matched_non_green=list(set(all_non_green)),
+        matched_green=sorted(set(all_green)),
+        matched_non_green=sorted(set(all_non_green)),
     )
 
 
@@ -507,17 +546,20 @@ def classify_article(
 # =============================================================================
 
 
-async def auto_annotate() -> dict[str, int]:
-    """Annote tous les articles avec le scoring multi-critères.
+async def run_prefilter(*, only_new: bool = True) -> dict[str, int]:
+    """Applique le pre-filtre sur les articles de la base.
+
+    Par defaut, ne traite que les articles pas encore classifies
+    (`modele_classification IS NULL`). Utiliser `only_new=False` pour
+    tout retraiter (ex : apres modification des regles de scoring).
+
+    Args:
+        only_new: Si True, ignore les articles deja classifies.
 
     Returns:
-        Statistiques {total, green, non_green, high_confidence, low_confidence}.
+        Statistiques {total, candidates, non_green}.
     """
-    stats = {
-        "total": 0, "green": 0, "non_green": 0,
-        "high_confidence": 0, "low_confidence": 0,
-    }
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    stats = {"total": 0, "candidates": 0, "non_green": 0}
 
     async with async_session_factory() as session:
         stmt = (
@@ -526,70 +568,77 @@ async def auto_annotate() -> dict[str, int]:
             .where(Article.contenu.isnot(None))
             .order_by(Article.id_article)
         )
+        if only_new:
+            stmt = stmt.where(
+                or_(
+                    Article.modele_classification.is_(None),
+                    # Permet la reprise si un precedent run s'est interrompu
+                    and_(
+                        Article.modele_classification == "keyword_filter",
+                        Article.est_green_it.is_(None),
+                    ),
+                )
+            )
         result = await session.execute(stmt)
         rows = result.all()
 
-    logger.info(f"{len(rows)} articles avec contenu à annoter")
+        total = len(rows)
+        if total == 0:
+            logger.info("Aucun article a pre-filtrer")
+            return stats
 
-    csv_rows: list[dict[str, str]] = []
-    for article, source_nom in rows:
-        cr = classify_article(
-            titre=article.titre,
-            contenu=article.contenu or "",
-            source_nom=source_nom or "",
-        )
+        logger.info(f"{total} articles a pre-filtrer (only_new={only_new})")
 
-        extrait = (article.contenu or "")[:EXTRAIT_MAX_CHARS]
-        if len(article.contenu or "") > EXTRAIT_MAX_CHARS:
-            extrait += "..."
+        candidate_ids: list[int] = []
+        non_green_ids: list[int] = []
 
-        csv_rows.append({
-            "id_article": str(article.id_article),
-            "titre": article.titre,
-            "url": article.url,
-            "contenu_extrait": extrait,
-            "source_nom": source_nom or "Inconnue",
-            "date_publication": (
-                article.date_publication.isoformat() if article.date_publication else ""
-            ),
-            "label_green_it": str(cr.label),
-            "score_confiance": str(cr.confidence),
-            "raison": cr.reason,
-        })
+        for article, source_nom in rows:
+            verdict = prefilter_article(
+                titre=article.titre,
+                contenu=article.contenu or "",
+                source_nom=source_nom or "",
+            )
+            stats["total"] += 1
+            if verdict.status is PrefilterStatus.CANDIDATE:
+                stats["candidates"] += 1
+                candidate_ids.append(article.id_article)
+            else:
+                stats["non_green"] += 1
+                non_green_ids.append(article.id_article)
 
-        stats["total"] += 1
-        if cr.label == 1:
-            stats["green"] += 1
-        else:
-            stats["non_green"] += 1
-        if cr.confidence >= 0.7:
-            stats["high_confidence"] += 1
-        else:
-            stats["low_confidence"] += 1
+        # Mise a jour bulk en base : NON_GREEN -> est_green_it=False,
+        # CANDIDATE -> est_green_it=NULL, dans les deux cas
+        # modele_classification="keyword_filter".
+        if non_green_ids:
+            await session.execute(
+                update(Article)
+                .where(Article.id_article.in_(non_green_ids))
+                .values(
+                    est_green_it=False,
+                    modele_classification="keyword_filter",
+                )
+            )
+        if candidate_ids:
+            await session.execute(
+                update(Article)
+                .where(Article.id_article.in_(candidate_ids))
+                .values(
+                    est_green_it=None,
+                    modele_classification="keyword_filter",
+                )
+            )
+        await session.commit()
 
-    with OUTPUT_FILE.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
-        writer.writeheader()
-        writer.writerows(csv_rows)
-
-    g_pct = stats["green"] / stats["total"] * 100 if stats["total"] > 0 else 0
-    hc_pct = stats["high_confidence"] / stats["total"] * 100 if stats["total"] > 0 else 0
-    logger.info(f"Annotation terminée : {OUTPUT_FILE}")
-    logger.info(
-        f"Total: {stats['total']} | "
-        f"Green IT: {stats['green']} ({g_pct:.1f}%) | "
-        f"Non Green IT: {stats['non_green']} ({100 - g_pct:.1f}%)"
-    )
-    logger.info(
-        f"Confiance haute (>=0.7): {stats['high_confidence']} ({hc_pct:.1f}%) | "
-        f"Confiance basse (<0.7): {stats['low_confidence']}"
-    )
-    logger.info(
-        "IMPORTANT : Vérifier manuellement les cas à faible confiance "
-        "avant d'utiliser pour l'entraînement."
-    )
+    pct_cand = (stats["candidates"] / stats["total"] * 100) if stats["total"] else 0
+    logger.info("Pre-filtre termine :")
+    logger.info(f"  Total traite     : {stats['total']}")
+    logger.info(f"  Candidates (LLM) : {stats['candidates']} ({pct_cand:.1f}%)")
+    logger.info(f"  NON_GREEN direct : {stats['non_green']}")
     return stats
 
 
 if __name__ == "__main__":
-    asyncio.run(auto_annotate())
+    from greentech.utils.logger import setup_logging
+
+    setup_logging(level="INFO", enable_loki=False)
+    asyncio.run(run_prefilter())

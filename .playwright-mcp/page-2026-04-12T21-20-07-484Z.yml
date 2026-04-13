@@ -1,0 +1,20 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "GreenTech Intelligence" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - img [ref=e7]
+          - generic [ref=e10]: GreenTech Intelligence
+        - navigation [ref=e11]:
+          - link "Dashboard" [ref=e12] [cursor=pointer]:
+            - /url: /
+          - button "Connexion" [ref=e13]
+    - main [ref=e14]
+    - contentinfo [ref=e15]:
+      - generic [ref=e16]:
+        - generic [ref=e17]:
+          - img [ref=e18]
+          - generic [ref=e21]: GreenTech Intelligence
+        - paragraph [ref=e22]: Plateforme d'analyse Green IT — Projet Chef d'Oeuvre
+  - region "Notifications alt+T"

@@ -7,7 +7,14 @@
 
 Plateforme web d'analyse et classification automatique d'articles technologiques selon leur pertinence **Green IT** (informatique durable, eco-responsable).
 
-Le systeme collecte des articles depuis plusieurs sources (API, scraping, fichiers), les nettoie via Apache Spark, puis utilise un modele de classification fine-tune (Llama 3.2 3B + LoRA) pour determiner si un article releve du Green IT. Un resume automatique est genere via l'API Hugging Face.
+Le systeme collecte des articles depuis plusieurs sources (API, scraping, fichiers), les nettoie via Apache Spark, puis applique une **classification hybride en deux etages** :
+
+1. **Pre-filtre mots-cles permissif** (etage 1) : scoring multi-criteres qui distingue les articles manifestement Non Green IT (rejet direct) des **candidats** qui meritent une verification plus fine.
+2. **LLM judge** (etage 2) : les candidats passent par un LLM instructif (`Qwen/Qwen2.5-7B-Instruct`) qui tranche en zero-shot avec un prompt specialise. L'appel se fait via l'API Hugging Face Serverless, avec un **fallback automatique sur GPU AMD local** (ROCm) si le quota mensuel HF est epuise (HTTP 402).
+
+Un **classifieur de production** supplementaire (`meta-llama/Llama-3.2-3B + LoRA`) fine-tune sur le golden dataset produit par cette classification hybride est utilise pour l'inference temps reel via l'endpoint `/analyze`.
+
+Pour les articles confirmes Green IT, deux resumes sont generes via le meme LLM instructif Qwen : un resume general et un resume centre sur les aspects ecologiques.
 
 ---
 
@@ -72,7 +79,7 @@ Ouvrez `.env` dans votre editeur et **remplacez les valeurs suivantes** :
 |----------|-------------|-------------|
 | `SECRET_KEY` | Cle de chiffrement de l'application | Generez une chaine aleatoire : `python -c "import secrets; print(secrets.token_hex(32))"` |
 | `JWT_SECRET_KEY` | Cle de signature des tokens JWT | Generez une chaine aleatoire (meme commande que ci-dessus) |
-| `HUGGINGFACE_TOKEN` | Token API Hugging Face pour les resumes | Creez un compte sur https://huggingface.co, puis allez dans Settings > Access Tokens > New token (scope `read`) |
+| `HUGGINGFACE_TOKEN` | Token API Hugging Face pour le LLM judge et les resumes (ainsi que le telechargement du modele local en fallback) | Creez un compte sur https://huggingface.co, puis allez dans Settings > Access Tokens > New token (scope `read`) |
 
 ### Secrets optionnels
 
@@ -309,16 +316,29 @@ docker compose --profile full up -d --build
 
 #### Analyser un article
 
-1. Sur le **Dashboard**, collez une URL d'article ou du texte (50 caracteres minimum) dans le champ de saisie
-2. Cliquez sur le bouton d'envoi (ou appuyez sur Entree)
-3. Attendez l'analyse (~5-30s selon que le modele est deja charge ou non) :
-   - Le modele IA classifie l'article comme **Green IT** ou **Non Green IT**
-   - L'API Hugging Face genere un **resume automatique**
-4. Le resultat s'affiche avec :
-   - Le statut Green IT (badge vert) ou Non Green IT (badge rouge)
-   - Le score de confiance du modele
-   - Le resume genere
-   - Un lien vers la page de detail
+Trois modes d'entree sont disponibles sur le **Dashboard** :
+
+1. **URL** : collez un lien `http://` ou `https://` — le contenu de la page est extrait automatiquement
+2. **Texte** : collez directement un extrait d'article (50 caracteres minimum)
+3. **Fichier** : cliquez sur l'icone d'upload a cote du champ de saisie et choisissez
+   un fichier local (formats supportes : `.txt`, `.md`, `.pdf`, `.docx`, `.html`, max 10 Mo)
+
+Cliquez ensuite sur le bouton d'envoi (ou appuyez sur Entree). L'analyse se deroule
+en arriere-plan (~1-30s selon que le modele est deja charge ou non) :
+
+- Le modele IA local classifie l'article comme **Green IT** ou **Non Green IT**
+- Le LLM instructif **`Qwen/Qwen2.5-7B-Instruct`** genere un **resume general automatique en francais**.
+  - L'appel passe d'abord par l'API Hugging Face Serverless Inference (gratuit, fair-use).
+  - En cas de quota mensuel epuise (HTTP 402), le dispatcher bascule automatiquement sur le **meme modele Qwen execute en local** sur le GPU AMD RX 7900 XTX via ROCm 7.2, sans interruption du service.
+- Si l'article est classe Green IT, un second appel parallele au meme modele avec un prompt different genere un **resume specifique aux aspects ecologiques** abordes, egalement en francais.
+- Ces deux resumes ne sont generes que pour les **articles Green IT confirmes** en mode batch, afin d'economiser les credits HF et de limiter la charge sur le GPU local. Pour les analyses temps reel via l'endpoint `/analyze`, le resume general est toujours produit.
+
+Le resultat s'affiche avec :
+- Le statut Green IT (badge vert) ou Non Green IT (badge rouge)
+- Le score de confiance du modele
+- Le resume general de l'article
+- Si Green IT : un bloc vert distinct avec les aspects ecologiques identifies
+- Un lien vers la page de detail
 
 #### Consulter les statistiques
 
@@ -343,10 +363,12 @@ Cliquez sur n'importe quel article dans la liste pour voir :
 2. **Creer un compte** : POST `/auth/register` avec `{ "email": "...", "password": "..." }`
 3. **Se connecter** : POST `/auth/login` — recuperez le `access_token`
 4. **Autoriser** : Cliquez sur le bouton "Authorize" en haut a droite, collez le token
-5. **Analyser** : POST `/analyze` avec `{ "url": "https://..." }` ou `{ "texte": "..." }`
-6. **Suivre l'analyse** : GET `/analyze/{job_id}` (le job_id est retourne par l'etape 5)
-7. **Lister les articles** : GET `/articles?page=1&limit=10&is_green_it=true`
-8. **Statistiques** : GET `/stats`
+5. **Analyser par URL ou texte** : POST `/analyze` avec `{ "url": "https://..." }` ou `{ "texte": "..." }`
+6. **Analyser par fichier** : POST `/analyze/file` en `multipart/form-data` avec le champ `fichier`
+   (formats acceptes : .txt, .md, .pdf, .docx, .html ; max 10 Mo)
+7. **Suivre l'analyse** : GET `/analyze/{job_id}` (le job_id est retourne par les etapes 5 ou 6)
+8. **Lister les articles** : GET `/articles?page=1&limit=10&is_green_it=true`
+9. **Statistiques** : GET `/stats`
 
 ### 8.4 Monitoring (Grafana)
 
@@ -388,22 +410,25 @@ La promotion en production est **conditionnelle** : le nouveau modele ne remplac
 uv run python scripts/retrain_pipeline.py
 ```
 
-Cette commande execute 4 etapes dans l'ordre :
+Cette commande execute 7 etapes dans l'ordre (pipeline complet avec classification hybride et K-fold robuste) :
 
 | Etape | Ce qui se passe |
 |-------|----------------|
-| **1. collect** | Interroge l'API NewsData.io (mots-cles depuis PostgreSQL) et scrape TechCrunch pour recuperer les articles publies depuis la derniere collecte. Nettoie via Spark et ingere dans PostgreSQL. Les doublons sont ignores automatiquement. |
-| **2. annotate** | Re-annote **tous** les articles en base (anciens + nouveaux) par scoring multi-criteres (100+ indicateurs) et regenere `data/golden_dataset.csv`. |
-| **3. train** | Re-entraine Llama 3.2 3B + LoRA sur le dataset complet. Les metriques sont trackes dans MLflow et l'empreinte CO2 mesuree par CodeCarbon. |
-| **4. auto-promote** | Benchmark le nouveau modele vs le meilleur historique vs le baseline. Si le nouveau est meilleur : archive l'ancien, copie le nouveau en production, enregistre ses metriques. Si le nouveau est moins bon : ne touche a rien, l'ancien reste en production. |
+| **1. collect** | Interroge l'API NewsData.io (rate-limite a 1 req/2s avec retry exponentiel sur 429) et scrape TechCrunch Climate via architecture hybride : le flux RSS officiel donne la liste d'URLs, puis Scrapy + Playwright telecharge et parse le HTML de chaque article. Nettoie via Spark et ingere dans PostgreSQL. Les doublons sont ignores automatiquement. |
+| **2. annotate** (etage 1) | **Pre-filtre mots-cles permissif** : scoring multi-criteres sur les nouveaux articles (`modele_classification IS NULL`). Chaque article est classe `NON_GREEN` (rejet direct, `est_green_it=false`) ou `CANDIDATE` (`est_green_it=NULL`, en attente de verification LLM). Marque la colonne `modele_classification='keyword_filter'`. |
+| **3. classify** (etage 2) | **LLM judge** : envoie les articles `CANDIDATE` a `Qwen/Qwen2.5-7B-Instruct` via l'API HF Serverless (fallback automatique sur GPU local ROCm si quota HF epuise). Le LLM tranche avec un prompt zero-shot specialise et ecrit le verdict final (`est_green_it=true/false`, `score_confiance`, `modele_classification='keyword_filter+qwen_llm_judge'`). |
+| **4. summarize** | Genere les **deux resumes** (general + ecologique) uniquement pour les articles confirmes Green IT (`est_green_it=true` + `resume IS NULL OR resume_ecologique IS NULL`). Appels paralleles via `asyncio.gather`. Utilise le meme dispatcher avec fallback local. |
+| **5. export-golden** | Regenere `data/golden_dataset.csv` a partir de l'etat final de la DB (post-etage 2). Ce CSV sert de source de verite pour l'entrainement Llama. |
+| **6. train-cv** | Re-entraine Llama 3.2 3B + LoRA en **K-fold stratifie (K=5)**, puis entraine un modele final sur l'integralite des donnees. Les metriques par fold et agregees sont trackees dans MLflow + `models/cv_report.json`. L'empreinte CO2 est mesuree par CodeCarbon. |
+| **7. auto-promote** | Benchmark le nouveau modele vs le meilleur historique vs la baseline. Evalue 4 criteres composites : MCC >= seuil, Recall Green IT >= 0.5, F1 non-regression, stabilite CV. Si tous OK : archive l'ancien, copie le nouveau en production, enregistre ses metriques. Sinon : rien ne change, l'ancien reste en production. |
 
 ### Ajouter des fichiers manuellement
 
 Si vous avez un fichier de donnees supplementaire (export JSON Lines, nouveau dump arXiv, etc.), deposez-le dans le dossier `data/` puis lancez :
 
 ```bash
-# Ingere le fichier, re-annote tout, re-entraine, benchmark + promotion auto
-uv run python scripts/retrain_pipeline.py ingest-file data/mon_fichier.json annotate train auto-promote
+# Ingere le fichier, classifie (etages 1+2), resume les Green IT, exporte le golden, re-entraine, promote
+uv run python scripts/retrain_pipeline.py ingest-file data/mon_fichier.json annotate classify summarize export-golden train-cv auto-promote
 ```
 
 Le fichier doit etre au format JSON Lines (une entree JSON par ligne, avec au minimum les champs `title` et `abstract` ou `content`). L'ingestion est idempotente : relancer sur le meme fichier ne cree pas de doublons.
@@ -416,11 +441,24 @@ Chaque etape peut etre lancee separement :
 # Collecte seule (nouveaux articles depuis API + scraping)
 uv run python scripts/retrain_pipeline.py collect
 
-# Re-annotation seule (regenere golden_dataset.csv depuis toute la base)
+# Pre-filtre mots-cles seul (etage 1 : marque les articles NON_GREEN ou CANDIDATE)
 uv run python scripts/retrain_pipeline.py annotate
 
-# Re-entrainement seul (Llama 3.2 3B + LoRA)
+# LLM judge seul (etage 2 : classifie definitivement les CANDIDATE via Qwen HF + fallback local)
+uv run python scripts/retrain_pipeline.py classify
+
+# Resumes des Green IT confirmes (general + ecologique, via Qwen HF + fallback local)
+uv run python scripts/retrain_pipeline.py summarize
+
+# Regenere golden_dataset.csv depuis l'etat final de la DB
+uv run python scripts/retrain_pipeline.py export-golden
+
+# Re-entrainement rapide (split 80/20 stratifie, ~10 min)
 uv run python scripts/retrain_pipeline.py train
+
+# Re-entrainement robuste (K-fold K=5 + modele final, ~50 min)
+# Recommande pour figer une version de production avec des metriques moyennees sur 5 folds
+uv run python scripts/retrain_pipeline.py train-cv
 
 # Benchmark seul (nouveau vs meilleur historique vs baseline)
 uv run python scripts/retrain_pipeline.py benchmark
@@ -431,36 +469,51 @@ uv run python scripts/retrain_pipeline.py auto-promote
 # Promotion forcee (sans benchmark, a eviter sauf premier entrainement)
 uv run python scripts/retrain_pipeline.py promote
 
-# Calculer la baseline du modele de base sans fine-tuning (une seule fois)
+# Calculer la baseline du modele brut (evaluation sur les 5808 articles complets)
+# Automatiquement recalculee si l'ancien format ou des metriques manquent
 uv run python scripts/retrain_pipeline.py baseline
 ```
 
 ### Combiner des etapes
 
 ```bash
-# Collecter + annoter sans re-entrainer (juste enrichir le dataset)
-uv run python scripts/retrain_pipeline.py collect annotate
+# Collecter + classifier (2 etages) + resumer + exporter le golden, sans re-entrainer
+uv run python scripts/retrain_pipeline.py collect annotate classify summarize export-golden
+
+# Reprendre uniquement les articles laisses en attente par le LLM (apres reset quota HF)
+uv run python scripts/retrain_pipeline.py classify
 
 # Re-entrainer + benchmarker sans promouvoir (pour evaluer avant de decider)
 uv run python scripts/retrain_pipeline.py train benchmark
 
-# Ingerer un fichier + re-entrainer + promotion auto
-uv run python scripts/retrain_pipeline.py ingest-file data/export.json annotate train auto-promote
+# Ingerer un fichier + pipeline complet
+uv run python scripts/retrain_pipeline.py ingest-file data/export.json annotate classify summarize export-golden train-cv auto-promote
 ```
 
 ### Systeme de selection du meilleur modele
 
-Le pipeline maintient 3 fichiers de reference :
+Le pipeline maintient 4 fichiers de reference :
 
 | Fichier | Contenu | Quand il est mis a jour |
 |---------|---------|------------------------|
-| `models/best_metrics.json` | Metriques (F1, accuracy, precision, recall) de la **meilleure version jamais entrainee**. C'est la reference pour decider si un nouveau modele doit etre promu. | Uniquement quand un nouveau modele bat le record |
-| `models/baseline_metrics.json` | Metriques du modele de base **sans fine-tuning**. Sert de reference permanente pour mesurer le gain de l'entrainement. | Une seule fois, via `retrain_pipeline.py baseline` |
-| `data/benchmark_versions.json` | Rapport du dernier benchmark (nouveau vs meilleur vs baseline + verdict) | A chaque benchmark |
+| `models/best_metrics.json` | Metriques completes (MCC, F1, accuracy, balanced_accuracy, precision, recall, specificite, matrice de confusion, distribution des predictions) de la **meilleure version jamais entrainee**. | Uniquement quand un nouveau modele satisfait tous les criteres de promotion |
+| `models/baseline_metrics.json` | Metriques du modele brut **sans fine-tuning**, evalue sur l'integralite du dataset (5808+ articles). Sert de reference permanente pour mesurer le gain du fine-tuning. | Une seule fois, via `baseline` (ou automatiquement si legacy format detecte) |
+| `models/cv_report.json` | Rapport du dernier K-fold : metriques par fold (MCC, F1, recall, etc.), agregees (moyenne + ecart-type + min/max), et globales (sur concatenation des predictions). | A chaque execution de `train-cv` |
+| `data/benchmark_versions.json` | Rapport du dernier benchmark (nouveau vs meilleur vs baseline + verdict + detail des 4 criteres). | A chaque benchmark |
 
-**Logique de promotion** :
-- Si F1 nouveau >= F1 meilleur historique → le nouveau est promu en production et enregistre comme nouveau meilleur
-- Si F1 nouveau < F1 meilleur historique → rien ne change, l'ancien reste en production
+**Logique de promotion composite** (4 criteres cumulatifs) :
+
+| # | Critere | Constante (modifiable) | Raison |
+|---|---------|------------------------|--------|
+| 1 | `MCC_nouveau >= MCC_ancien - epsilon` | `MCC_EPSILON = 0.01` | **Metrique principale** : MCC est robuste au desequilibre (~0.4% de Green IT). |
+| 2 | `Recall_Green_IT >= 0.5` | `MIN_RECALL_GREEN_IT = 0.5` | **Garde-fou metier** : empeche la promotion d'un modele qui "triche" en predisant tout en Non Green IT. |
+| 3 | `F1_nouveau >= F1_ancien * 0.95` | `F1_REGRESSION_TOLERANCE = 0.95` | **Non-regression F1** : tolerance de 5% pour absorber le bruit statistique. |
+| 4 | `std(MCC) entre folds <= 0.15` | `MAX_MCC_STD = 0.15` | **Stabilite CV** : applique uniquement si un rapport K-fold est utilise. |
+
+Si **tous** les criteres passent → promotion. Si **un seul** echoue → l'ancien est conserve.
+
+Pour le **premier modele** (pas de `best_metrics.json`) : les criteres 1 et 3 sont assouplis
+(MCC > 0 au lieu de >= ancien), le critere 2 reste applique.
 
 ### Versioning des modeles
 
@@ -469,9 +522,11 @@ Chaque promotion archive automatiquement l'ancien modele :
 ```
 models/
   production/              # Modele actif (utilise par l'API)
-  challenger-llama/        # Derniere version entraine
-  best_metrics.json        # Metriques du meilleur modele
-  baseline_metrics.json    # Metriques du modele de base (reference)
+  challenger-llama/        # Derniere version entrainee (modele final post-CV)
+  cv_fold_1/ ... cv_fold_5/  # Adapters LoRA de chaque fold (train-cv)
+  best_metrics.json        # Metriques completes du meilleur modele promu
+  baseline_metrics.json    # Metriques du modele brut (eval sur 5808+ articles)
+  cv_report.json           # Rapport K-fold (folds + moyennes + metriques globales)
   versions/
     v20260411_143022/      # Archive avec metadata.json + poids
     v20260415_091500/      # Archive suivante
@@ -619,9 +674,9 @@ greentech-intelligence/
 
 | Couche | Technologies |
 |--------|-------------|
-| **Data** | httpx, Scrapy + Playwright, PySpark, SQLAlchemy 2.0 async, PostgreSQL 15, MinIO |
-| **IA** | PyTorch (ROCm/CUDA), transformers, PEFT (LoRA), Deepchecks, MLflow, DVC, CodeCarbon |
-| **Backend** | FastAPI, Uvicorn, Pydantic 2, Loguru, prometheus-client |
+| **Data** | httpx, feedparser (RSS), Scrapy + Playwright + scrapy-playwright (scraping HTML), PySpark, SQLAlchemy 2.0 async, PostgreSQL 15, MinIO |
+| **IA** | PyTorch (ROCm/CUDA), transformers, PEFT (LoRA), scikit-learn (StratifiedKFold, MCC), Deepchecks, MLflow, DVC, CodeCarbon |
+| **Backend** | FastAPI, Uvicorn, Pydantic 2, Loguru (+ interception logging standard), prometheus-client, pypdf + python-docx (parsing uploads) |
 | **Frontend** | React 19, TypeScript 6, Vite 8, Tailwind CSS v4, shadcn/ui, recharts, Playwright + Axe-core |
 | **DevOps** | Docker, GitHub Actions, Prometheus, Grafana, Loki, Render |
 

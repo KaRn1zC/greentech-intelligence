@@ -33,6 +33,7 @@ export interface ArticleListItem {
 
 export interface ArticleDetail extends ArticleListItem {
   contenu: string | null
+  resume_ecologique: string | null
   langue: string
   modele_classification: string | null
   date_analyse: string | null
@@ -104,6 +105,7 @@ export interface AnalysisResult {
   est_green_it: boolean | null
   score_confiance: number | null
   resume: string | null
+  resume_ecologique: string | null
   modele_classification: string | null
   temps_inference_ms: number | null
   date_analyse: string | null

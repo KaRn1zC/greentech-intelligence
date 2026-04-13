@@ -128,7 +128,7 @@ class ChampionClassifier(BaseClassifier):
             num_labels=2,
             label2id=LABEL2ID,
             id2label=ID2LABEL,
-            torch_dtype=torch.float32,
+            dtype=torch.float32,
         )
 
         # Tokenizer les datasets
@@ -337,7 +337,7 @@ class ChallengerClassifier(BaseClassifier):
             num_labels=2,
             label2id=LABEL2ID,
             id2label=ID2LABEL,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             token=hf_token,
         )
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
@@ -502,7 +502,7 @@ class ChallengerClassifier(BaseClassifier):
         base_model = AutoModelForSequenceClassification.from_pretrained(
             self.config.nom_modele,
             num_labels=2,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             token=hf_token,
         )
         self.model = PeftModel.from_pretrained(base_model, str(model_path))
@@ -563,6 +563,46 @@ def _oversample_minority(
     shuffle_idx = rng.permutation(len(all_texts))
 
     return all_texts[shuffle_idx].tolist(), all_labels[shuffle_idx].tolist()
+
+
+def load_full_dataset(
+    dataset_path: Path | None = None,
+) -> tuple[list[str], list[int]]:
+    """Charge l'integralite du Golden Dataset sans aucun split.
+
+    Utile pour evaluer un modele non entraine (baseline) sur toutes les donnees
+    disponibles, ou pour alimenter une boucle K-fold qui gere son propre split.
+    Contrairement a `load_golden_dataset`, aucun oversampling n'est applique.
+
+    Args:
+        dataset_path: Chemin vers le CSV annote (defaut: data/golden_dataset.csv).
+
+    Returns:
+        Tuple (textes, labels) contenant tous les articles annotes.
+
+    Raises:
+        FileNotFoundError: Si le fichier CSV n'existe pas.
+        ValueError: Si la colonne `label_green_it` est absente.
+    """
+    path = dataset_path or (BASE_DIR / "data" / "golden_dataset.csv")
+    if not path.exists():
+        msg = f"Golden Dataset introuvable : {path}"
+        raise FileNotFoundError(msg)
+
+    df = pd.read_csv(path)
+    if "label_green_it" not in df.columns:
+        msg = "Colonne 'label_green_it' manquante dans le dataset"
+        raise ValueError(msg)
+
+    df = df[df["label_green_it"].isin([0, 1])].copy()
+    df["text"] = df["titre"].fillna("") + "\n\n" + df["contenu_extrait"].fillna("")
+
+    n_green = int(df["label_green_it"].sum())
+    logger.info(
+        f"Dataset complet charge : {len(df)} articles (Green: {n_green}, Non: {len(df) - n_green})"
+    )
+
+    return df["text"].tolist(), df["label_green_it"].tolist()
 
 
 def load_golden_dataset(
@@ -719,6 +759,332 @@ def _build_classifier_and_config(
     return classifier, exp_config
 
 
+async def train_challenger_with_cv(
+    model_type: str = "challenger-llama",
+    *,
+    n_splits: int = 5,
+    random_state: int = 42,
+    oversample_ratio: float = 0.2,
+    train_final: bool = True,
+) -> dict:
+    """Entraine un challenger (Llama ou Qwen) via K-fold stratifie.
+
+    Le K-fold permet d'evaluer la capacite du modele a generaliser de maniere
+    robuste malgre le desequilibre extreme du dataset. Chaque article est utilise
+    en test une seule fois (dans le fold ou il est tire) et en train K-1 fois.
+
+    Pour chaque fold :
+        1. Split stratifie des indices train/test.
+        2. Oversampling de la classe minoritaire sur le train du fold uniquement.
+        3. Entrainement d'un nouveau ChallengerClassifier.
+        4. Evaluation sur le test set du fold (sans oversampling).
+        5. Stockage des predictions et des metriques par fold.
+
+    A l'issue des K folds, un modele final est optionnellement ré-entraine sur
+    l'integralite des donnees (c'est celui qui sera servi en production). Les
+    metriques reportees sont celles du K-fold, car seules elles donnent une
+    estimation honnete de la performance sur donnees non vues.
+
+    Args:
+        model_type: "challenger-llama" ou "challenger-qwen".
+        n_splits: Nombre de folds (defaut 5).
+        random_state: Seed pour la reproductibilite du split.
+        oversample_ratio: Ratio cible de la minorite apres oversampling (sur le train de chaque fold).
+        train_final: Si True, re-entraine un modele final sur tout le dataset apres le K-fold.
+
+    Returns:
+        Dictionnaire contenant :
+            - `folds` : liste des metriques par fold (avec numero de fold et taille du test)
+            - `aggregated` : moyenne et ecart-type pour chaque metrique cle
+            - `global` : metriques calculees sur la concatenation des predictions des K folds
+            - `final_model_trained` : True si le modele final a ete entraine et sauvegarde
+            - `n_splits`, `random_state`, `oversample_ratio` : parametres utilises
+
+    Raises:
+        ValueError: Si `model_type` n'est pas un challenger valide.
+    """
+    import mlflow
+    from sklearn.model_selection import StratifiedKFold
+
+    from greentech.ai.mlops import prometheus_metrics as promm
+
+    if model_type not in ("challenger-llama", "challenger-qwen"):
+        msg = f"K-fold disponible uniquement pour les challengers, pas pour {model_type}"
+        raise ValueError(msg)
+
+    all_texts, all_labels = load_full_dataset()
+    texts_arr = np.array(all_texts, dtype=object)
+    labels_arr = np.array(all_labels)
+    n_green = int(labels_arr.sum())
+
+    logger.info(
+        f"K-fold stratifie : K={n_splits}, {len(all_texts)} articles total "
+        f"(Green: {n_green}, Non: {len(all_texts) - n_green})"
+    )
+
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+
+    fold_metrics: list[dict] = []
+    all_preds: list[int] = []
+    all_true: list[int] = []
+    all_latencies: list[float] = []
+
+    # Un seul run MLflow parent pour tout le K-fold : metriques par fold loggees
+    # avec step=fold_idx, puis metriques agregees finales en fin de run. Permet
+    # de visualiser la stabilite du modele entre folds directement dans l'UI.
+    cv_run_name = f"{model_type}-cv-k{n_splits}"
+    cv_exp_config = ExperimentConfig(
+        nom_experience="greentech-classification",
+        nom_run=cv_run_name,
+        tags={"phase": "k-fold-cv", "model_type": model_type},
+        params={
+            "model_type": model_type,
+            "n_splits": n_splits,
+            "random_state": random_state,
+            "oversample_ratio": oversample_ratio,
+            "dataset_total": len(all_texts),
+            "dataset_green": n_green,
+            "dataset_non_green": len(all_texts) - n_green,
+            "train_final": train_final,
+        },
+    )
+
+    with tracked_experiment(cv_exp_config):
+        for fold_idx, (train_idx, test_idx) in enumerate(skf.split(texts_arr, labels_arr), 1):
+            logger.info("")
+            logger.info("=" * 70)
+            logger.info(f"  FOLD {fold_idx}/{n_splits}")
+            logger.info("=" * 70)
+
+            fold_start = time.perf_counter()
+
+            train_texts_fold = texts_arr[train_idx].tolist()
+            train_labels_fold = labels_arr[train_idx].tolist()
+            test_texts_fold = texts_arr[test_idx].tolist()
+            test_labels_fold = labels_arr[test_idx].tolist()
+
+            n_green_test = int(sum(test_labels_fold))
+            n_green_train = int(sum(train_labels_fold))
+            logger.info(
+                f"Train : {len(train_texts_fold)} (Green: {n_green_train})  "
+                f"Test : {len(test_texts_fold)} (Green: {n_green_test})"
+            )
+
+            train_texts_fold, train_labels_fold = _oversample_minority(
+                train_texts_fold, train_labels_fold, target_ratio=oversample_ratio
+            )
+
+            fold_output_dir = BASE_DIR / "models" / f"cv_fold_{fold_idx}"
+            classifier, _ = _build_classifier_and_config(model_type)
+            classifier.config.output_dir = fold_output_dir
+
+            await classifier.train(
+                train_texts_fold,
+                train_labels_fold,
+                test_texts_fold,
+                test_labels_fold,
+            )
+            classifier.save()
+
+            fold_preds: list[int] = []
+            fold_latencies: list[float] = []
+            for text in test_texts_fold:
+                pred = await classifier.predict(text)
+                fold_preds.append(pred.label.value)
+                fold_latencies.append(pred.temps_ms)
+
+            fold_metrics_dict = _compute_fold_metrics(
+                test_labels_fold, fold_preds, fold_latencies
+            )
+            fold_metrics_dict["fold"] = fold_idx
+            fold_metrics_dict["n_test"] = len(test_texts_fold)
+            fold_metrics_dict["n_green_test"] = n_green_test
+            fold_metrics.append(fold_metrics_dict)
+
+            fold_duration = time.perf_counter() - fold_start
+
+            # Logger toutes les metriques du fold dans MLflow, step=fold_idx :
+            # permet de visualiser la courbe MCC/F1/Recall sur les K folds.
+            mlflow.log_metrics(
+                {
+                    k: float(v)
+                    for k, v in fold_metrics_dict.items()
+                    if isinstance(v, int | float) and k != "fold"
+                },
+                step=fold_idx,
+            )
+
+            # Push vers Prometheus Pushgateway : alimente les dashboards
+            # Grafana en temps reel (progression des folds + metriques live).
+            promm.record_fold_metrics(
+                model_type=model_type,
+                run_name=cv_run_name,
+                fold=fold_idx,
+                total_folds=n_splits,
+                metrics={
+                    k: v
+                    for k, v in fold_metrics_dict.items()
+                    if isinstance(v, int | float)
+                },
+                duration_seconds=fold_duration,
+            )
+
+            logger.info(
+                f"Fold {fold_idx} : MCC={fold_metrics_dict['mcc']:.4f}, "
+                f"F1={fold_metrics_dict['f1']:.4f}, "
+                f"Recall={fold_metrics_dict['recall']:.4f}"
+            )
+
+            all_preds.extend(fold_preds)
+            all_true.extend(test_labels_fold)
+            all_latencies.extend(fold_latencies)
+
+            del classifier
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        aggregated = _aggregate_fold_metrics(fold_metrics)
+        global_metrics = _compute_fold_metrics(all_true, all_preds, all_latencies)
+
+        # Metriques agregees (mean/std par critere) et globales (sur la
+        # concatenation des predictions des K folds).
+        for metric_name, stats in aggregated.items():
+            if isinstance(stats, dict):
+                mlflow.log_metric(f"cv_{metric_name}_mean", float(stats["mean"]))
+                mlflow.log_metric(f"cv_{metric_name}_std", float(stats["std"]))
+        for metric_name, value in global_metrics.items():
+            if isinstance(value, int | float):
+                mlflow.log_metric(f"cv_global_{metric_name}", float(value))
+
+        # Snapshot final pour Prometheus : moyenne + ecart-type du MCC,
+        # essentiels pour le garde-fou de promotion (std <= 0.15).
+        promm.record_cv_aggregated(
+            model_type=model_type,
+            run_name=cv_run_name,
+            mcc_mean=aggregated["mcc"]["mean"],
+            mcc_std=aggregated["mcc"]["std"],
+        )
+
+    logger.info("")
+    logger.info("=" * 70)
+    logger.info(f"  K-FOLD TERMINE (K={n_splits})")
+    logger.info("=" * 70)
+    logger.info(
+        f"  MCC        : {aggregated['mcc']['mean']:.4f} (+/- {aggregated['mcc']['std']:.4f})"
+    )
+    logger.info(
+        f"  F1         : {aggregated['f1']['mean']:.4f} (+/- {aggregated['f1']['std']:.4f})"
+    )
+    logger.info(
+        f"  Recall GIT : {aggregated['recall']['mean']:.4f} (+/- {aggregated['recall']['std']:.4f})"
+    )
+    logger.info(f"  Global MCC (toutes predictions concatenees) : {global_metrics['mcc']:.4f}")
+
+    final_trained = False
+    if train_final:
+        logger.info("")
+        logger.info("=" * 70)
+        logger.info("  ENTRAINEMENT DU MODELE FINAL SUR TOUT LE DATASET")
+        logger.info("=" * 70)
+        final_train_texts, final_train_labels = _oversample_minority(
+            all_texts, all_labels, target_ratio=oversample_ratio
+        )
+        classifier, _ = _build_classifier_and_config(model_type)
+        # Pas de validation set : on a deja mesure la performance via K-fold
+        split = max(1, len(final_train_texts) // 20)
+        await classifier.train(
+            final_train_texts[split:],
+            final_train_labels[split:],
+            final_train_texts[:split],
+            final_train_labels[:split],
+        )
+        classifier.save()
+        final_trained = True
+        logger.info(f"Modele final sauvegarde : {classifier.config.output_dir}")
+        del classifier
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    return {
+        "folds": fold_metrics,
+        "aggregated": aggregated,
+        "global": global_metrics,
+        "final_model_trained": final_trained,
+        "n_splits": n_splits,
+        "random_state": random_state,
+        "oversample_ratio": oversample_ratio,
+    }
+
+
+def _compute_fold_metrics(
+    y_true: list[int],
+    y_pred: list[int],
+    latencies_ms: list[float] | None = None,
+) -> dict[str, float | int]:
+    """Calcule les metriques pour un seul fold ou pour l'ensemble concatene.
+
+    Version locale de la fonction utilisee dans le pipeline, pour eviter une
+    dependance circulaire entre modules.
+    """
+    from sklearn.metrics import (
+        accuracy_score,
+        balanced_accuracy_score,
+        confusion_matrix,
+        f1_score,
+        matthews_corrcoef,
+        precision_score,
+        recall_score,
+    )
+
+    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
+    tn, fp, fn, tp = cm.ravel()
+
+    specificite = float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+
+    metrics: dict[str, float | int] = {
+        "mcc": float(matthews_corrcoef(y_true, y_pred)),
+        "f1": float(f1_score(y_true, y_pred, average="binary", zero_division=0)),
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
+        "precision": float(precision_score(y_true, y_pred, average="binary", zero_division=0)),
+        "recall": float(recall_score(y_true, y_pred, average="binary", zero_division=0)),
+        "specificite": specificite,
+        "vrais_positifs": int(tp),
+        "vrais_negatifs": int(tn),
+        "faux_positifs": int(fp),
+        "faux_negatifs": int(fn),
+    }
+
+    if latencies_ms:
+        metrics["latence_moyenne_ms"] = float(np.mean(latencies_ms))
+
+    return metrics
+
+
+def _aggregate_fold_metrics(fold_metrics: list[dict]) -> dict[str, dict[str, float | list[float]]]:
+    """Agrege les metriques des K folds (moyenne, ecart-type, liste des valeurs)."""
+    keys_to_aggregate = (
+        "mcc",
+        "f1",
+        "accuracy",
+        "balanced_accuracy",
+        "precision",
+        "recall",
+        "specificite",
+    )
+    aggregated: dict[str, dict[str, float | list[float]]] = {}
+    for key in keys_to_aggregate:
+        values = [float(f[key]) for f in fold_metrics]
+        aggregated[key] = {
+            "mean": float(np.mean(values)),
+            "std": float(np.std(values, ddof=1)) if len(values) > 1 else 0.0,
+            "min": float(np.min(values)),
+            "max": float(np.max(values)),
+            "values": values,
+        }
+    return aggregated
+
+
 async def train_single(model_type: str) -> dict[str, float]:
     """Entraîne un seul modele avec tracking MLflow et mesure carbone.
 
@@ -751,7 +1117,7 @@ async def train_all() -> dict[str, dict[str, float]]:
     """
     results = {}
     for model_type in VALID_MODELS:
-        logger.info(f"\n{'='*60}\n  ENTRAINEMENT : {model_type.upper()}\n{'='*60}")
+        logger.info(f"\n{'=' * 60}\n  ENTRAINEMENT : {model_type.upper()}\n{'=' * 60}")
         results[model_type] = await train_single(model_type)
 
     logger.info("\n=== RESULTATS ===")
@@ -780,12 +1146,24 @@ async def benchmark_models() -> dict[str, dict[str, float]]:
 
     # Registre des modeles a evaluer : (cle, label affichage, path, factory)
     model_registry = [
-        ("champion_deberta", "Champion (DeBERTa)", BASE_DIR / "models" / "champion-deberta",
-         "champion-deberta"),
-        ("challenger_qwen", "Challenger Qwen+LoRA", BASE_DIR / "models" / "challenger-qwen",
-         "challenger-qwen"),
-        ("challenger_llama", "Challenger Llama+LoRA", BASE_DIR / "models" / "challenger-llama",
-         "challenger-llama"),
+        (
+            "champion_deberta",
+            "Champion (DeBERTa)",
+            BASE_DIR / "models" / "champion-deberta",
+            "champion-deberta",
+        ),
+        (
+            "challenger_qwen",
+            "Challenger Qwen+LoRA",
+            BASE_DIR / "models" / "challenger-qwen",
+            "challenger-qwen",
+        ),
+        (
+            "challenger_llama",
+            "Challenger Llama+LoRA",
+            BASE_DIR / "models" / "challenger-llama",
+            "challenger-llama",
+        ),
     ]
 
     results: dict[str, dict[str, float]] = {}
@@ -816,12 +1194,15 @@ async def benchmark_models() -> dict[str, dict[str, float]]:
             "latence_p95_ms": float(np.percentile(latencies, 95)),
         }
         predictions[key] = preds
-        logger.info(f"{label} — F1={results[key]['f1']:.4f}, "
-                    f"Latence={results[key]['latence_moyenne_ms']:.0f}ms")
+        logger.info(
+            f"{label} — F1={results[key]['f1']:.4f}, "
+            f"Latence={results[key]['latence_moyenne_ms']:.0f}ms"
+        )
 
         # Liberer la memoire GPU entre les modeles
         del classifier
         import torch
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -887,9 +1268,14 @@ async def benchmark_models() -> dict[str, dict[str, float]]:
     # Rapports de classification detailles
     for key, preds in predictions.items():
         logger.info(f"\nRapport {key} :")
-        logger.info("\n" + classification_report(
-            test_labels, preds, target_names=["Non Green IT", "Green IT"],
-        ))
+        logger.info(
+            "\n"
+            + classification_report(
+                test_labels,
+                preds,
+                target_names=["Non Green IT", "Green IT"],
+            )
+        )
 
     return results
 
@@ -897,6 +1283,12 @@ async def benchmark_models() -> dict[str, dict[str, float]]:
 if __name__ == "__main__":
     import asyncio
     import sys
+
+    from greentech.utils.logger import setup_logging
+
+    # Loki active : permet de suivre l'entrainement Llama en direct via
+    # Grafana Explore (filtres {module="training"}, {level="info"}).
+    setup_logging(level="INFO", enable_loki=True)
 
     arg = sys.argv[1] if len(sys.argv) > 1 else None
 
@@ -908,4 +1300,6 @@ if __name__ == "__main__":
         asyncio.run(train_all())
     else:
         logger.error(f"Argument inconnu : {arg}")
-        logger.info(f"Usage : python -m greentech.ai.models.training [{' | '.join(VALID_MODELS)} | benchmark]")
+        logger.info(
+            f"Usage : python -m greentech.ai.models.training [{' | '.join(VALID_MODELS)} | benchmark]"
+        )

@@ -22,8 +22,9 @@
               │ Module 1   │ │ Module 2 │ │ Module 3     │
               │ API        │ │ Scraping │ │ Fichier      │
               │ NewsData.io│ │ TechCrunc│ │ arXiv/Kaggle │
-              │ (httpx)    │ │ (scrapy+ │ │ (Python)     │
-              │            │ │ playwrigh│ │              │
+              │ (httpx)    │ │ (RSS +   │ │ (Python)     │
+              │            │ │ Scrapy+  │ │              │
+              │            │ │ Playwrigh│ │              │
               └─────┬──────┘ └────┬─────┘ └──────┬───────┘
                     │             │               │
                     ▼             ▼               ▼
@@ -108,40 +109,68 @@
 
 | Critere                | Detail                                                        |
 |------------------------|---------------------------------------------------------------|
-| **Type**               | Web Scraping (SPA / Site dynamique)                           |
-| **URL cible**          | `https://techcrunch.com/category/climate/`                    |
+| **Type**               | Scraping HTML hybride (RSS pour decouverte + Scrapy/Playwright pour le HTML) |
+| **URLs cibles**        | Flux RSS : `https://techcrunch.com/category/climate/feed/` + pages d'articles scrapees |
 | **Authentification**   | Aucune                                                        |
-| **Rendu JavaScript**   | Obligatoire (Infinite Scroll, hydratation React)              |
-| **Outil impose**       | Scrapy + scrapy-playwright (Playwright pour le rendu JS)      |
-| **robots.txt**         | A respecter imperativement                                    |
-| **Delai entre requetes** | Minimum 2 secondes (ethique scraping)                       |
-| **User-Agent**         | Identifie : `GreenTechBot/1.0 (+projet-academique)`          |
+| **Rendu JavaScript**   | Obligatoire sur les pages d'articles (React hydration)        |
+| **Outils imposes**     | `scrapy` + `scrapy-playwright` + `playwright` (+ `httpx` et `feedparser` pour l'etape RSS) |
+| **robots.txt**         | Respecte imperativement (`ROBOTSTXT_OBEY = True`)             |
+| **Delai entre requetes** | Minimum 2 secondes (ethique scraping, `DOWNLOAD_DELAY`)    |
+| **User-Agent**         | Identifie : `GreenTech-Bot/1.0`                               |
 
-**Strategie d'extraction** :
+**Strategie d'extraction en deux etapes** :
 
-1. Chargement initial de la page via Playwright
-2. Simulation de scroll pour declencher le chargement d'articles supplementaires
-3. Attente du rendu reseau (hydratation React)
-4. Extraction des elements HTML des cartes d'articles
+**Etape 1 - Decouverte d'URLs via RSS** :
+1. Requete HTTP GET sur le flux RSS officiel `/category/climate/feed/`
+2. Parsing XML via `feedparser.parse(response.text)`
+3. Extraction des URLs d'articles (`entry.link`), filtrage optionnel par mots-cles
+
+**Etape 2 - Scraping HTML (coeur de la source)** :
+1. Instanciation d'un `TechCrunchArticleSpider` Scrapy avec la liste d'URLs
+2. Pour chaque URL : requete via Playwright (rendu JS complet)
+3. Attente du selecteur `h1` (timeout 15s) pour confirmer le chargement
+4. Parsing du DOM rendu via selecteurs CSS (voir tableau ci-dessous)
+5. Sauvegarde JSON normalisee dans MinIO (`raw-data/scraping/techcrunch/`)
+
+**Selecteurs CSS appliques sur le HTML des articles** :
+
+| Champ              | Selecteur CSS                                         |
+|--------------------|-------------------------------------------------------|
+| Titre              | `h1.article-hero__title::text`                        |
+| Titre (fallback)   | `meta[property="og:title"]::attr(content)`            |
+| Date publication   | `time::attr(datetime)` (ISO 8601)                     |
+| Auteurs            | `a[href*="/author/"]::text`                           |
+| Contenu texte      | `div.entry-content p::text` (concatene)               |
+| Contenu HTML brut  | `div.entry-content` (HTML complet)                    |
+| Resume court       | `meta[property="og:description"]::attr(content)`      |
 
 **Donnees extraites par article** :
 
-| Champ extrait     | Type   | Description                    | Nullable |
-|-------------------|--------|--------------------------------|----------|
-| Titre             | string | Titre de l'article             | Non      |
-| URL               | string | Lien vers l'article complet    | Non      |
-| Date publication  | string | Date de parution               | Oui      |
-| Contenu HTML      | string | Corps de l'article (HTML brut) | Oui      |
-| Auteur            | string | Nom de l'auteur                | Oui      |
+| Champ extrait     | Type   | Source                                 | Nullable |
+|-------------------|--------|----------------------------------------|----------|
+| Titre             | string | `h1.article-hero__title` du HTML       | Non      |
+| URL               | string | URL scraped (apres redirections)       | Non      |
+| Date publication  | string | `<time datetime>` (ISO 8601)           | Oui      |
+| Auteur            | string | `a[href*="/author/"]`                  | Oui      |
+| Contenu           | string | Paragraphes de `div.entry-content`     | Non      |
+| Contenu HTML      | string | Bloc `div.entry-content` brut          | Non      |
+| Resume court      | string | `meta[property="og:description"]`      | Oui      |
 
-**Contraintes techniques** :
+**Contraintes techniques respectees** :
 
-- Playwright obligatoire : le contenu est charge dynamiquement (Infinite Scroll)
-- Respecter `robots.txt` avant toute collecte
-- Delai minimum de 2 secondes entre chaque requete de page
-- User-Agent identifie et transparent (pas d'usurpation)
-- Sauvegarde du HTML brut (pas de parsing a cette etape)
-- Gestion des erreurs reseau et des pages vides
+- Max 20 articles par session (`MAX_ARTICLES`)
+- Timeout HTTP de 20 secondes (`REQUEST_TIMEOUT`)
+- Sauvegarde JSON normalisee dans `raw-data/scraping/techcrunch/`
+- Gestion propre des erreurs par URL (une URL cassee n'interrompt pas les autres)
+
+**Pourquoi l'architecture hybride** : TechCrunch a refondu sa structure HTML en
+avril 2026 (suppression de la balise `<article>` utilisee comme selecteur sur
+la page d'index). Plutot que de scraper le listing HTML (fragile), on delegue
+cette decouverte au flux RSS officiel (stable et standardise), puis on scrape
+le HTML de **chaque page d'article individuel** (qui garde une structure
+predictible : `h1.article-hero__title`, `div.entry-content`, etc.). Le resultat
+satisfait le critere C1 ("telechargement HTML + parsing HTML") tout en etant
+robuste aux refontes futures de la page d'index.
 
 ---
 
@@ -1322,36 +1351,58 @@ valide la competence "Extraction depuis un SGBD via requete SQL".
 
 ---
 
-### 10.4 Module 2 : Scraping hybride (Scrapy + Playwright)
+### 10.4 Module 2 : Scraping hybride RSS + Scrapy/Playwright
 
 **Fichier** : `src/greentech/data/collectors/scraper.py`
 
-**Classes** : `TechCrunchSpider(Spider)` + `ScrapingCollector(BaseCollector)`
+**Classes** : `TechCrunchArticleSpider(Spider)` + `ScrapingCollector(BaseCollector)`
 
-**Algorithme** :
+**Algorithme en deux etapes** :
 
-1. Configurer Scrapy avec le handler Playwright pour HTTPS
-2. Lancer la requete vers `techcrunch.com/category/climate/`
-3. Playwright charge la page :
-   a. Attendre le selecteur CSS `article` (timeout 15s)
-   b. Scroller jusqu'en bas (`window.scrollTo(0, document.body.scrollHeight)`)
-   c. Attendre 3s pour le chargement dynamique (infinite scroll React)
-4. Parser le HTML rendu :
-   a. Extraire les balises `<article>` (max 30)
-   b. Pour chaque article : titre (`h2 a` ou `h3 a`), URL (`href`), auteur, date (`<time datetime>`)
-   c. Conserver le HTML brut du bloc article (`contenu_html`)
-   d. Fixer `source_nom = "TechCrunch Climate"`
+**Etape 1 - Decouverte d'URLs via RSS** (`_discover_urls_via_rss`) :
+1. Requete HTTP GET asynchrone vers `https://techcrunch.com/category/climate/feed/`
+2. Parser la reponse XML via `feedparser.parse()`
+3. Extraire `entry.link` pour les 20 premieres entrees (filtrage mots-cles optionnel)
+4. Retourner la liste d'URLs a scraper
+
+**Etape 2 - Scraping HTML via Scrapy + Playwright** (`_scrape_html_pages`) :
+1. Instancier `TechCrunchArticleSpider(urls=[...])` avec la liste d'URLs du RSS
+2. Configurer Scrapy avec `scrapy-playwright` (handler + reactor asyncio)
+3. Pour chaque URL :
+   a. Requete Scrapy avec `playwright=True`
+   b. Playwright charge la page et attend le selecteur `h1` (timeout 15s)
+   c. Callback `parse_article` applique les selecteurs CSS sur le DOM rendu
+   d. Extraction : titre, date, auteurs, contenu texte, HTML brut, og:description
+   e. Validation : on ignore les articles sans titre ou sans contenu
+4. Collecter les articles dans `spider.collected_articles`
 5. Sauvegarder le lot JSON dans MinIO `raw-data/scraping/techcrunch/<date>/<timestamp>.json`
+
+**Selecteurs CSS appliques** :
+- Titre : `h1.article-hero__title::text` (fallback `og:title`)
+- Date : `time::attr(datetime)` (ISO 8601)
+- Auteurs : `a[href*="/author/"]::text` (concatenes)
+- Contenu : `div.entry-content p::text` (paragraphes fusionnes)
+- HTML brut : `div.entry-content` (bloc complet)
+- Resume : `meta[property="og:description"]::attr(content)`
 
 **Contraintes techniques respectees** :
 - `ROBOTSTXT_OBEY = True` : respect du fichier robots.txt
-- `DOWNLOAD_DELAY = 2.0` : delai minimum entre requetes (scraping ethique)
+- `DOWNLOAD_DELAY = 2.0` : delai minimum 2s entre chaque page
 - `CONCURRENT_REQUESTS = 1` : une seule requete simultanee
-- `User-Agent` configure : `GreenTech-Bot/1.0`
+- `User-Agent` : `GreenTech-Bot/1.0` (identifie et transparent)
+- Gestion propre des erreurs par URL (`errback`) : une page cassee n'interrompt pas les autres
 
-**Pourquoi Playwright est necessaire** : TechCrunch utilise un chargement
-dynamique JavaScript (React hydration + infinite scroll). Un scraper HTTP
-classique ne verrait que le squelette HTML vide.
+**Pourquoi Playwright est necessaire** : TechCrunch utilise du chargement
+dynamique JavaScript (React hydration) sur les pages d'articles. Un scraper
+HTTP classique recupererait uniquement le squelette sans le contenu rendu.
+
+**Pourquoi l'architecture hybride RSS + HTML** : TechCrunch a refondu sa page
+d'index en avril 2026 (suppression de la balise `<article>` utilisee comme
+selecteur sur la page de listing). Utiliser le flux RSS officiel comme source
+d'URLs rend la collecte robuste aux refontes futures de l'index, tandis que
+le scraping HTML de **chaque page d'article individuel** (qui garde une
+structure stable : `h1.article-hero__title`, `div.entry-content`) reste le
+coeur de la collecte et satisfait le critere de certification C1.
 
 ---
 
@@ -1526,7 +1577,8 @@ uv run python scripts/verify_infrastructure.py
 # Module 1 : API (necessite API_NEWS_KEY dans .env)
 uv run python -m greentech.data.collectors.api_collector
 
-# Module 2 : Scraping (necessite Playwright installe)
+# Module 2 : Scraping hybride TechCrunch (RSS + Scrapy/Playwright)
+# Necessite playwright install chromium la premiere fois
 uv run python -m greentech.data.collectors.scraper
 
 # Module 3 : Fichier (necessite le fichier arXiv telecharge)
@@ -1565,7 +1617,7 @@ uv run python -m greentech.data.storage.sql_ingester
 |--------|-------------------|-------------------|
 | Module 0 | sqlalchemy, asyncpg | PostgreSQL |
 | Module 1 | httpx | PostgreSQL, MinIO, API NewsData.io |
-| Module 2 | scrapy, scrapy-playwright, playwright | MinIO |
+| Module 2 | httpx, feedparser, scrapy, scrapy-playwright, playwright | MinIO |
 | Module 3 | (stdlib uniquement) | MinIO |
 | Module 4 | pyspark, hadoop-aws | MinIO (via S3A) |
 | Module 5 | pyarrow, sqlalchemy, asyncpg | MinIO, PostgreSQL |
@@ -1596,3 +1648,206 @@ uv run python -m greentech.data.storage.sql_ingester
 | **Mapping source_nom dynamique** | Les source_id de NewsData.io sont imprevisibles, le mapping gere les cas inconnus |
 | **Fonctions Spark SQL natives** (et non UDFs Python) | Pas de serialisation Python-JVM, compatible Windows, plus performant |
 | **Async SQLAlchemy** | Coherent avec le reste de la stack (FastAPI, httpx), non-bloquant |
+
+---
+
+## 11. Pipeline de classification hybride Green IT (Implementation)
+
+> Cette section documente l'architecture de classification hybride en deux
+> etages utilisee pour etiqueter chaque article comme Green IT ou non, ainsi
+> que le mecanisme de fallback local du LLM judge lorsque le quota mensuel
+> Hugging Face Inference Providers est epuise.
+
+---
+
+### 11.1 Vue d'ensemble
+
+La classification d'un corpus d'articles heterogenes combine deux modeles
+complementaires afin d'obtenir un bon equilibre recall / precision sans
+saturer le quota cloud :
+
+```
+ ETAGE 1 (rapide, gratuit)          ETAGE 2 (precis, LLM)
+ ────────────────────────           ──────────────────────
+ auto_annotate_dataset.py     ──►   classify_candidates.py
+ scoring mots-cles ponderes         LLM judge Qwen2.5-7B
+       │                                   │
+       ▼                                   ▼
+ NON_GREEN direct ou CANDIDATE        est_green_it = True / False
+ (6022 articles -> 95% NON_GREEN)     (verdict + score + raison)
+```
+
+| Etage | Module | Entree | Sortie |
+|-------|--------|--------|--------|
+| 1 | `scripts/auto_annotate_dataset.py` | Articles `modele_classification IS NULL` | DB : `est_green_it=false` (direct) ou `NULL` (candidat LLM) |
+| 2 | `scripts/classify_candidates.py` + `src/greentech/ai/services/classifier_llm.py` | Articles `modele_classification='keyword_filter'` et `est_green_it IS NULL` | DB : `est_green_it=true/false`, `modele_classification='keyword_filter+qwen_llm_judge'` |
+
+---
+
+### 11.2 Etage 1 : pre-filtre mots-cles permissif
+
+**Fichier** : `scripts/auto_annotate_dataset.py`
+
+**Fonction cle** : `prefilter_article(titre, contenu, source_nom) -> PrefilterResult`
+
+**Algorithme** :
+
+1. Normalisation du titre et du contenu (minuscules, tirets → espaces).
+2. Calcul de deux scores :
+   - `green_score` = somme ponderee des matches sur ~120 indicateurs Green IT (poids 1.0 a 5.0) ;
+   - `non_green_score` = somme ponderee des matches sur ~60 indicateurs negatifs.
+3. Ajustements contextuels par source (ex : bonus energie/carbone pour arXiv).
+4. Penalite sur les rapports boursiers et cryptomonnaies (signal anti-Green tres fort).
+5. Decision binaire :
+
+   - `CANDIDATE` si `green_score >= CANDIDATE_MIN_GREEN_SCORE` (0.1) **ET** `non_green_score < green_score + NON_GREEN_SCORE_THRESHOLD` (12.0) → verification LLM requise.
+   - `NON_GREEN` sinon (rejet direct, economise un appel LLM).
+
+**Bulk update** : les decisions sont ecrites en base en deux UPDATE
+massifs (un pour NON_GREEN, un pour CANDIDATE), ce qui evite l'ouverture
+de milliers de transactions individuelles.
+
+**Metriques observees** (corpus 6022 articles) :
+- ~15% marques CANDIDATE (envoyes au LLM).
+- ~85% marques NON_GREEN directement (pas de cout LLM).
+
+---
+
+### 11.3 Etage 2 : LLM judge Qwen2.5-7B avec fallback local
+
+**Fichiers** :
+- `src/greentech/ai/services/classifier_llm.py` : interface metier (prompt, parsing)
+- `src/greentech/ai/services/llm_dispatcher.py` : routage HF / local
+- `src/greentech/ai/services/llm_local.py` : client d'inference locale ROCm
+- `scripts/classify_candidates.py` : orchestrateur batch
+
+**Prompt system** : definition permissive du Green IT avec regles de
+decision explicites ("en cas de doute raisonnable, classer Green IT").
+La reponse est contrainte a un objet JSON
+`{"est_green_it": bool, "confiance": 0-1, "raison": str}`.
+
+**Parser robuste** en trois passes pour encaisser les derives de
+formatage des LLM :
+
+1. `json.loads` direct sur la premiere region `{...}`.
+2. Nettoyage des backslashes non conformes a la spec JSON (`\\escape` -> `\\\\escape`).
+3. Extraction regex des trois champs individuellement si le JSON reste invalide.
+
+**Retry avec backoff exponentiel** : chaque appel est retente jusqu'a
+3 fois avec un delai de 2^n secondes en cas d'erreur transitoire.
+
+---
+
+### 11.4 Dispatcher de secours HF → Qwen local
+
+**Fichier** : `src/greentech/ai/services/llm_dispatcher.py`
+
+**Comportement** :
+
+1. Tant que l'etat de session `_hf_quota_exhausted` est `False`, chaque appel
+   `chat_completion` passe par `huggingface_hub.AsyncInferenceClient` contre
+   l'API Hugging Face Serverless Inference.
+2. A la premiere exception HTTP 402 (`Payment Required`, quota mensuel
+   epuise), `mark_hf_quota_exhausted()` passe le flag a `True` et **la requete
+   en cours est reessayee immediatement** sur le modele local.
+3. Tous les appels suivants (classification + resumes) basculent directement
+   sur le client local sans retenter HF, jusqu'a la fin du processus Python.
+4. Au demarrage d'un nouveau processus, le flag est reset : on retente HF
+   (utile apres un debut de mois qui recharge le quota).
+
+**Fichier** : `src/greentech/ai/services/llm_local.py`
+
+**Modele** : `Qwen/Qwen2.5-7B-Instruct` (identique au modele HF, pour une
+continuite qualitative totale entre les deux backends).
+
+**Device auto-detecte** :
+
+1. `cuda` (RX 7900 XTX via ROCm 7.2) si `torch.cuda.is_available()`.
+2. `torch_directml.device()` si le package DirectML est installe (PC portable).
+3. `cpu` en dernier ressort.
+
+**Chargement** : paresseux et proteges par verrou thread-safe. Le modele
+(~14 Go FP16) n'est charge qu'au premier appel local reellement necessaire.
+Un singleton garantit qu'un seul chargement est effectue pour tout le processus.
+
+**Interface** : la methode `chat_completion(messages, max_tokens, temperature)`
+renvoie un objet dont la forme (`response.choices[0].message.content`) est
+strictement compatible avec l'API `AsyncInferenceClient`, ce qui permet de
+remplacer le backend sans modifier les appelants.
+
+---
+
+### 11.5 Application aux resumes (summarizer.py)
+
+Le meme dispatcher est utilise par `src/greentech/ai/services/summarizer.py`
+pour les deux resumes :
+
+- `summarize_text(text)` : resume general en francais.
+- `summarize_green_aspects(text)` : resume centre sur les aspects ecologiques.
+
+Les appels `chat_completion` passent tous par le dispatcher, donc beneficient
+automatiquement du fallback local en cas de quota HF epuise. Les resumes en
+mode batch (`summarize_green_it_articles`) ne sont generes que pour les
+articles confirmes Green IT (`est_green_it=true`) afin de limiter le volume
+de requetes.
+
+---
+
+### 11.6 Tracabilite en base
+
+La colonne `articles.modele_classification` enregistre l'etage qui a rendu
+la decision finale :
+
+| Valeur | Signification |
+|--------|---------------|
+| `NULL` | Article jamais classifie |
+| `keyword_filter` | Decision du pre-filtre (NON_GREEN direct) OU candidat en attente (si `est_green_it IS NULL`) |
+| `keyword_filter+qwen_llm_judge` | Decision du LLM judge (etage 2) |
+| `meta-llama/Llama-3.2-3B+LoRA` | Decision du modele de production en inference temps reel via `/analyze` |
+
+Le champ `articles.score_confiance` est renseigne par l'etage 2 et le
+modele de production (valeur nulle pour les NON_GREEN directs).
+
+---
+
+### 11.7 Commandes d'execution
+
+```bash
+# Etage 1 : pre-filtre mots-cles (binaire CANDIDATE/NON_GREEN)
+uv run python scripts/auto_annotate_dataset.py
+
+# Etage 2 : LLM judge sur les candidats (bascule locale si quota HF epuise)
+uv run python scripts/classify_candidates.py
+
+# Resumes Green IT confirmes (general + ecologique, meme fallback)
+uv run python -m greentech.ai.services.summarizer
+
+# Export golden_dataset.csv depuis l'etat final de la DB
+uv run python scripts/export_golden_dataset.py
+
+# Enchaine tout via le pipeline de re-entrainement
+uv run python scripts/retrain_pipeline.py annotate classify summarize export-golden
+```
+
+---
+
+### 11.8 Variables d'environnement
+
+| Variable | Description |
+|----------|-------------|
+| `HUGGINGFACE_TOKEN` | Token HF (scope `read`). Sert a l'API Serverless et au telechargement du modele local en fallback. |
+| `HUGGINGFACE_MODEL_CLASSIFIER_LLM` | Modele LLM judge (defaut : `Qwen/Qwen2.5-7B-Instruct`). |
+| `HUGGINGFACE_MODEL_LOCAL_FALLBACK` | Modele local utilise en fallback (defaut : `Qwen/Qwen2.5-7B-Instruct`, meme que HF pour continuite). |
+
+---
+
+### 11.9 Choix techniques et justifications
+
+| Choix | Justification |
+|-------|---------------|
+| **Pipeline en deux etages** (mots-cles + LLM) | Le pre-filtre elimine ~85% du corpus sans cout LLM. Le LLM judge ne traite que les ~15% ambigus, ce qui divise par ~7 la consommation du quota HF pour une qualite similaire. |
+| **Pre-filtre volontairement permissif** (`CANDIDATE_MIN_GREEN_SCORE=0.1`) | Maximise le recall a l'etage 1 : tout signal Green meme faible declenche une verification LLM. Les faux positifs sont corriges en etage 2, mais les vrais Green IT ne peuvent pas etre rates. |
+| **Fallback Qwen local (meme modele que HF)** | Continuite qualitative totale entre les deux backends : un article donne obtient le meme type de verdict qu'il soit traite par HF ou localement. Pas de divergence de comportement. |
+| **Detection 402 et bascule automatique** | Evite toute interruption de service lors du franchissement du quota mensuel HF. Le traitement redemarre automatiquement sur GPU local sans intervention manuelle. |
+| **Singleton `LocalQwenClient` + chargement paresseux** | Le modele (~14 Go FP16) n'est charge qu'au premier appel local. Les processus qui ne depassent jamais le quota HF ne paient donc jamais le cout de chargement. |
+| **Parser JSON en trois passes** | Les LLM produisent parfois du JSON avec des backslashes non standards. Le parser tolerant recupere la majorite des reponses "presque valides" au lieu d'echouer. |

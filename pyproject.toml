@@ -20,6 +20,8 @@ classifiers = [
 dependencies = [
     # === Data Collection (Bloc E1) ===
     "httpx>=0.27.0",
+    "feedparser>=6.0.12",
+    # Scrapy + Playwright pour le scraping HTML d'articles (critere C1 certification)
     "scrapy>=2.11.0",
     "playwright>=1.40.0",
     "scrapy-playwright>=0.0.40",
@@ -64,6 +66,9 @@ dependencies = [
     "furo>=2024.1.0",
     "minio>=7.2.20",
     "boto3>=1.41.5",
+    "feedparser>=6.0.12",
+    "pypdf>=6.10.0",
+    "python-docx>=1.2.0",
 ]
 
 # === Configuration UV pour PyTorch ROCm (AMD GPU RX 7900 XTX) ===
@@ -171,4 +176,5 @@ exclude_lines = [
 dev = [
     "aiosqlite>=0.22.1",
     "bcrypt>=5.0.0",
+    "ruff>=0.15.0",
 ]

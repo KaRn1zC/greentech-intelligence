@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import sys
 from datetime import UTC, datetime
 from typing import Any
@@ -21,6 +22,46 @@ from greentech.config import get_settings
 
 # Constante pour le format Loki
 _LOKI_PUSH_PATH = "/loki/api/v1/push"
+
+# Loggers externes tres verbeux : on abaisse leur niveau par defaut pour qu'ils
+# ne polluent pas la sortie. L'utilisateur peut les reactiver au niveau INFO en
+# configurant explicitement leur level via logging.getLogger(...).setLevel().
+_NOISY_LOGGERS = (
+    "sqlalchemy.engine",
+    "sqlalchemy.pool",
+    "sqlalchemy.dialects",
+    "httpx",
+    "httpcore",
+    "urllib3",
+    "asyncio",
+    "botocore",
+    "boto3",
+    "s3transfer",
+)
+
+
+class _InterceptHandler(logging.Handler):
+    """Redirige les logs Python standard (logging) vers Loguru.
+
+    Permet d'unifier le format des logs provenant de librairies tierces
+    (SQLAlchemy, httpx, etc.) avec ceux emis via Loguru, pour qu'ils
+    apparaissent dans le meme fichier au meme format.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level: str | int = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+
+        frame, depth = logging.currentframe(), 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+
+        logger.opt(depth=depth, exception=record.exc_info).log(
+            level, record.getMessage()
+        )
 
 
 def _loki_sink(message: Any) -> None:
@@ -92,6 +133,8 @@ def setup_logging(
     - Sortie console (stderr) coloree
     - Fichier rotatif dans logs/ (10 Mo, retention 7 jours)
     - Envoi vers Loki si active et accessible
+    - Interception des logs Python standard (SQLAlchemy, httpx, etc.) vers Loguru
+    - Quietening des loggers tiers tres verbeux (SQLAlchemy echo, boto, ...)
 
     Args:
         level: Niveau minimum de log (DEBUG, INFO, WARNING, ERROR).
@@ -100,6 +143,14 @@ def setup_logging(
     """
     # Reset complet des handlers
     logger.remove()
+
+    # Intercepter tous les logs Python standard (sqlalchemy, httpx, boto, ...)
+    # et les rediriger vers Loguru pour un format de log unifie.
+    logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
+
+    # Abaisser le niveau des loggers tres bavards pour eviter la pollution.
+    for noisy in _NOISY_LOGGERS:
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     # Format console standard
     console_format = (
@@ -125,7 +176,9 @@ def setup_logging(
             colorize=True,
         )
 
-    # Fichier rotatif
+    # Fichier rotatif (encoding UTF-8 explicite : Windows utilise cp1252 par
+    # defaut, ce qui fait planter l'ecriture des logs contenant du texte
+    # d'articles avec caracteres Unicode -- emojis, accents non latin-1, etc.)
     logger.add(
         "logs/greentech_{time:YYYY-MM-DD}.log",
         level=level,
@@ -133,6 +186,7 @@ def setup_logging(
         retention="7 days",
         compression="gz",
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {module}:{function}:{line} | {message}",
+        encoding="utf-8",
     )
 
     # Loki sink

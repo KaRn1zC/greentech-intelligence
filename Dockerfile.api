@@ -23,8 +23,9 @@ COPY pyproject.toml ./
 # --no-install-project installe uniquement les deps, pas le package
 RUN uv sync --no-dev --no-install-project --no-sources
 
-# Copier le code source
+# Copier le code source et le README (requis par hatchling pour la metadata)
 COPY src/ ./src/
+COPY README.md ./
 
 # Installer le projet lui-meme
 RUN uv sync --no-dev --no-sources

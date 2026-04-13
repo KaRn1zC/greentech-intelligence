@@ -60,6 +60,9 @@ CREATE TABLE IF NOT EXISTS articles (
     url TEXT UNIQUE NOT NULL,
     contenu TEXT,
     resume TEXT,
+    -- Résumé orienté "aspects écologiques" (LLM instructif via HF SaaS),
+    -- rempli uniquement quand est_green_it = TRUE.
+    resume_ecologique TEXT,
 
     -- Métadonnées
     auteur VARCHAR(200),

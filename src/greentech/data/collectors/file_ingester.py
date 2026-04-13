@@ -216,6 +216,10 @@ async def run_file_ingestion(file_path: str | Path) -> CollectResult:
 if __name__ == "__main__":
     import sys
 
+    from greentech.utils.logger import setup_logging
+
+    setup_logging(level="INFO", enable_loki=False)
+
     if len(sys.argv) < 2:
         logger.error("Usage : python -m greentech.data.collectors.file_ingester <chemin_fichier>")
         sys.exit(1)
