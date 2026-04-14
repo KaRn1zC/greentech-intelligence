@@ -176,5 +176,6 @@ exclude_lines = [
 dev = [
     "aiosqlite>=0.22.1",
     "bcrypt>=5.0.0",
+    "pillow>=12.1.0",
     "ruff>=0.15.0",
 ]

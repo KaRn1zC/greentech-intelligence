@@ -221,7 +221,3 @@ release majeure.
 - [Atalan - AcceDe](https://www.accede-web.com/) — Guides éditoriaux accessibles
 - [axe-core Rules](https://dequeuniversity.com/rules/axe/) — Règles automatisées
 - [Furo Theme](https://pradyunsg.me/furo/) — Thème Sphinx utilisé
-
----
-
-**Rédigé par KaRn1zC - 2026-04-13**

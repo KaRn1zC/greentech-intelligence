@@ -1,0 +1,53 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "GreenTech Intelligence" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - img [ref=e7]
+          - generic [ref=e8]: GreenTech Intelligence
+        - navigation [ref=e9]:
+          - link "Dashboard" [ref=e10] [cursor=pointer]:
+            - /url: /
+        - generic [ref=e11]:
+          - status "API" [ref=e12]:
+            - generic [ref=e16]: API
+          - generic [ref=e17]:
+            - img [ref=e18]
+            - text: K
+          - button "Passer en mode sombre" [active] [ref=e53]:
+            - img
+          - button "Connexion" [ref=e21]
+    - main [ref=e22]:
+      - generic [ref=e23]:
+        - img
+        - generic [ref=e25]:
+          - generic [ref=e26]:
+            - img [ref=e28]
+            - heading "Connexion" [level=1] [ref=e29]
+            - paragraph [ref=e30]: "> authentification requise"
+          - generic [ref=e31]:
+            - generic [ref=e32]:
+              - text: Email
+              - generic [ref=e33]:
+                - img
+                - textbox "Email" [ref=e34]:
+                  - /placeholder: vous@exemple.com
+            - generic [ref=e35]:
+              - text: Mot de passe
+              - generic [ref=e36]:
+                - img
+                - textbox "Mot de passe" [ref=e37]:
+                  - /placeholder: 8 caracteres minimum
+            - button "Se connecter" [ref=e38] [cursor=pointer]: Se connecter
+            - paragraph [ref=e44]:
+              - text: Pas encore de compte ?
+              - button "S'inscrire" [ref=e45]
+    - contentinfo [ref=e46]:
+      - generic [ref=e47]:
+        - generic [ref=e48]:
+          - img [ref=e49]
+          - generic [ref=e50]: GreenTech Intelligence
+          - generic [ref=e51]: v1.0.0
+        - paragraph [ref=e52]: "> plateforme d'analyse Green IT - projet chef d'oeuvre - par KaRn1zC"
+  - region "Notifications alt+T"

@@ -203,7 +203,15 @@ services:
       minio:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+asyncpg://greentech:greentech_dev_password@postgres:5432/greentech_db
+      # Pydantic Settings calcule database_url depuis ces champs (cf. config.py).
+      # DATABASE_URL n'est pas lu : seuls POSTGRES_* comptent.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: greentech_db
+      POSTGRES_USER: greentech
+      POSTGRES_PASSWORD: greentech_dev_password
+      POSTGRES_APP_USER: greentech_app
+      POSTGRES_APP_PASSWORD: greentech_app_password
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin123
@@ -211,6 +219,11 @@ services:
       LOKI_URL: http://loki:3100
       SECRET_KEY: dev-secret-key-change-in-production
       DEBUG: "true"
+      # Origines autorisees par le middleware CORS : on ajoute http://localhost
+      # (port 80 implicite) pour que le frontend servi par NGINX puisse dialoguer
+      # avec l'API. Les deux premieres origines couvrent les modes de dev (Vite
+      # HMR sur 5173, alternatives sur 3000).
+      CORS_ORIGINS: "http://localhost:5173,http://localhost:3000,http://localhost,http://localhost:80"
     ports:
       - "8000:8000"
     volumes:

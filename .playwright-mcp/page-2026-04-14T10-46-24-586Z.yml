@@ -1,0 +1,171 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "GreenTech Intelligence" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - img [ref=e7]
+          - generic [ref=e8]: GreenTech Intelligence
+        - navigation [ref=e9]:
+          - link "Dashboard" [ref=e10] [cursor=pointer]:
+            - /url: /
+        - generic [ref=e11]:
+          - status "API" [ref=e12]:
+            - generic [ref=e16]: API
+          - generic [ref=e17]:
+            - img [ref=e18]
+            - text: K
+          - button "Passer en mode clair" [ref=e20]:
+            - img
+          - generic [ref=e30]:
+            - generic "demo-visuel@example.com" [ref=e31]:
+              - img [ref=e32]
+              - text: demo-visuel@example.com
+            - button "Se deconnecter" [ref=e35]:
+              - img
+              - generic [ref=e36]: Deconnexion
+    - main [ref=e22]:
+      - generic [ref=e37]:
+        - generic [ref=e38]:
+          - img:
+            - img
+          - generic [ref=e39]:
+            - generic [ref=e40]:
+              - paragraph [ref=e41]: "> dashboard"
+              - heading "Intelligence Green IT" [level=1] [ref=e42]
+              - generic [ref=e44]: Scanning sustainability signals across the tech landscape...
+            - generic [ref=e45]:
+              - img [ref=e47]
+              - text: live
+        - generic [ref=e49]:
+          - generic [ref=e51]:
+            - generic [ref=e52]:
+              - paragraph [ref=e53]: Articles analyses
+              - paragraph [ref=e54]:
+                - generic [ref=e55]: 6,156
+            - img [ref=e57]
+          - generic [ref=e61]:
+            - generic [ref=e62]:
+              - paragraph [ref=e63]: Green IT confirmes
+              - paragraph [ref=e64]:
+                - generic [ref=e65]: "16"
+            - img [ref=e67]
+          - generic [ref=e71]:
+            - generic [ref=e72]:
+              - paragraph [ref=e73]: Non Green IT
+              - paragraph [ref=e74]:
+                - generic [ref=e75]: 6,140
+            - img [ref=e77]
+          - generic [ref=e81]:
+            - generic [ref=e82]:
+              - paragraph [ref=e83]: Ratio Green IT
+              - paragraph [ref=e84]:
+                - generic [ref=e85]: "0.3"
+                - text: "%"
+            - img [ref=e87]
+        - generic [ref=e90]:
+          - generic [ref=e92]:
+            - heading "Analyser un article" [level=2] [ref=e93]:
+              - img [ref=e94]
+              - text: Analyser un article
+            - paragraph [ref=e97]: Collez une URL, du texte (50 car. min.) ou deposez un fichier.
+          - generic [ref=e98]:
+            - generic [ref=e99]: URL ou texte de l'article a analyser
+            - textbox "URL ou texte de l'article a analyser" [ref=e100]:
+              - /placeholder: https://... ou collez le texte de l'article
+            - button "Choisir un fichier a analyser" [ref=e101]:
+              - img
+            - button "Lancer l'analyse" [disabled]:
+              - img
+          - paragraph [ref=e102]: Saisissez une URL commencant par http, du texte d'au moins 50 caracteres, ou deposez un fichier (.txt, .md, .pdf, .docx, .html)
+        - generic [ref=e103]:
+          - generic [ref=e104]:
+            - generic [ref=e105]:
+              - heading "Repartition" [level=2] [ref=e106]:
+                - img [ref=e107]
+                - text: Repartition
+              - paragraph [ref=e109]: 6156 articles
+            - generic [ref=e110]:
+              - application [ref=e112]
+              - generic [ref=e122]:
+                - generic [ref=e123]:
+                  - generic [ref=e125]: Green IT
+                  - generic [ref=e126]: "16"
+                - generic [ref=e127]:
+                  - generic [ref=e129]: Non Green IT
+                  - generic [ref=e130]: "6140"
+                - generic [ref=e131]:
+                  - generic [ref=e133]: En attente
+                  - generic [ref=e134]: "0"
+                - paragraph [ref=e135]: 0.3% Green IT
+          - generic [ref=e136]:
+            - generic [ref=e137]:
+              - heading "Derniers articles" [level=2] [ref=e138]:
+                - img [ref=e139]
+                - text: Derniers articles
+              - paragraph [ref=e142]: 8 resultats
+            - list [ref=e143]:
+              - listitem [ref=e144]:
+                - 'link "2027 Toyota Land Cruiser: Rugged Where It Counts, Premium Where It Matters NewsData.io - 12/04/2026 Non Green IT" [ref=e145] [cursor=pointer]':
+                  - /url: /articles/55800
+                  - generic [ref=e146]:
+                    - paragraph [ref=e147]: "2027 Toyota Land Cruiser: Rugged Where It Counts, Premium Where It Matters"
+                    - paragraph [ref=e148]: NewsData.io - 12/04/2026
+                  - generic [ref=e149]: Non Green IT
+              - listitem [ref=e150]:
+                - link "What That Purple Dot On Your MacBook Screen Is Trying To Tell You NewsData.io - 12/04/2026 Non Green IT" [ref=e151] [cursor=pointer]:
+                  - /url: /articles/52046
+                  - generic [ref=e152]:
+                    - paragraph [ref=e153]: What That Purple Dot On Your MacBook Screen Is Trying To Tell You
+                    - paragraph [ref=e154]: NewsData.io - 12/04/2026
+                  - generic [ref=e155]: Non Green IT
+              - listitem [ref=e156]:
+                - link "AP Sports SummaryBrief at 3:50 p.m. EDT NewsData.io - 12/04/2026 Non Green IT" [ref=e157] [cursor=pointer]:
+                  - /url: /articles/52071
+                  - generic [ref=e158]:
+                    - paragraph [ref=e159]: AP Sports SummaryBrief at 3:50 p.m. EDT
+                    - paragraph [ref=e160]: NewsData.io - 12/04/2026
+                  - generic [ref=e161]: Non Green IT
+              - listitem [ref=e162]:
+                - link "What That Purple Dot On Your MacBook Screen Is Trying To Tell You NewsData.io - 12/04/2026 Non Green IT" [ref=e163] [cursor=pointer]:
+                  - /url: /articles/52019
+                  - generic [ref=e164]:
+                    - paragraph [ref=e165]: What That Purple Dot On Your MacBook Screen Is Trying To Tell You
+                    - paragraph [ref=e166]: NewsData.io - 12/04/2026
+                  - generic [ref=e167]: Non Green IT
+              - listitem [ref=e168]:
+                - 'link "''A Deere piece of history'': rare tractor a jewel in Wimmera farmer''s shed NewsData.io - 12/04/2026 Non Green IT" [ref=e169] [cursor=pointer]':
+                  - /url: /articles/49791
+                  - generic [ref=e170]:
+                    - paragraph [ref=e171]: "'A Deere piece of history': rare tractor a jewel in Wimmera farmer's shed"
+                    - paragraph [ref=e172]: NewsData.io - 12/04/2026
+                  - generic [ref=e173]: Non Green IT
+              - listitem [ref=e174]:
+                - link "Liberals Approve AI Regulation Banning Under-16s from Chatbots, Social Media NewsData.io - 12/04/2026 Non Green IT" [ref=e175] [cursor=pointer]:
+                  - /url: /articles/49744
+                  - generic [ref=e176]:
+                    - paragraph [ref=e177]: Liberals Approve AI Regulation Banning Under-16s from Chatbots, Social Media
+                    - paragraph [ref=e178]: NewsData.io - 12/04/2026
+                  - generic [ref=e179]: Non Green IT
+              - listitem [ref=e180]:
+                - 'link "WhatsApp encryption debate: Lawsuit, backdoor claims and expert pushback NewsData.io - 12/04/2026 Non Green IT" [ref=e181] [cursor=pointer]':
+                  - /url: /articles/49780
+                  - generic [ref=e182]:
+                    - paragraph [ref=e183]: "WhatsApp encryption debate: Lawsuit, backdoor claims and expert pushback"
+                    - paragraph [ref=e184]: NewsData.io - 12/04/2026
+                  - generic [ref=e185]: Non Green IT
+              - listitem [ref=e186]:
+                - link "Who had “New OS for the Z80” On Their 2026 Bingo Card? NewsData.io - 12/04/2026 Non Green IT" [ref=e187] [cursor=pointer]:
+                  - /url: /articles/49686
+                  - generic [ref=e188]:
+                    - paragraph [ref=e189]: Who had “New OS for the Z80” On Their 2026 Bingo Card?
+                    - paragraph [ref=e190]: NewsData.io - 12/04/2026
+                  - generic [ref=e191]: Non Green IT
+    - contentinfo [ref=e23]:
+      - generic [ref=e24]:
+        - generic [ref=e25]:
+          - img [ref=e26]
+          - generic [ref=e27]: GreenTech Intelligence
+          - generic [ref=e28]: v1.0.0
+        - paragraph [ref=e29]: "> plateforme d'analyse Green IT - projet chef d'oeuvre - par KaRn1zC"
+  - region "Notifications alt+T"
