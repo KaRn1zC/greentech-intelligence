@@ -1,6 +1,6 @@
 # Etat d'avancement du projet - GreenTech Intelligence
 
-> **Derniere mise a jour** : 2026-04-13
+> **Derniere mise a jour** : 2026-04-14
 
 ---
 
@@ -25,17 +25,20 @@ Pipeline complet operationnel : 3 sources de collecte, nettoyage PySpark, ingest
 
 #### Section 3.3 : Entrainement & Competition des Modeles - **TERMINEE**
 
-Architecture a 3 modeles en competition :
+Architecture a 4 modeles en competition :
 
 | Modele | Type | Params | Methode | Statut | F1 | Accuracy | CO2 |
 |--------|------|--------|---------|--------|-----|----------|-----|
 | **Champion** DeBERTa-v3-base | Encoder | 86M | Full fine-tuning | ENTRAINE | 0.44 | 99.6% | 97.8g |
 | **Challenger 1** Qwen2.5-3B | Causal LM | 3085M | LoRA (r=16) | ENTRAINE | 0.40 | 99.74% | 108.8g |
-| **Challenger 2** Llama 3.2 3B | Causal LM | 3213M | LoRA (r=16) | ENTRAINE | **0.667** | **99.83%** | 112.0g |
+| **Challenger 2** Llama 3.2 3B | Causal LM | 3213M | LoRA (r=16) | ENTRAINE | 0.667 | 99.83% | 112.0g |
+| **Challenger 3** Qwen3.5-4B | Causal LM (multilingue) | ~4000M | LoRA (r=16, attn+MLP) | PRET A ENTRAINER | - | - | - |
 
 - Oversampling de la classe minoritaire (22 → 1152, ratio 20%)
-- Benchmark final execute sur 1162 articles de test
-- **VAINQUEUR : Llama 3.2 3B + LoRA** (meilleur F1=0.667, precision 1.0, recall 0.50)
+- Benchmark final initial execute sur 1162 articles de test
+- **Vainqueur historique** : Llama 3.2 3B + LoRA (F1=0.667, precision 1.0, recall 0.50)
+- **Nouveau modele cible depuis avril 2026** : Qwen3.5-4B + LoRA (Apache-2.0,
+  multilingue natif, remplace Llama gated). Metriques en cours de mesure.
 
 #### Section 3.4 : Validation & Packaging - **TERMINEE**
 - Tests Deepchecks ecrits et fonctionnels
@@ -59,7 +62,9 @@ Architecture a 3 modeles en competition :
 - Routes : auth (4), articles (3), stats (3), analyze (2), health (1), metrics (1)
 - Suite de tests d'integration : **39 tests**, tous passent
 - Middleware logging, CORS configurable via env, gestion d'erreurs globale
-- Integration du modele IA vainqueur (Llama 3.2 3B + LoRA) dans inference.py
+- Integration du modele IA vainqueur dans inference.py (dispatch automatique :
+  Qwen3.5-4B + LoRA si adapter_config pointe vers Qwen3.5, Llama 3.2 3B + LoRA
+  sinon, DeBERTa si pas d'adapter_config)
 - Documentation OpenAPI/Swagger complete sur /docs et /redoc
 - Dockerfile.api multi-stage (uv, python:3.12-slim, non-root)
 - Competences C5 et C9 validees

@@ -35,36 +35,51 @@ from loguru import logger
 from greentech.ai.services.llm_local import LocalQwenClient
 from greentech.config import get_settings
 
-# Etat de session : True quand un 402 a ete observe au moins une fois.
-# Pas persistant entre processus : une nouvelle execution retente HF.
-_hf_quota_exhausted: bool = False
+# Etat de session : True quand l'API HF ne peut plus servir le modele demande
+# (quota epuise OU modele non supporte par les providers actifs). Dans les deux
+# cas on bascule sur le local pour le reste de la session pour eviter les
+# aller-retours couteux. Pas persistant entre processus : une nouvelle execution
+# retente HF.
+_hf_unavailable: bool = False
 _state_lock = threading.Lock()
 
 
 def is_hf_quota_exhausted() -> bool:
-    """Retourne True si un appel HF a deja echoue avec un 402 dans la session."""
-    return _hf_quota_exhausted
+    """Retourne True si HF a deja echoue (402 ou 400 model_not_supported)."""
+    return _hf_unavailable
 
 
-def mark_hf_quota_exhausted() -> None:
-    """Marque le quota HF comme epuise et trace le basculement vers le local."""
-    global _hf_quota_exhausted
+def mark_hf_unavailable(reason: str) -> None:
+    """Marque l'API HF comme indisponible et trace le basculement vers le local.
+
+    Args:
+        reason: Motif court (``"quota epuise"``, ``"modele non supporte"``, etc.)
+            affiche dans le log pour faciliter le diagnostic.
+    """
+    global _hf_unavailable
     with _state_lock:
-        if _hf_quota_exhausted:
+        if _hf_unavailable:
             return
-        _hf_quota_exhausted = True
+        _hf_unavailable = True
         logger.warning(
-            "Quota HF Inference Providers epuise (HTTP 402). "
-            "Bascule sur le modele Qwen local (GPU AMD ROCm) pour la suite "
-            "de la session."
+            f"API HF Inference Providers indisponible ({reason}). "
+            "Bascule sur le modele Qwen local (GPU AMD ROCm si disponible, "
+            "sinon CPU) pour la suite de la session."
         )
+
+
+# Alias conserve pour retro-compatibilite avec le code appelant qui connaissait
+# la nomenclature historique centree sur le quota epuise.
+def mark_hf_quota_exhausted() -> None:
+    """Alias historique de ``mark_hf_unavailable("quota epuise - HTTP 402")``."""
+    mark_hf_unavailable("quota epuise - HTTP 402")
 
 
 def reset_hf_quota_flag() -> None:
     """Reinitialise l'etat (utile en test pour repasser par HF)."""
-    global _hf_quota_exhausted
+    global _hf_unavailable
     with _state_lock:
-        _hf_quota_exhausted = False
+        _hf_unavailable = False
 
 
 def _is_quota_exhausted_error(exc: BaseException) -> bool:
@@ -74,6 +89,24 @@ def _is_quota_exhausted_error(exc: BaseException) -> bool:
         if response is not None and getattr(response, "status_code", None) == 402:
             return True
     return "Payment Required" in str(exc)
+
+
+def _is_model_not_supported_error(exc: BaseException) -> bool:
+    """Detecte si HF refuse le modele (ex. ``Qwen/Qwen2.5-3B-Instruct`` pas
+    expose par les Inference Providers actifs du compte).
+
+    L'erreur se presente sous la forme d'un HTTP 400 avec un message contenant
+    ``model_not_supported`` ou ``is not supported by any provider``. On couvre
+    les deux formulations pour resister aux futures rotations de wording cote
+    HF.
+    """
+    message = str(exc).lower()
+    indicators = (
+        "model_not_supported",
+        "is not supported by any provider",
+        "not supported by any provider you have enabled",
+    )
+    return any(ind in message for ind in indicators)
 
 
 async def chat_completion(
@@ -130,6 +163,17 @@ async def chat_completion(
             mark_hf_quota_exhausted()
             logger.info(
                 "Nouvel essai de la requete en cours sur le modele local apres 402"
+            )
+            local = LocalQwenClient.get()
+            return await local.chat_completion(
+                messages, max_tokens=max_tokens, temperature=temperature
+            )
+        if _is_model_not_supported_error(exc):
+            mark_hf_unavailable(
+                f"modele '{model}' non servi par les Inference Providers actifs"
+            )
+            logger.info(
+                f"Modele {model} indisponible cote HF, bascule sur le modele local"
             )
             local = LocalQwenClient.get()
             return await local.chat_completion(

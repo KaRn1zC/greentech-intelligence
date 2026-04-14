@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 import sys
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,6 +23,13 @@ from greentech.config import get_settings
 
 # Constante pour le format Loki
 _LOKI_PUSH_PATH = "/loki/api/v1/push"
+
+# Sondage de l'endpoint /ready de Loki. Loki 2.x met jusqu'a 40 s pour
+# terminer son init (chargement WAL, compactor, schema). On retente plusieurs
+# fois pour eviter les faux-positifs 503 quand on lance le pipeline juste
+# apres `docker compose up -d`.
+_LOKI_READY_MAX_ATTEMPTS = 5
+_LOKI_READY_BACKOFF_SECONDS = (1.0, 3.0, 5.0, 10.0, 15.0)
 
 # Loggers externes tres verbeux : on abaisse leur niveau par defaut pour qu'ils
 # ne polluent pas la sortie. L'utilisateur peut les reactiver au niveau INFO en
@@ -189,21 +197,50 @@ def setup_logging(
         encoding="utf-8",
     )
 
-    # Loki sink
+    # Loki sink : sondage avec backoff pour encaisser le demarrage differe du
+    # service (jusqu'a 40 s apres `docker compose up -d`).
     if enable_loki:
         settings = get_settings()
-        try:
-            response = httpx.get(f"{settings.loki_url}/ready", timeout=2.0)
-            if response.status_code == 200:
-                logger.add(
-                    _loki_sink,
-                    level=level,
-                    serialize=False,
-                )
-                logger.info(f"Loki connecte : {settings.loki_url}")
-            else:
-                logger.warning(f"Loki non pret (status {response.status_code}), logs locaux uniquement")
-        except (httpx.ConnectError, httpx.TimeoutException):
-            logger.warning("Loki inaccessible, logs locaux uniquement")
+        ready = _wait_for_loki_ready(settings.loki_url)
+        if ready:
+            logger.add(
+                _loki_sink,
+                level=level,
+                serialize=False,
+            )
+            logger.info(f"Loki connecte : {settings.loki_url}")
+        else:
+            logger.warning(
+                f"Loki non pret apres {_LOKI_READY_MAX_ATTEMPTS} tentatives, logs locaux uniquement"
+            )
 
     logger.info("Logging configure avec succes")
+
+
+def _wait_for_loki_ready(loki_url: str) -> bool:
+    """Sondage de l'endpoint ``/ready`` de Loki avec backoff progressif.
+
+    Loki renvoie HTTP 503 pendant sa phase d'initialisation (chargement WAL,
+    boot du compactor). Sans retry, un pipeline lance juste apres
+    ``docker compose up -d`` tombe en 503 alors que le service serait
+    disponible quelques secondes plus tard. Les timeouts cumules plafonnent
+    a ~34 s (1 + 3 + 5 + 10 + 15), ce qui couvre largement le temps moyen
+    de boot observe.
+
+    Args:
+        loki_url: URL de base de l'API Loki (ex. ``http://localhost:3100``).
+
+    Returns:
+        True si Loki a repondu 200 avant l'epuisement des tentatives.
+    """
+    ready_url = f"{loki_url}/ready"
+    for attempt, delay in enumerate(_LOKI_READY_BACKOFF_SECONDS, start=1):
+        try:
+            response = httpx.get(ready_url, timeout=2.0)
+            if response.status_code == 200:
+                return True
+        except (httpx.ConnectError, httpx.TimeoutException):
+            pass
+        if attempt < _LOKI_READY_MAX_ATTEMPTS:
+            time.sleep(delay)
+    return False

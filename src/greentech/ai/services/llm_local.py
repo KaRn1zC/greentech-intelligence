@@ -1,10 +1,32 @@
 """Inference locale Qwen via ROCm sur le GPU AMD RX 7900 XTX.
 
-Ce module fournit une implementation locale du meme modele Qwen que celui
-appele en production via l'API Hugging Face Serverless. Il sert de fallback
-automatique lorsque le quota mensuel HF est epuise (erreur HTTP 402
-Payment Required), de facon a garantir que le pipeline de classification
-et de resume reste fonctionnel sans interruption.
+Ce module fournit une cascade de fallback locale activee automatiquement
+par le dispatcher lorsque l'API HuggingFace Inference Providers ne peut
+pas servir la requete (quota epuise HTTP 402, ou modele cloud non servi
+par les providers actifs du compte HTTP 400). L'objectif est que le
+pipeline de classification et de resume reste toujours operationnel,
+meme hors-ligne ou en fin de quota mensuel.
+
+Strategie de fallback en cascade
+--------------------------------
+
+1. **Modele cloud (de reference)** : ``Qwen/Qwen3-4B-Instruct-2507``. Utilise
+   par le dispatcher en premier via ``AsyncInferenceClient``. Non concerne
+   par ce module : ce module ne s'active que lorsque le cloud echoue.
+2. **Local n1** : ``Qwen/Qwen2.5-3B-Instruct`` (``DEFAULT_LOCAL_MODEL``).
+   Choix par defaut quand la memoire de la machine le permet. C'est le
+   modele le plus proche en taille de parametres du cloud (4B -> 3B), ce
+   qui minimise l'ecart qualitatif entre les deux backends.
+3. **Local n2 (lightweight)** : ``Qwen/Qwen2.5-1.5B-Instruct``. Bascule
+   automatique si :
+   - le preflight memoire detecte moins de 8 Go VRAM (FP16 GPU) ou
+     14 Go RAM (FP32 CPU) disponibles, OU
+   - le chargement du 3B leve un ``OutOfMemoryError`` malgre le preflight
+     (d'autres processus concurrents ayant grignote la memoire).
+
+Les deux modeles locaux sont configurables via les variables d'environnement
+``HUGGINGFACE_MODEL_LOCAL_FALLBACK`` et
+``HUGGINGFACE_MODEL_LOCAL_FALLBACK_LIGHTWEIGHT``.
 
 Strategie de design
 -------------------
@@ -14,26 +36,30 @@ Strategie de design
   Les scripts qui n'utilisent que HF ne paient donc jamais ce cout.
 - **Singleton** : un seul chargement par processus. Les appels successifs
   reutilisent le modele en memoire pour amortir le cout initial.
-- **Interface compatible HF** : la methode `chat_completion` renvoie un
-  objet dont la forme (`response.choices[0].message.content`) est compatible
-  avec l'usage existant du `AsyncInferenceClient`, ce qui permet au
+- **Interface compatible HF** : la methode ``chat_completion`` renvoie un
+  objet dont la forme (``response.choices[0].message.content``) est compatible
+  avec l'usage existant du ``AsyncInferenceClient``, ce qui permet au
   dispatcher de basculer sans modifier les appelants.
 
 Materiel cible
 --------------
 
 - **PC fixe** : AMD Radeon RX 7900 XTX (24 Go VRAM), ROCm 7.2, torch 2.9.1+rocm.
-  `torch.cuda.is_available()` renvoie True car ROCm expose l'API CUDA.
-- **PC portable** : fallback via `torch_directml` si installe, sinon CPU.
+  ``torch.cuda.is_available()`` renvoie True car ROCm expose l'API CUDA.
+  Latence typique pour le 3B en FP16 : 2-4 s par article, acceptable pour
+  un traitement interactif.
+- **PC portable** : fallback via ``torch_directml`` si installe, sinon CPU.
+  Sur CPU, le preflight memoire declenche generalement la bascule vers le
+  1.5B pour garder des temps de reponse soutenables.
 
-Le modele retenu est le **meme** que celui utilise cote HF cloud :
-`Qwen/Qwen2.5-7B-Instruct`. Cela garantit une continuite qualitative
-totale entre les deux backends : un article donne obtient le meme type
-de reponse qu'il soit traite par HF ou localement. En FP16 sur la
-RX 7900 XTX (24 Go VRAM), le 7B occupe environ 14 Go, ce qui laisse
-une marge confortable pour le contexte et les activations. La latence
-d'inference est de l'ordre de 5-8 s par article, acceptable pour un
-traitement par lots.
+Note sur le choix cloud vs local
+--------------------------------
+
+On ne vise pas une egalite de taille de parametres entre cloud et local :
+le cloud (4B) sert de reference qualitative, le local (3B ou 1.5B) assure
+la continuite de service. La difference de generation entre Qwen3-4B et
+Qwen2.5-3B/1.5B est acceptable pour un fallback, et largement preferable
+a un pipeline qui s'arreterait en cas de 402.
 
 """
 
@@ -55,9 +81,63 @@ if TYPE_CHECKING:
 
 # Modele par defaut pour le fallback local. Identique au modele HF utilise
 # en production pour garantir une continuite de qualite entre les deux
-# backends (cloud et local). Le 7B en FP16 occupe ~14 Go de VRAM, ce qui
-# rentre largement dans les 24 Go de la RX 7900 XTX.
-DEFAULT_LOCAL_MODEL = "Qwen/Qwen2.5-7B-Instruct"
+# backends (cloud et local). Le 3B en FP16 occupe ~6 Go de VRAM, ce qui
+# rentre tres largement dans les 24 Go de la RX 7900 XTX et fonctionne
+# sur la majorite des GPU discrets modernes.
+DEFAULT_LOCAL_MODEL = "Qwen/Qwen2.5-3B-Instruct"
+
+# Modele de secours lorsque la machine cible ne dispose pas d'assez de memoire
+# pour le 3B. Environ 3 Go en FP16, 6 Go en FP32, ce qui rentre dans la quasi
+# totalite des configurations modernes (y compris laptops sans GPU dedie).
+LIGHTWEIGHT_LOCAL_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+
+# Seuils empiriques de memoire requise pour charger le Qwen 3B sans se
+# retrouver en OOM (poids + activations + contexte de chat moyen).
+# FP16 sur GPU : ~6 Go effectifs, on exige 8 pour garder un peu de marge.
+# FP32 sur CPU : le poids seul fait ~12 Go + overhead PyTorch, donc 14 Go
+# minimum de RAM disponible avant de tenter.
+_MIN_VRAM_GB_FOR_DEFAULT_FP16 = 8.0
+_MIN_RAM_GB_FOR_DEFAULT_FP32 = 14.0
+
+
+def _fix_mojibake(text: str) -> str:
+    """Repare le mojibake UTF-8 lu-comme-Latin-1 parfois produit par les
+    tokenizers byte-level BPE.
+
+    Les tokenizers Qwen / GPT-2 / Llama encodent chaque byte UTF-8 comme un
+    caractere Unicode distinct de la plage Latin-1 (0x00-0xFF). Selon la
+    combinaison de version de ``transformers``, de ``tokenizers`` et de
+    configuration ``clean_up_tokenization_spaces``, la methode ``decode``
+    peut renvoyer la chaine dans laquelle chaque byte UTF-8 est reste sous
+    forme de caractere Latin-1 au lieu d'etre assemble en caractere Unicode.
+    Consequence : ``"réduit"`` (bytes 0xC3 0xA9) devient ``"rÃ©duit"``
+    (caracteres U+00C3 et U+00A9).
+
+    Cette fonction detecte ce cas par la presence d'une sequence
+    caracteristique (``Ã`` suivi d'un caractere Latin-1) et tente une
+    reinterpretation ``encode('latin-1').decode('utf-8')``. Si la tentative
+    leve une ``UnicodeDecodeError``, le texte est rendu tel quel : cela
+    signifie qu'il ne s'agissait pas de mojibake mais d'un vrai ``Ã``
+    legitime (cas tres rare en francais).
+
+    Args:
+        text: Texte potentiellement mojibake renvoye par le tokenizer.
+
+    Returns:
+        Texte avec les caracteres francais (``é``, ``è``, ``à``, ``ç``, ``ù``,
+        etc.) correctement reassembles, ou texte inchange si aucun mojibake
+        n'est detecte ou si la conversion echoue.
+    """
+    if not text:
+        return text
+    # Signatures caracteristiques du mojibake UTF-8→Latin-1 sur du francais.
+    mojibake_markers = ("Ã", "Â", "\u00e2\u0080")
+    if not any(marker in text for marker in mojibake_markers):
+        return text
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
 
 
 @dataclass(frozen=True)
@@ -150,8 +230,117 @@ class LocalQwenClient:
         )
         return "cpu", torch.float32
 
+    @staticmethod
+    def _available_memory_gb(device: str) -> float | None:
+        """Estime la memoire disponible (en Go) sur le device cible.
+
+        Sur GPU on interroge directement le runtime pour obtenir la VRAM libre.
+        Sur CPU on lit ``/proc/meminfo`` (disponible dans tous les conteneurs
+        Linux utilises par ce projet) pour recuperer ``MemAvailable``, qui
+        reflete la memoire reellement allouable sans swap excessif. En dehors
+        de Linux on renvoie ``None`` : l'appelant prefere alors tenter le
+        modele demande et attraper un eventuel OOM plutot que bloquer
+        inutilement sur une heuristique imparfaite.
+        """
+        try:
+            import torch
+
+            if device == "cuda" and torch.cuda.is_available():
+                free_bytes, _total_bytes = torch.cuda.mem_get_info()
+                return float(free_bytes) / 1024**3
+        except Exception as exc:
+            logger.debug(f"Impossible de lire la VRAM disponible : {exc}")
+
+        try:
+            with open("/proc/meminfo", encoding="utf-8") as meminfo:
+                for line in meminfo:
+                    if line.startswith("MemAvailable:"):
+                        kib = int(line.split()[1])
+                        return kib * 1024 / 1024**3
+        except OSError:
+            return None
+        return None
+
+    @classmethod
+    def _resolve_model_name(cls, requested: str, device: str) -> str:
+        """Choisit le modele a charger en fonction de la memoire disponible.
+
+        Si ``requested`` designe un modele "gros" (3B ou plus) mais que la
+        machine courante n'a pas assez de memoire (VRAM sur GPU, RAM sur CPU),
+        on bascule sur le modele lightweight (1.5B) defini dans la
+        configuration. Cela permet au projet de fonctionner sur les postes
+        moins puissants qui clonent le depot sans savoir ajuster manuellement
+        ``HUGGINGFACE_MODEL_LOCAL_FALLBACK``.
+
+        Args:
+            requested: Nom du modele demande (via ``settings`` ou parametre).
+            device: Device selectionne (``cuda``, ``cpu``, etc.).
+
+        Returns:
+            Nom du modele effectivement a charger.
+        """
+        # On ne declenche le fallback que pour les modeles "plein format"
+        # (3B, 7B...). Les plus petits (1.5B, 0.5B) tiennent toujours en
+        # memoire et leur chargement ne merite pas de preflight.
+        name_lower = requested.lower()
+        needs_check = any(tag in name_lower for tag in ("7b", "3b"))
+        if not needs_check:
+            return requested
+
+        available = cls._available_memory_gb(device)
+        if available is None:
+            logger.debug(
+                "Memoire non mesurable sur ce systeme, tentative avec le modele demande"
+            )
+            return requested
+
+        # Seuils calibres pour le 3B par defaut. Pour un 7B le code essaiera
+        # d'abord le chargement et basculera sur OOM via le try/except en aval.
+        threshold = (
+            _MIN_VRAM_GB_FOR_DEFAULT_FP16
+            if device == "cuda"
+            else _MIN_RAM_GB_FOR_DEFAULT_FP32
+        )
+        # Si on a affaire a un 7B, on exige deux fois plus de memoire qu'un 3B
+        # pour deviner correctement la trajectoire. Le fallback final sur OOM
+        # reste en place si l'estimation est trop optimiste.
+        if "7b" in name_lower:
+            threshold *= 2
+
+        if available >= threshold:
+            logger.info(
+                f"Memoire suffisante ({available:.1f} Go >= {threshold:.1f} Go), "
+                f"chargement du modele complet {requested}"
+            )
+            return requested
+
+        lightweight = getattr(
+            get_settings(),
+            "huggingface_model_local_fallback_lightweight",
+            LIGHTWEIGHT_LOCAL_MODEL,
+        )
+        logger.warning(
+            f"Memoire insuffisante pour {requested} "
+            f"({available:.1f} Go disponibles, {threshold:.1f} Go requis). "
+            f"Bascule automatique sur {lightweight}."
+        )
+        return lightweight
+
     def _ensure_loaded(self) -> None:
-        """Charge le modele et le tokenizer en memoire si ce n'est pas deja fait."""
+        """Charge le modele et le tokenizer en memoire si ce n'est pas deja fait.
+
+        Deux garde-fous successifs pour que le pipeline reste fonctionnel meme
+        sur des postes sous-dimensionnes :
+
+        1. **Preflight memoire** : avant le chargement, on compare la RAM/VRAM
+           disponible au besoin estime du modele demande. Si la machine n'a pas
+           les ressources, on bascule des le depart sur le modele lightweight.
+        2. **Fallback a chaud sur OOM** : si l'estimation etait trop optimiste
+           et que PyTorch leve un OutOfMemoryError pendant ``from_pretrained``
+           ou ``.to(device)``, on capture l'erreur et on retente avec le modele
+           lightweight. Cela couvre les cas ou d'autres processus consomment
+           de la memoire en parallele.
+        """
         if self._model is not None and self._tokenizer is not None:
             return
 
@@ -163,35 +352,75 @@ class LocalQwenClient:
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
             device, dtype = self._pick_device()
-            logger.info(
-                f"Chargement du modele local {self.model_name} "
-                f"(device={device}, dtype={dtype})..."
-            )
-
             settings = get_settings()
             hf_token = settings.huggingface_token or None
+            lightweight_name = getattr(
+                settings,
+                "huggingface_model_local_fallback_lightweight",
+                LIGHTWEIGHT_LOCAL_MODEL,
+            )
 
-            tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name,
-                token=hf_token,
-                trust_remote_code=False,
-            )
-            model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                token=hf_token,
-                torch_dtype=dtype,
-                low_cpu_mem_usage=True,
-                trust_remote_code=False,
-            )
-            model.to(torch.device(device))
-            model.eval()
+            effective_name = self._resolve_model_name(self.model_name, device)
+
+            def _load(name: str) -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
+                logger.info(
+                    f"Chargement du modele local {name} "
+                    f"(device={device}, dtype={dtype})..."
+                )
+                tok = AutoTokenizer.from_pretrained(
+                    name,
+                    token=hf_token,
+                    trust_remote_code=False,
+                )
+                mdl = AutoModelForCausalLM.from_pretrained(
+                    name,
+                    token=hf_token,
+                    dtype=dtype,
+                    low_cpu_mem_usage=True,
+                    trust_remote_code=False,
+                )
+                mdl.to(torch.device(device))
+                mdl.eval()
+                return tok, mdl
+
+            try:
+                tokenizer, model = _load(effective_name)
+            except (torch.cuda.OutOfMemoryError, MemoryError, RuntimeError) as err:
+                # RuntimeError couvre les OOM CPU sur certains backends ainsi
+                # que les erreurs "CUDA out of memory" remontees differemment
+                # selon la version de PyTorch/ROCm.
+                message = str(err).lower()
+                is_oom = isinstance(
+                    err, (torch.cuda.OutOfMemoryError, MemoryError)
+                ) or "out of memory" in message
+                if not is_oom or effective_name == lightweight_name:
+                    raise
+                logger.warning(
+                    f"Echec du chargement de {effective_name} pour cause de "
+                    f"memoire insuffisante : {err}. Bascule sur {lightweight_name}."
+                )
+                # On libere ce qui a pu etre alloue avant la bascule pour
+                # maximiser la memoire disponible au second essai.
+                try:
+                    import gc
+
+                    gc.collect()
+                    if device == "cuda" and torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                effective_name = lightweight_name
+                tokenizer, model = _load(effective_name)
 
             self._tokenizer = tokenizer
             self._model = model
             self._device = device
             self._dtype = dtype
+            self.model_name = effective_name
 
-            logger.info("Modele local charge et pret a l'inference")
+            logger.info(
+                f"Modele local {effective_name} charge et pret a l'inference"
+            )
 
     def _generate_sync(
         self,
@@ -246,7 +475,7 @@ class LocalQwenClient:
         generated_text = self._tokenizer.decode(
             generated_tokens, skip_special_tokens=True
         ).strip()
-        return generated_text
+        return _fix_mojibake(generated_text)
 
     async def chat_completion(
         self,

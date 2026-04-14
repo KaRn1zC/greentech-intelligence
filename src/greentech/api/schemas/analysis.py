@@ -67,7 +67,8 @@ class AnalysisResult(BaseModel):
     score_confiance: float | None = None
     resume: str | None = None
     # Resume oriente aspects ecologiques, genere uniquement si est_green_it = True
-    # via un LLM instructif HF (par defaut Qwen2.5-7B-Instruct).
+    # via un LLM instructif HF (par defaut Qwen3-4B-Instruct-2507, fallback
+    # local Qwen2.5-3B/1.5B si le quota est epuise).
     resume_ecologique: str | None = None
     modele_classification: str | None = None
     temps_inference_ms: int | None = None

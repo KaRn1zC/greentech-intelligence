@@ -304,7 +304,7 @@ async def _run_analysis(
         except Exception as e:
             logger.error(f"Erreur classification : {e}")
 
-        # 4. Resumes via HuggingFace SaaS (Qwen2.5-7B-Instruct)
+        # 4. Resumes via HuggingFace SaaS (Qwen3-4B-Instruct-2507, fallback local)
         #    - Resume general : toujours genere si contenu suffisant
         #    - Resume ecologique : uniquement si article classe Green IT
         #    Les deux appels sont parallelises via asyncio.gather pour minimiser la latence.

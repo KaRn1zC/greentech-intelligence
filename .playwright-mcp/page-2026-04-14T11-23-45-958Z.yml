@@ -1,0 +1,74 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "GreenTech Intelligence" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - img [ref=e7]
+          - generic [ref=e8]: GreenTech Intelligence
+        - navigation [ref=e9]:
+          - link "Dashboard" [ref=e10] [cursor=pointer]:
+            - /url: /
+        - generic [ref=e11]:
+          - status "API" [ref=e12]:
+            - generic [ref=e16]: API
+          - generic [ref=e17]:
+            - img [ref=e18]
+            - text: K
+          - button "Passer en mode sombre" [active] [ref=e85]:
+            - img
+          - generic [ref=e34]:
+            - generic "demo-visuel@example.com" [ref=e35]:
+              - img [ref=e36]
+              - text: demo-visuel@example.com
+            - button "Se deconnecter" [ref=e39]:
+              - img
+              - generic [ref=e40]: Deconnexion
+    - main [ref=e22]:
+      - generic [ref=e41]:
+        - link "retour au dashboard" [ref=e42] [cursor=pointer]:
+          - /url: /
+          - button "retour au dashboard" [ref=e43]:
+            - img
+            - text: retour au dashboard
+        - generic [ref=e44]:
+          - generic [ref=e45]:
+            - generic [ref=e46]: Non Green IT
+            - generic [ref=e47]: NewsData.io
+            - generic [ref=e48]:
+              - img [ref=e50]
+              - text: ENGLISH
+          - 'heading "2027 Toyota Land Cruiser: Rugged Where It Counts, Premium Where It Matters" [level=1] [ref=e53]'
+          - generic [ref=e54]:
+            - generic [ref=e55]:
+              - img [ref=e56]
+              - text: B.
+            - generic [ref=e59]:
+              - img [ref=e60]
+              - text: 12 avril 2026
+            - link "Source originale" [ref=e62] [cursor=pointer]:
+              - /url: https://cerebral-overload.com/2026/04/2027-toyota-land-cruiser-rugged-where-it-counts-premium-where-it-matters/
+              - img [ref=e63]
+              - text: Source originale
+        - generic [ref=e67]:
+          - generic [ref=e69]:
+            - heading "Contenu de l'article" [level=2] [ref=e71]
+            - paragraph [ref=e72]: ONLY AVAILABLE IN PAID PLANS
+          - complementary [ref=e73]:
+            - generic [ref=e74]:
+              - generic [ref=e75]:
+                - heading "Classification" [level=2] [ref=e76]
+                - paragraph [ref=e77]: resultats du modele
+              - generic [ref=e79]:
+                - term [ref=e80]: modele
+                - definition [ref=e81]:
+                  - img [ref=e82]
+                  - text: keyword_filter
+    - contentinfo [ref=e27]:
+      - generic [ref=e28]:
+        - generic [ref=e29]:
+          - img [ref=e30]
+          - generic [ref=e31]: GreenTech Intelligence
+          - generic [ref=e32]: v1.0.0
+        - paragraph [ref=e33]: "> plateforme d'analyse Green IT - projet chef d'oeuvre - par KaRn1zC"
+  - region "Notifications alt+T"

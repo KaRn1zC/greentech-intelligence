@@ -259,7 +259,13 @@ Environnement Node.js (via npm) :
 - [x] **Benchmark Final & Selection** :
   - [x] Execution du script de comparaison sur le jeu de test (3 modeles, 1162 articles)
   - [x] Analyse des metriques MLFlow : F1 vs Latence vs CO2
-  - [x] Selection du modele vainqueur : Llama 3.2 3B + LoRA (F1=0.667)
+  - [x] Selection du modele vainqueur initial : Llama 3.2 3B + LoRA (F1=0.667)
+- [x] **Migration vers Qwen3.5-4B (Challenger 3, avril 2026)** :
+  - [x] Ajout de `ChallengerQwen35Classifier` dans `training.py` (base `Qwen/Qwen3.5-4B`, Apache-2.0, multilingue natif FR/EN/DE/ES/ZH)
+  - [x] Creation du module `baseline.py` pour l'evaluation zero-shot reutilisable
+  - [x] Creation du script `scripts/benchmark_baseline.py` avec run MLflow dedie
+  - [x] Basculement du pipeline `retrain_pipeline.py` vers `challenger-qwen35` (`TRAIN_MODEL_TYPE`)
+  - [x] Detection automatique de la famille Qwen3.5 dans `inference.py` pour le chargement LoRA
 
 ### 3.4 Validation & Packaging (Qualite Modele)
 

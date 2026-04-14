@@ -1,0 +1,55 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "GreenTech Intelligence" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - img [ref=e7]
+          - generic [ref=e8]: GreenTech Intelligence
+        - navigation [ref=e9]:
+          - link "Dashboard" [ref=e10] [cursor=pointer]:
+            - /url: /
+        - generic [ref=e11]:
+          - status "API" [ref=e12]:
+            - generic [ref=e16]: API
+          - generic [ref=e17]:
+            - img [ref=e18]
+            - text: K
+          - button "Passer en mode sombre" [ref=e85]:
+            - img
+          - button "Connexion" [ref=e125]
+    - main [ref=e22]:
+      - generic [ref=e126]:
+        - img
+        - generic [ref=e128]:
+          - generic [ref=e129]:
+            - img [ref=e131]
+            - heading "Connexion" [level=1] [ref=e132]
+            - paragraph [ref=e133]: "> authentification requise"
+          - generic [ref=e134]:
+            - generic [ref=e135]:
+              - text: Email
+              - generic [ref=e136]:
+                - img
+                - textbox "Email" [ref=e137]:
+                  - /placeholder: vous@exemple.com
+                  - text: demo-visuel@example.com
+            - generic [ref=e138]:
+              - text: Mot de passe
+              - generic [ref=e139]:
+                - img
+                - textbox "Mot de passe" [ref=e140]:
+                  - /placeholder: 8 caracteres minimum
+                  - text: DemoVisuel2026!
+            - button "Se connecter" [ref=e141] [cursor=pointer]: Se connecter
+            - paragraph [ref=e147]:
+              - text: Pas encore de compte ?
+              - button "S'inscrire" [ref=e148]
+    - contentinfo [ref=e27]:
+      - generic [ref=e28]:
+        - generic [ref=e29]:
+          - img [ref=e30]
+          - generic [ref=e31]: GreenTech Intelligence
+          - generic [ref=e32]: v1.0.0
+        - paragraph [ref=e33]: "> plateforme d'analyse Green IT - projet chef d'oeuvre - par KaRn1zC"
+  - region "Notifications alt+T"

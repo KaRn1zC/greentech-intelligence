@@ -1,0 +1,177 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "GreenTech Intelligence" [ref=e6] [cursor=pointer]:
+          - /url: /
+          - img [ref=e7]
+          - generic [ref=e8]: GreenTech Intelligence
+        - navigation [ref=e9]:
+          - link "Dashboard" [ref=e10] [cursor=pointer]:
+            - /url: /
+        - generic [ref=e11]:
+          - status "API" [ref=e12]:
+            - generic [ref=e16]: API
+          - generic [ref=e17]:
+            - img [ref=e18]
+            - text: K
+          - button "Passer en mode clair" [ref=e20]:
+            - img
+          - generic [ref=e53]:
+            - generic "demo-visuel@example.com" [ref=e54]:
+              - img [ref=e55]
+              - text: demo-visuel@example.com
+            - button "Se deconnecter" [ref=e58]:
+              - img
+              - generic [ref=e59]: Deconnexion
+    - main [ref=e22]:
+      - generic [ref=e60]:
+        - generic [ref=e61]:
+          - img:
+            - img
+          - generic [ref=e62]:
+            - generic [ref=e63]:
+              - paragraph [ref=e64]: "> dashboard"
+              - heading "Intelligence Green IT" [level=1] [ref=e65]
+              - generic [ref=e67]:
+                - text: Scanning sustainability signals across the
+                - generic [ref=e68]: "|"
+            - generic [ref=e69]:
+              - img [ref=e71]
+              - text: live
+        - generic [ref=e73]:
+          - generic [ref=e75]:
+            - generic [ref=e76]:
+              - paragraph [ref=e77]: Articles analyses
+              - paragraph [ref=e78]:
+                - generic [ref=e79]: 5,873
+            - img [ref=e81]
+          - generic [ref=e85]:
+            - generic [ref=e86]:
+              - paragraph [ref=e87]: Green IT confirmes
+              - paragraph [ref=e88]:
+                - generic [ref=e89]: "15"
+            - img [ref=e91]
+          - generic [ref=e95]:
+            - generic [ref=e96]:
+              - paragraph [ref=e97]: Non Green IT
+              - paragraph [ref=e98]:
+                - generic [ref=e99]: 5,857
+            - img [ref=e101]
+          - generic [ref=e105]:
+            - generic [ref=e106]:
+              - paragraph [ref=e107]: Ratio Green IT
+              - paragraph [ref=e108]:
+                - generic [ref=e109]: "0.2"
+                - text: "%"
+            - img [ref=e111]
+        - generic [ref=e114]:
+          - generic [ref=e116]:
+            - heading "Analyser un article" [level=2] [ref=e117]:
+              - img [ref=e118]
+              - text: Analyser un article
+            - paragraph [ref=e121]: Collez une URL, du texte (50 car. min.) ou deposez un fichier.
+          - generic [ref=e122]:
+            - generic [ref=e123]: URL ou texte de l'article a analyser
+            - textbox "URL ou texte de l'article a analyser" [ref=e124]:
+              - /placeholder: https://... ou collez le texte de l'article
+            - button "Choisir un fichier a analyser" [ref=e125]:
+              - img
+            - button "Lancer l'analyse" [disabled]:
+              - img
+          - paragraph [ref=e126]: Saisissez une URL commencant par http, du texte d'au moins 50 caracteres, ou deposez un fichier (.txt, .md, .pdf, .docx, .html)
+        - generic [ref=e127]:
+          - generic [ref=e128]:
+            - generic [ref=e129]:
+              - heading "Repartition" [level=2] [ref=e130]:
+                - img [ref=e131]
+                - text: Repartition
+              - paragraph [ref=e133]: 6157 articles
+            - generic [ref=e134]:
+              - application [ref=e136]
+              - generic [ref=e149]:
+                - generic [ref=e150]:
+                  - generic [ref=e152]: Green IT
+                  - generic [ref=e153]: "16"
+                - generic [ref=e154]:
+                  - generic [ref=e156]: Non Green IT
+                  - generic [ref=e157]: "6140"
+                - generic [ref=e158]:
+                  - generic [ref=e160]: En attente
+                  - generic [ref=e161]: "1"
+                - paragraph [ref=e162]: 0.3% Green IT
+          - generic [ref=e163]:
+            - generic [ref=e164]:
+              - heading "Derniers articles" [level=2] [ref=e165]:
+                - img [ref=e166]
+                - text: Derniers articles
+              - paragraph [ref=e169]: 8 resultats
+            - list [ref=e170]:
+              - listitem [ref=e171]:
+                - 'link "Data Drain: The Land and Water Impacts of the AI Boom - Lincoln Institute of Land Policy source inconnue en attente" [ref=e172] [cursor=pointer]':
+                  - /url: /articles/58426
+                  - generic [ref=e173]:
+                    - paragraph [ref=e174]: "Data Drain: The Land and Water Impacts of the AI Boom - Lincoln Institute of Land Policy"
+                    - paragraph [ref=e175]: source inconnue
+                  - generic [ref=e176]: en attente
+              - listitem [ref=e177]:
+                - 'link "2027 Toyota Land Cruiser: Rugged Where It Counts, Premium Where It Matters NewsData.io - 12/04/2026 Non Green IT" [ref=e178] [cursor=pointer]':
+                  - /url: /articles/55800
+                  - generic [ref=e179]:
+                    - paragraph [ref=e180]: "2027 Toyota Land Cruiser: Rugged Where It Counts, Premium Where It Matters"
+                    - paragraph [ref=e181]: NewsData.io - 12/04/2026
+                  - generic [ref=e182]: Non Green IT
+              - listitem [ref=e183]:
+                - link "AP Sports SummaryBrief at 3:50 p.m. EDT NewsData.io - 12/04/2026 Non Green IT" [ref=e184] [cursor=pointer]:
+                  - /url: /articles/52071
+                  - generic [ref=e185]:
+                    - paragraph [ref=e186]: AP Sports SummaryBrief at 3:50 p.m. EDT
+                    - paragraph [ref=e187]: NewsData.io - 12/04/2026
+                  - generic [ref=e188]: Non Green IT
+              - listitem [ref=e189]:
+                - link "What That Purple Dot On Your MacBook Screen Is Trying To Tell You NewsData.io - 12/04/2026 Non Green IT" [ref=e190] [cursor=pointer]:
+                  - /url: /articles/52046
+                  - generic [ref=e191]:
+                    - paragraph [ref=e192]: What That Purple Dot On Your MacBook Screen Is Trying To Tell You
+                    - paragraph [ref=e193]: NewsData.io - 12/04/2026
+                  - generic [ref=e194]: Non Green IT
+              - listitem [ref=e195]:
+                - link "What That Purple Dot On Your MacBook Screen Is Trying To Tell You NewsData.io - 12/04/2026 Non Green IT" [ref=e196] [cursor=pointer]:
+                  - /url: /articles/52019
+                  - generic [ref=e197]:
+                    - paragraph [ref=e198]: What That Purple Dot On Your MacBook Screen Is Trying To Tell You
+                    - paragraph [ref=e199]: NewsData.io - 12/04/2026
+                  - generic [ref=e200]: Non Green IT
+              - listitem [ref=e201]:
+                - 'link "''A Deere piece of history'': rare tractor a jewel in Wimmera farmer''s shed NewsData.io - 12/04/2026 Non Green IT" [ref=e202] [cursor=pointer]':
+                  - /url: /articles/49791
+                  - generic [ref=e203]:
+                    - paragraph [ref=e204]: "'A Deere piece of history': rare tractor a jewel in Wimmera farmer's shed"
+                    - paragraph [ref=e205]: NewsData.io - 12/04/2026
+                  - generic [ref=e206]: Non Green IT
+              - listitem [ref=e207]:
+                - 'link "WhatsApp encryption debate: Lawsuit, backdoor claims and expert pushback NewsData.io - 12/04/2026 Non Green IT" [ref=e208] [cursor=pointer]':
+                  - /url: /articles/49780
+                  - generic [ref=e209]:
+                    - paragraph [ref=e210]: "WhatsApp encryption debate: Lawsuit, backdoor claims and expert pushback"
+                    - paragraph [ref=e211]: NewsData.io - 12/04/2026
+                  - generic [ref=e212]: Non Green IT
+              - listitem [ref=e213]:
+                - link "Liberals Approve AI Regulation Banning Under-16s from Chatbots, Social Media NewsData.io - 12/04/2026 Non Green IT" [ref=e214] [cursor=pointer]:
+                  - /url: /articles/49744
+                  - generic [ref=e215]:
+                    - paragraph [ref=e216]: Liberals Approve AI Regulation Banning Under-16s from Chatbots, Social Media
+                    - paragraph [ref=e217]: NewsData.io - 12/04/2026
+                  - generic [ref=e218]: Non Green IT
+    - contentinfo [ref=e46]:
+      - generic [ref=e47]:
+        - generic [ref=e48]:
+          - img [ref=e49]
+          - generic [ref=e50]: GreenTech Intelligence
+          - generic [ref=e51]: v1.0.0
+        - paragraph [ref=e52]: "> plateforme d'analyse Green IT - projet chef d'oeuvre - par KaRn1zC"
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=e219]:
+        - img [ref=e221]
+        - generic [ref=e224]: Connexion reussie

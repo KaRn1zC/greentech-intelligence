@@ -7,10 +7,21 @@
 
 ## Architecture actuelle
 
-- **Modele en production** : Llama 3.2 3B + LoRA (adapter_model.safetensors, 18 Mo)
-- **Emplacement** : `models/production/`
+- **Modele en production** : Qwen3.5-4B + LoRA (adapter_model.safetensors, ~80 Mo)
+- **Base model** : `Qwen/Qwen3.5-4B` (Apache-2.0, 27 fevrier 2026), multilingue natif
+  (FR/EN/DE/ES/ZH), sortie HF la plus recente disponible au 14 avril 2026.
+- **Dossier d'entrainement** : `models/challenger-qwen35/`
+- **Emplacement production** : `models/production/`
 - **Versioning** : DVC (remote MinIO s3://models/dvc)
-- **Chargement** : Lazy-loading au premier appel d'inference via `get_classifier()`
+- **Chargement** : Lazy-loading au premier appel d'inference via `get_classifier()`.
+  La detection du type de modele est automatique via `adapter_config.json` :
+  `Qwen3.5` => `ChallengerQwen35Classifier`, Llama/Qwen2.5 => `ChallengerClassifier`.
+
+> **Migration** : le modele de production est passe de `meta-llama/Llama-3.2-3B`
+> a `Qwen/Qwen3.5-4B` le 14 avril 2026. Motifs : licence Apache-2.0 (contre
+> gated access Llama), multilinguisme natif pour traiter les articles scrapes
+> depuis des sources non anglophones, et alignement avec la famille Qwen deja
+> utilisee pour le LLM judge et les summarizers.
 
 ---
 
@@ -56,10 +67,21 @@ uv run python scripts/retrain_pipeline.py baseline
 ```
 
 Chaque run produit :
-- `models/challenger-llama/` : adapter LoRA entraine
+- `models/challenger-qwen35/` : adapter LoRA entraine (Qwen3.5-4B)
 - `models/cv_report.json` (uniquement en mode train-cv) : metriques par fold + agregees
-- `models/baseline_metrics.json` : reference permanente du modele brut
+- `models/baseline_metrics.json` : reference permanente du modele brut (Qwen3.5-4B zero-shot)
 - MLflow : tracking des runs (http://localhost:5000)
+
+Pour evaluer la baseline de maniere isolee (avec un run MLflow dedie et
+un log CO2 separe), utiliser le script specialise :
+
+```bash
+# Evaluation baseline Qwen3.5-4B avec tracking MLflow
+uv run python scripts/benchmark_baseline.py
+
+# Baseline d'un autre modele (pour comparer plusieurs architectures)
+uv run python scripts/benchmark_baseline.py Qwen/Qwen3.5-9B
+```
 
 Verifier dans le rapport ou MLflow :
 - **MCC** (Matthews Correlation Coefficient) : **critere principal**, robuste au

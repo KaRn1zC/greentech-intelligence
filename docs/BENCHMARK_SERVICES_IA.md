@@ -409,7 +409,7 @@ de retenir celui disponible sur les providers actifs de notre compte :
 ```
 Article analyse
     |
-    +-- Classification Green IT (Llama 3.2 3B + LoRA local, bloc E3)
+    +-- Classification Green IT (Qwen3.5-4B + LoRA local, bloc E3)
     |       |
     |       +-- est_green_it = True ?
     |               |

@@ -3,7 +3,8 @@
 Ce module constitue le **second etage** du pipeline de classification hybride.
 Il prend en entree les articles marques `CANDIDATE` par le pre-filtre mots-cles
 (`scripts/auto_annotate_dataset.py`) et les soumet a un LLM instructif
-(`Qwen/Qwen2.5-7B-Instruct` via l'API Hugging Face Serverless) pour obtenir
+(`Qwen/Qwen3-4B-Instruct-2507` via l'API Hugging Face Serverless, avec
+fallback local Qwen2.5-3B/1.5B si le quota est epuise) pour obtenir
 une decision binaire finale.
 
 Pourquoi un LLM en seconde passe
@@ -49,8 +50,9 @@ from greentech.ai.services.llm_dispatcher import (
 from greentech.config import get_settings
 
 # === Bornes d'entree ===
-# Qwen2.5-7B-Instruct supporte 32k tokens mais on tronque a 3000 caracteres
-# pour controler la latence et la consommation du fair-use HF.
+# Qwen3-4B-Instruct-2507 supporte 262k tokens de contexte mais on tronque a
+# 3000 caracteres pour controler la latence et la consommation du quota HF
+# (et rester aligne avec ce que le fallback local Qwen2.5-3B digere sans peine).
 MAX_INPUT_CHARS = 3000
 MIN_INPUT_CHARS = 50
 

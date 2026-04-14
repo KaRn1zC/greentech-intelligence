@@ -1,12 +1,17 @@
 """Pipeline complet de re-collecte, re-annotation et re-entrainement.
 
 Orchestre toutes les etapes pour agrandir le corpus, re-annoter le dataset,
-re-entrainer le modele Llama 3.2 3B + LoRA, benchmarker la nouvelle version
+re-entrainer le modele Qwen3.5-4B + LoRA, benchmarker la nouvelle version
 contre la meilleure version historique et le modele de base, puis promouvoir
 automatiquement en production UNIQUEMENT si la nouvelle version est meilleure.
 
 Le pipeline garantit que l'application utilise toujours la meilleure version
 entrainee du modele, jamais une regression.
+
+Le modele cible est defini dans ``settings.huggingface_model_trainer_base``
+(par defaut ``Qwen/Qwen3.5-4B``, Apache-2.0, multilingue natif). L'ancien
+modele ``meta-llama/Llama-3.2-3B`` reste disponible en tant que challenger
+historique via ``greentech.ai.models.training challenger-llama``.
 
 Usage:
     # Pipeline complet recommande
@@ -18,7 +23,7 @@ Usage:
     uv run python scripts/retrain_pipeline.py classify       # Etage 2 : LLM judge sur les candidats
     uv run python scripts/retrain_pipeline.py summarize      # Resumes Green IT confirmes uniquement
     uv run python scripts/retrain_pipeline.py export-golden  # Regenere golden_dataset.csv depuis la DB
-    uv run python scripts/retrain_pipeline.py baseline       # Metriques du modele brut
+    uv run python scripts/retrain_pipeline.py baseline       # Metriques Qwen3.5-4B sans fine-tuning
     uv run python scripts/retrain_pipeline.py train          # Entrainement rapide (split 80/20)
     uv run python scripts/retrain_pipeline.py train-cv       # Entrainement robuste (K-fold stratifie K=5)
     uv run python scripts/retrain_pipeline.py benchmark      # Benchmark nouveau vs production vs baseline
@@ -36,7 +41,7 @@ Notes:
     - `train-cv` : entrainement K-fold (~5x plus long) mais evaluation robuste sur
                    les 22 Green IT grace a la rotation train/test et a la moyenne
                    sur les folds. Recommande pour figer une version du modele.
-    - `baseline` : evalue Llama brut sur l'integralite du dataset (5808 articles).
+    - `baseline` : evalue Qwen3.5-4B brut sur l'integralite du dataset (5808 articles).
                    Pas de data leakage car le modele n'a rien appris.
 """
 
@@ -44,12 +49,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import IO
 
 from loguru import logger
 
@@ -60,7 +68,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 MODELS_DIR = BASE_DIR / "models"
 PRODUCTION_DIR = MODELS_DIR / "production"
 VERSIONS_DIR = MODELS_DIR / "versions"
-LLAMA_TRAIN_DIR = MODELS_DIR / "challenger-llama"
+# Dossier du modele actuellement entraine par le pipeline. Qwen3.5-4B + LoRA
+# remplace l'ancien Llama 3.2 3B + LoRA comme base d'entrainement par defaut.
+# L'ancien dossier `challenger-llama` reste accessible pour les runs legacy
+# lances via `uv run python -m greentech.ai.models.training challenger-llama`.
+TRAIN_DIR = MODELS_DIR / "challenger-qwen35"
+# Identifiant du modele dans le registre d'entrainement (`training.py`).
+TRAIN_MODEL_TYPE = "challenger-qwen35"
 
 # Fichiers de reference pour les metriques
 BEST_METRICS_FILE = MODELS_DIR / "best_metrics.json"
@@ -116,41 +130,200 @@ def _max_mcc_std(n_green: int | None) -> float:
 # UTILITAIRES
 # =============================================================================
 
+# Regex detectant une ligne deja formatee par loguru (le sous-process ecrit
+# deja dans le meme fichier de log via son propre handler, donc inutile de la
+# re-injecter : on aurait des doublons).
+# Format attendu : "2026-04-15 00:26:58 | WARNING  | module:function:line | ..."
+_LOGURU_LINE_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \| [A-Z]+\s+\|"
+)
 
-def _run_module(module: str, *args: str) -> bool:
-    """Execute un module Python via uv run.
+# Regex detectant les warnings Python standards (`warnings.warn` via stderr).
+# Ces lignes ne passent pas par loguru et ne sont donc PAS dans le fichier de
+# log sans capture explicite. Exemples :
+#   "C:\path\file.py:42: DeprecationWarning: torch_dtype is deprecated, ..."
+#   "UserWarning: ..."
+_PYTHON_WARNING_RE = re.compile(
+    r"\b(DeprecationWarning|FutureWarning|UserWarning|PendingDeprecationWarning"
+    r"|RuntimeWarning|SyntaxWarning|ImportWarning|ResourceWarning|BytesWarning"
+    r"|UnicodeWarning)\b"
+)
+
+# Regex detectant le debut d'une traceback Python sur stderr. On elève le
+# niveau de log a ERROR pour que ces exceptions soient visibles dans Grafana.
+_TRACEBACK_START_RE = re.compile(r"^Traceback \(most recent call last\):")
+
+
+def _forward_stream(
+    stream: IO[str],
+    *,
+    source_label: str,
+    is_stderr: bool,
+    console_stream: IO[str],
+) -> None:
+    """Relit un stream ligne par ligne et route vers console + loguru.
+
+    Tourne dans un thread dedie : garde le flux parent-console en temps reel
+    (UX preservee, pas de buffering qui cache la progression des scripts
+    longs) tout en persistant les lignes critiques (warnings Python,
+    tracebacks) dans le fichier de log via loguru parent.
 
     Args:
-        module: Chemin du module Python.
-        *args: Arguments supplementaires.
+        stream: Flux texte de Popen (stdout ou stderr du sous-process).
+        source_label: Identifiant du sous-process (ex. ``"module:training"``
+            ou ``"script:retrain_pipeline"``) ajoute aux extras loguru.
+        is_stderr: True si le flux est stderr (impacte la detection du niveau
+            et la redirection console).
+        console_stream: Flux console parent ou republier la ligne telle
+            quelle (``sys.stdout`` ou ``sys.stderr``).
+    """
+    traceback_active = False
+    for raw_line in stream:
+        line = raw_line.rstrip("\n")
+        # Republier tel quel sur la console parent pour preserver l'UX temps
+        # reel (l'utilisateur continue de voir la progression des scripts).
+        console_stream.write(raw_line)
+        console_stream.flush()
+
+        if not line.strip():
+            traceback_active = False
+            continue
+
+        # Les lignes deja formatees par loguru sont ecrites dans le fichier
+        # de log commun par le sous-process lui-meme : ne pas les republier
+        # depuis le parent (doublons garantis).
+        if _LOGURU_LINE_RE.match(line):
+            traceback_active = False
+            continue
+
+        level = "DEBUG"
+        if is_stderr:
+            if _TRACEBACK_START_RE.match(line) or traceback_active:
+                level = "ERROR"
+                traceback_active = True
+            elif _PYTHON_WARNING_RE.search(line):
+                level = "WARNING"
+            else:
+                # stderr generique (messages de torch, scrapy, spark, etc.) :
+                # en INFO pour avoir une trace sans polluer les WARNINGs.
+                level = "INFO"
+        else:
+            # stdout non-loguru : stats de progression, prints explicites, ...
+            level = "INFO"
+
+        logger.opt(depth=1).bind(subprocess=source_label).log(level, line)
+
+
+def _stream_subprocess(cmd: list[str], source_label: str) -> int:
+    """Lance un sous-process et streame stdout/stderr vers console + loguru.
+
+    Remplace ``subprocess.run(..., capture_output=False)`` qui laissait
+    echapper les warnings Python hors de notre systeme de logs. Avec cette
+    version, tout ce qui sort sur stderr (y compris ``DeprecationWarning``
+    emis par ``warnings.warn``) est traduit en entree loguru et persiste
+    dans ``logs/greentech_<date>.log``.
+
+    Args:
+        cmd: Commande a executer (liste d'arguments, pas de shell).
+        source_label: Identifiant court du sous-process affiche dans les
+            logs parent (ex. ``"module:training"``, ``"script:classify"``).
 
     Returns:
-        True si l'execution a reussi.
+        Code de retour du sous-process (0 = succes).
+    """
+    process = subprocess.Popen(
+        cmd,
+        cwd=str(BASE_DIR),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,  # line-buffered pour un streaming temps reel
+    )
+
+    # Threads daemon : si le parent est tue, ils s'arretent sans bloquer.
+    # Lire stdout et stderr en parallele evite le deadlock classique sur PIPE
+    # plein quand l'un des flux est lent.
+    assert process.stdout is not None
+    assert process.stderr is not None
+    stdout_thread = threading.Thread(
+        target=_forward_stream,
+        kwargs={
+            "stream": process.stdout,
+            "source_label": source_label,
+            "is_stderr": False,
+            "console_stream": sys.stdout,
+        },
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_forward_stream,
+        kwargs={
+            "stream": process.stderr,
+            "source_label": source_label,
+            "is_stderr": True,
+            "console_stream": sys.stderr,
+        },
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+
+    return_code = process.wait()
+    # Attendre la fin des threads de lecture pour ne pas perdre les dernieres
+    # lignes bufferisees (Popen.wait() rend la main avant que les PIPE soient
+    # completement drains).
+    stdout_thread.join()
+    stderr_thread.join()
+    return return_code
+
+
+def _run_module(module: str, *args: str) -> bool:
+    """Execute un module Python via ``uv run``.
+
+    La sortie stdout/stderr du sous-process est streamee en temps reel vers
+    la console parent ET vers le fichier loguru (warnings Python, tracebacks
+    inclus), ce qui permet de detecter les DeprecationWarning/FutureWarning
+    dans les analyses de logs a posteriori.
+
+    Args:
+        module: Chemin du module Python a executer (ex. ``greentech.ai.models.training``).
+        *args: Arguments supplementaires passes au module.
+
+    Returns:
+        True si l'execution a reussi (return code == 0).
     """
     cmd = ["uv", "run", "python", "-m", module, *args]
     logger.info(f"Execution : {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=str(BASE_DIR), capture_output=False)
-    if result.returncode != 0:
-        logger.error(f"Echec de {module} (code {result.returncode})")
+    return_code = _stream_subprocess(cmd, source_label=f"module:{module}")
+    if return_code != 0:
+        logger.error(f"Echec de {module} (code {return_code})")
         return False
     return True
 
 
 def _run_script(script: str, *args: str) -> bool:
-    """Execute un script Python via uv run.
+    """Execute un script Python via ``uv run``.
+
+    Meme comportement de capture que :func:`_run_module` : les warnings et
+    erreurs du sous-process sont repris par loguru parent et persistes dans
+    le fichier de log (ce qui permet l'analyse post-mortem de tous les
+    DeprecationWarning / tracebacks emis sur stderr).
 
     Args:
-        script: Chemin relatif du script.
-        *args: Arguments supplementaires.
+        script: Chemin relatif du script depuis la racine du projet.
+        *args: Arguments supplementaires passes au script.
 
     Returns:
-        True si l'execution a reussi.
+        True si l'execution a reussi (return code == 0).
     """
     cmd = ["uv", "run", "python", str(BASE_DIR / script), *args]
     logger.info(f"Execution : {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=str(BASE_DIR), capture_output=False)
-    if result.returncode != 0:
-        logger.error(f"Echec de {script} (code {result.returncode})")
+    script_name = Path(script).stem
+    return_code = _stream_subprocess(cmd, source_label=f"script:{script_name}")
+    if return_code != 0:
+        logger.error(f"Echec de {script} (code {return_code})")
         return False
     return True
 
@@ -494,11 +667,11 @@ def step_archive_current_production() -> str | None:
 
 
 def step_train() -> bool:
-    """Re-entraine Llama 3.2 3B + LoRA sur le dataset courant (split 80/20)."""
+    """Re-entraine Qwen3.5-4B + LoRA sur le dataset courant (split 80/20)."""
     logger.info("=" * 70)
-    logger.info("  RE-ENTRAINEMENT LLAMA 3.2 3B + LoRA (split 80/20)")
+    logger.info("  RE-ENTRAINEMENT QWEN3.5-4B + LoRA (split 80/20)")
     logger.info("=" * 70)
-    return _run_module("greentech.ai.models.training", "challenger-llama")
+    return _run_module("greentech.ai.models.training", TRAIN_MODEL_TYPE)
 
 
 # Fichier ou stocker le rapport K-fold complet (folds + moyennes + metriques globales)
@@ -510,14 +683,14 @@ async def step_train_cv(
     random_state: int = 42,
     train_final: bool = True,
 ) -> dict | None:
-    """Entraine Llama 3.2 3B + LoRA via K-fold stratifie (K=5 par defaut).
+    """Entraine Qwen3.5-4B + LoRA via K-fold stratifie (K=5 par defaut).
 
     Chaque fold est entraine avec oversampling de la classe minoritaire, puis
     evalue sur le test du fold (sans oversampling). Les metriques agregees
     (moyenne + ecart-type sur K folds) servent de reference pour la promotion.
 
     Un modele final est re-entraine sur l'integralite des donnees et sauvegarde
-    dans `models/challenger-llama/`, pret pour la promotion en production si
+    dans `models/challenger-qwen35/`, pret pour la promotion en production si
     les criteres sont satisfaits.
 
     Args:
@@ -531,12 +704,12 @@ async def step_train_cv(
     from greentech.ai.models.training import train_challenger_with_cv
 
     logger.info("=" * 70)
-    logger.info(f"  RE-ENTRAINEMENT LLAMA 3.2 3B + LoRA (K-fold K={n_splits})")
+    logger.info(f"  RE-ENTRAINEMENT QWEN3.5-4B + LoRA (K-fold K={n_splits})")
     logger.info("=" * 70)
 
     try:
         rapport = await train_challenger_with_cv(
-            model_type="challenger-llama",
+            model_type=TRAIN_MODEL_TYPE,
             n_splits=n_splits,
             random_state=random_state,
             train_final=train_final,
@@ -561,7 +734,7 @@ def _is_cv_report_fresh() -> bool:
     """
     if not CV_REPORT_FILE.exists():
         return False
-    adapter_file = LLAMA_TRAIN_DIR / "adapter_config.json"
+    adapter_file = TRAIN_DIR / "adapter_config.json"
     if not adapter_file.exists():
         return False
     return CV_REPORT_FILE.stat().st_mtime >= adapter_file.stat().st_mtime - 60
@@ -635,97 +808,85 @@ def _log_cv_report(rapport: dict) -> None:
 async def step_baseline(force: bool = False) -> dict[str, float | int]:
     """Calcule les metriques du modele de base SANS fine-tuning (reference permanente).
 
+    Delegue au module `greentech.ai.models.baseline` qui factorise la logique
+    de chargement + inference + calcul de metriques pour tout modele
+    Hugging Face compatible `AutoModelForSequenceClassification`. Par defaut,
+    evalue `Qwen/Qwen3.5-4B` defini dans ``settings.huggingface_model_baseline``.
+
+    La baseline est recalculee si :
+    - Aucune baseline n'a ete sauvegardee, OU
+    - Le format de la baseline existante est obsolete (ancien split 20% ou
+      metriques incompletes), OU
+    - ``force=True`` est explicitement passe, OU
+    - Le modele de la baseline existante differe du modele configure (par
+      exemple apres une migration Llama -> Qwen3.5-4B).
+
     Args:
         force: Si True, recalcule meme si une baseline existe deja.
 
     Returns:
-        Dictionnaire complet des metriques (F1, accuracy, precision, recall,
-        specificite, matrice de confusion, distribution des predictions).
+        Dictionnaire complet des metriques (MCC, F1, accuracy, precision,
+        recall, specificite, matrice de confusion, distribution des
+        predictions, latence moyenne).
     """
+    from greentech.ai.models.baseline import evaluate_baseline
+    from greentech.config import get_settings
+
+    settings = get_settings()
+    expected_model = settings.huggingface_model_baseline
+
     existing = _load_json(BASELINE_METRICS_FILE)
     required_keys = {"mcc", "specificite", "balanced_accuracy"}
-    # L'ancien format evaluait sur le test split 20% ; le nouveau format evalue
-    # sur l'integralite du dataset (aucun data leakage possible pour un modele
-    # non entraine, et la metrique est beaucoup plus stable).
     correct_scope = existing.get("evaluation_scope") == "full_dataset" if existing else False
+    correct_model = existing.get("model") == expected_model if existing else False
     legacy_format = bool(existing) and (
-        not required_keys.issubset(existing.get("metrics", {}).keys()) or not correct_scope
+        not required_keys.issubset(existing.get("metrics", {}).keys())
+        or not correct_scope
+        or not correct_model
     )
+
     if existing and not force and not legacy_format:
         logger.info(
-            f"Baseline deja calculee (MCC={existing['metrics'].get('mcc', 0.0):.4f}, "
+            f"Baseline deja calculee (model={existing['model']}, "
+            f"MCC={existing['metrics'].get('mcc', 0.0):.4f}, "
             f"F1={existing['metrics']['f1']:.4f}), reutilisation"
         )
         _log_detailed_metrics(existing["metrics"], "Baseline (rechargee)")
         return existing["metrics"]
     if legacy_format:
-        logger.info("Baseline en ancien format detectee, recalcul sur l'integralite du dataset")
-
-    import torch
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
-    from greentech.ai.models.training import load_full_dataset
-    from greentech.config import get_settings
+        logger.info(
+            "Baseline en ancien format ou modele different detecte "
+            f"(attendu : {expected_model}), recalcul complet"
+        )
 
     logger.info("=" * 70)
-    logger.info("  CALCUL BASELINE : Llama 3.2 3B SANS fine-tuning")
+    logger.info(f"  CALCUL BASELINE : {expected_model} SANS fine-tuning")
     logger.info("  Portee            : TOUT le dataset (aucun data leakage possible)")
     logger.info("=" * 70)
 
-    all_texts, all_labels = load_full_dataset()
-    hf_token = get_settings().huggingface_token or None
-    model_name = "meta-llama/Llama-3.2-3B"
+    result = evaluate_baseline(model_name=expected_model)
 
-    logger.info(f"Chargement de {model_name}...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name, token=hf_token)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_name,
-        num_labels=2,
-        dtype=torch.bfloat16,
-        token=hf_token,
+    _log_detailed_metrics(
+        dict(result.metrics),
+        f"Baseline : {result.model_name} (sans fine-tuning, dataset complet)",
     )
-    model.config.pad_token_id = tokenizer.pad_token_id
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model.to(device)
-    model.eval()
-
-    logger.info(f"Evaluation sur {len(all_texts)} articles...")
-    preds: list[int] = []
-    latencies: list[float] = []
-    for idx, text in enumerate(all_texts, 1):
-        if idx % 500 == 0:
-            logger.info(f"  Avancement : {idx}/{len(all_texts)} articles")
-        start = time.perf_counter()
-        inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512, padding=True)
-        inputs = {k: v.to(device) for k, v in inputs.items()}
-        with torch.no_grad():
-            outputs = model(**inputs)
-        preds.append(torch.softmax(outputs.logits, dim=-1).argmax(dim=-1).item())
-        latencies.append((time.perf_counter() - start) * 1000)
-
-    metrics = _compute_detailed_metrics(all_labels, preds, latencies)
-    _log_detailed_metrics(metrics, f"Baseline : {model_name} (sans fine-tuning, dataset complet)")
 
     data = {
-        "model": model_name,
+        "model": result.model_name,
         "date": datetime.now(UTC).isoformat(),
         "evaluation_scope": "full_dataset",
-        "n_articles": len(all_texts),
-        "metrics": metrics,
+        "n_articles": result.n_articles,
+        "duration_seconds": result.duration_seconds,
+        "metrics": dict(result.metrics),
     }
     BASELINE_METRICS_FILE.write_text(json.dumps(data, indent=2))
     logger.info(
-        f"Baseline sauvegardee : MCC={metrics['mcc']:.4f}, F1={metrics['f1']:.4f}, "
-        f"Recall={metrics['recall']:.4f} (n={len(all_texts)})"
+        f"Baseline sauvegardee : MCC={result.metrics['mcc']:.4f}, "
+        f"F1={result.metrics['f1']:.4f}, Recall={result.metrics['recall']:.4f} "
+        f"(n={result.n_articles})"
     )
 
-    del model
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    return metrics
+    return dict(result.metrics)
 
 
 # =============================================================================
@@ -737,17 +898,41 @@ async def _evaluate_new_model(
     test_texts: list[str],
     test_labels: list[int],
 ) -> dict[str, float | int]:
-    """Evalue le modele fraichement entraine sur le test set."""
+    """Evalue le modele fraichement entraine sur le test set.
+
+    Charge l'adaptateur LoRA depuis ``TRAIN_DIR`` (par defaut
+    ``models/challenger-qwen35/``) et execute l'inference. Si le dossier
+    contient un modele d'une autre famille (par exemple un ancien challenger
+    Llama), la sous-classe adequate est instanciee via l'`adapter_config.json`
+    pour reconstruire exactement le setup d'entrainement.
+    """
+    import json
+
     import torch
     from sklearn.metrics import classification_report
 
     from greentech.ai.models.classifier import TrainingConfig
-    from greentech.ai.models.training import ChallengerClassifier
-
-    classifier = ChallengerClassifier(
-        config=TrainingConfig(nom_modele="meta-llama/Llama-3.2-3B", output_dir=LLAMA_TRAIN_DIR),
+    from greentech.ai.models.training import (
+        ChallengerClassifier,
+        ChallengerQwen35Classifier,
     )
-    classifier.load(LLAMA_TRAIN_DIR)
+    from greentech.config import get_settings
+
+    adapter_file = TRAIN_DIR / "adapter_config.json"
+    if adapter_file.exists():
+        adapter_meta = json.loads(adapter_file.read_text())
+        base_model_name = adapter_meta.get("base_model_name_or_path") or get_settings().huggingface_model_trainer_base
+    else:
+        base_model_name = get_settings().huggingface_model_trainer_base
+
+    is_qwen35 = "qwen3.5" in base_model_name.lower() or "qwen3_5" in base_model_name.lower()
+    config = TrainingConfig(nom_modele=base_model_name, output_dir=TRAIN_DIR)
+    classifier = (
+        ChallengerQwen35Classifier(config=config)
+        if is_qwen35
+        else ChallengerClassifier(config=config)
+    )
+    classifier.load(TRAIN_DIR)
 
     preds: list[int] = []
     latencies: list[float] = []
@@ -962,8 +1147,8 @@ async def step_benchmark() -> dict | None:
     logger.info("  BENCHMARK : NOUVEAU vs MEILLEUR HISTORIQUE vs BASELINE")
     logger.info("=" * 70)
 
-    if not LLAMA_TRAIN_DIR.exists() or not (LLAMA_TRAIN_DIR / "adapter_config.json").exists():
-        logger.error(f"Modele entraine introuvable dans {LLAMA_TRAIN_DIR}")
+    if not TRAIN_DIR.exists() or not (TRAIN_DIR / "adapter_config.json").exists():
+        logger.error(f"Modele entraine introuvable dans {TRAIN_DIR}")
         return None
 
     # Si un rapport K-fold recent existe, on l'utilise en priorite (beaucoup plus fiable)
@@ -999,9 +1184,10 @@ async def step_benchmark() -> dict | None:
     logger.info("=" * 80)
 
     if baseline_ref:
+        baseline_model_name = baseline_ref.get("model", "modele de base")
         _log_detailed_metrics(
             baseline_ref["metrics"],
-            "Baseline (Llama 3.2 3B sans fine-tuning)",
+            f"Baseline ({baseline_model_name} sans fine-tuning)",
         )
         baseline_metrics = baseline_ref["metrics"]
         gain_f1 = new_metrics["f1"] - baseline_metrics["f1"]
@@ -1076,7 +1262,7 @@ async def step_auto_promote() -> bool:
             f.unlink()
 
     fichiers = []
-    for f in LLAMA_TRAIN_DIR.iterdir():
+    for f in TRAIN_DIR.iterdir():
         if f.is_file():
             shutil.copy2(f, PRODUCTION_DIR / f.name)
             fichiers.append(f.name)
@@ -1107,7 +1293,7 @@ def step_force_promote() -> bool:
     logger.info("  PROMOTION FORCEE")
     logger.info("=" * 70)
 
-    source = LLAMA_TRAIN_DIR
+    source = TRAIN_DIR
     if not source.exists() or not (source / "adapter_config.json").exists():
         logger.error(f"Modele introuvable dans {source}")
         return False

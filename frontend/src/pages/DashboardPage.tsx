@@ -212,8 +212,16 @@ function AnalyzeSection() {
     }, 2000)
   }
 
+  // Validation alignee sur les regles du backend (50 car. min. pour le texte
+  // brut, sinon URL ou fichier). On laisse le bouton accessible aux lecteurs
+  // d'ecran via aria-disabled, mais on bloque la soumission tant que la
+  // saisie est invalide pour eviter le 422 et son toast inutilement bruyant.
+  const trimmedInput = input.trim()
+  const isUrl = /^https?:\/\//i.test(trimmedInput)
+  const inputValid = !!file || isUrl || trimmedInput.length >= 50
+
   const handleSubmit = async () => {
-    if (!input.trim() && !file) return
+    if (!inputValid) return
     setLoading(true)
     setError("")
     setResult(null)
@@ -309,7 +317,7 @@ function AnalyzeSection() {
         </Button>
         <Button
           onClick={handleSubmit}
-          disabled={loading || (!input.trim() && !file)}
+          disabled={loading || !inputValid}
           aria-label="Lancer l'analyse"
           className="font-display font-medium"
         >

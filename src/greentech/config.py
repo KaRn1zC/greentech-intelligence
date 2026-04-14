@@ -58,31 +58,67 @@ class Settings(BaseSettings):
 
     # --- Hugging Face ---
     huggingface_token: str = ""
-    # Architecture mono-modele : un seul LLM instructif est utilise pour les
-    # deux types de resumes (general et aspects ecologiques). Cela garantit
-    # la coherence linguistique (tout en francais), la coherence qualitative
-    # (meme niveau de generation entre les 2 blocs) et simplifie l'infrastructure.
-    # `Qwen/Qwen2.5-7B-Instruct` est disponible via HF Inference Providers
-    # sans activation ni demande d'acces (licence Apache-2.0).
-    huggingface_model_summarizer: str = "Qwen/Qwen2.5-7B-Instruct"
-    # Le modele de resume ecologique pointe vers le meme modele : deux appels
-    # paralleles avec des prompts distincts (plutot qu'un seul appel JSON pour
-    # conserver une implementation simple et robuste aux erreurs individuelles).
-    huggingface_model_green_summarizer: str = "Qwen/Qwen2.5-7B-Instruct"
+    # Architecture mono-modele cote cloud : un seul LLM instructif est utilise
+    # pour les deux types de resumes (general et aspects ecologiques) ainsi
+    # que pour le LLM judge de classification Green IT. Cela garantit la
+    # coherence linguistique (tout en francais), la coherence qualitative et
+    # simplifie l'infrastructure (un seul endpoint a monitorer).
+    #
+    # `Qwen/Qwen3-4B-Instruct-2507` (licence Apache-2.0) est la generation
+    # Qwen3 la plus recente compatible avec les HF Inference Providers au
+    # 14 avril 2026. Choix du 4B plutot que 7B : meilleur equilibre qualite /
+    # empreinte (~8 Go FP16) et le 3B/1.5B ne sont pas servis par les
+    # providers actifs du compte. Le 4B sert donc de reference qualitative
+    # pour la chaine d'inference.
+    huggingface_model_summarizer: str = "Qwen/Qwen3-4B-Instruct-2507"
+    # Resume ecologique : meme modele que le general. Deux appels paralleles
+    # avec des prompts distincts plutot qu'un seul appel JSON pour rester
+    # robuste aux erreurs individuelles (si un prompt echoue, l'autre sort
+    # quand meme un resume).
+    huggingface_model_green_summarizer: str = "Qwen/Qwen3-4B-Instruct-2507"
     huggingface_model_classifier: str = "microsoft/deberta-v3-base"
-    # LLM judge pour l'etage 2 de classification Green IT : verifie les articles
-    # marques CANDIDATE par le pre-filtre mots-cles. Meme modele Qwen instructif
-    # que les summarizers pour limiter le nombre de services a maintenir.
-    huggingface_model_classifier_llm: str = "Qwen/Qwen2.5-7B-Instruct"
-    # Modele utilise en fallback local (GPU AMD ROCm) lorsque le quota mensuel
-    # HF Inference Providers est epuise (erreur HTTP 402). On conserve
-    # exactement le MEME modele que celui appele via HF (Qwen2.5-7B-Instruct)
-    # pour garantir une continuite qualitative totale entre les deux backends :
-    # les resumes et les verdicts de classification ont la meme qualite
-    # selon que l'on passe par le cloud ou par le GPU local. En FP16 sur la
-    # RX 7900 XTX (24 Go VRAM), le 7B occupe environ 14 Go, ce qui laisse
-    # une marge confortable pour le contexte et les activations.
-    huggingface_model_local_fallback: str = "Qwen/Qwen2.5-7B-Instruct"
+    # LLM judge pour l'etage 2 de classification Green IT : verifie les
+    # articles marques CANDIDATE par le pre-filtre mots-cles. Meme modele
+    # Qwen3-4B que les summarizers : un seul service HF a maintenir.
+    huggingface_model_classifier_llm: str = "Qwen/Qwen3-4B-Instruct-2507"
+    # === Classifieur entraine en interne (baseline + fine-tuning LoRA) ===
+    # `Qwen/Qwen3.5-4B` (licence Apache-2.0, 27 fevrier 2026) est la generation
+    # Qwen la plus recente disponible sur le Hub au 14 avril 2026. Choisi
+    # comme base du pipeline d'entrainement pour trois raisons :
+    #   1. Multilingue natif (FR/EN/DE/ES/ZH) : les articles techniques scrapes
+    #      depuis des sources non anglophones sont traites sans etape de
+    #      traduction, directement exploites par la classification.
+    #   2. Taille 4B : entrainement LoRA K-fold tenable sur RX 7900 XTX 24 Go
+    #      (~14 Go VRAM avec adaptateurs r=16 + AdamW, batch size 4-6).
+    #      Inference ~0.4 s/article en BF16 sur le meme GPU.
+    #   3. Chat template Qwen stable entre les generations : compatibilite
+    #      directe avec le reste du pipeline (summarizer, LLM judge).
+    # Ce modele remplace l'ancien `meta-llama/Llama-3.2-3B` gated (besoin de
+    # demande d'acces HF) comme base du challenger fine-tune sur le golden
+    # dataset et promu en production par `scripts/retrain_pipeline.py`.
+    huggingface_model_trainer_base: str = "Qwen/Qwen3.5-4B"
+    # Meme modele utilise comme baseline : evalue zero-shot (sans fine-tuning)
+    # sur l'integralite du dataset annote pour mesurer le gain apporte par
+    # l'entrainement LoRA. Avoir la meme base en baseline et challenger permet
+    # de comparer strictement l'impact du fine-tuning, sans bruit lie au
+    # changement d'architecture.
+    huggingface_model_baseline: str = "Qwen/Qwen3.5-4B"
+    # Longueur maximale des sequences tokenizees lors de l'entrainement. 1024
+    # tokens couvrent 95% des articles du corpus sans troncature destructive,
+    # tout en maintenant un cout memoire raisonnable pour le LoRA K-fold.
+    trainer_max_length: int = 1024
+    # Fallback local n1 : `Qwen/Qwen2.5-3B-Instruct`. Choisi comme repli
+    # principal parce qu'il est le plus proche en taille de parametres du
+    # Qwen3-4B cloud (~6 Go FP16 sur GPU), tout en restant chargeable sur
+    # des machines plus modestes que la RX 7900 XTX du developpeur. Quand
+    # le dispatcher rencontre une erreur HF (402 quota, 400 provider
+    # indisponible), il bascule sur ce modele pour la suite de la session.
+    huggingface_model_local_fallback: str = "Qwen/Qwen2.5-3B-Instruct"
+    # Fallback local n2 : `Qwen/Qwen2.5-1.5B-Instruct`. Auto-active par
+    # `llm_local.py` lorsque le preflight memoire ou un OOM indique que la
+    # machine ne peut pas heberger le 3B. Occupe ~3 Go en FP16 et reste
+    # compatible CPU / GPU integre.
+    huggingface_model_local_fallback_lightweight: str = "Qwen/Qwen2.5-1.5B-Instruct"
 
     # --- API ---
     api_host: str = "0.0.0.0"

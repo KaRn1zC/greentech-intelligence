@@ -7,11 +7,12 @@ deux types de résumés d'articles technologiques :
 - **Résumé orienté Green IT** (uniquement si l'article est classifié Green IT) :
   extraction des aspects écologiques / durabilité mis en avant par l'article.
 
-Les deux résumés utilisent le même LLM instructif (`Qwen/Qwen2.5-7B-Instruct`)
-via des prompts système distincts. Cette architecture mono-modèle simplifie
-l'infrastructure (un seul service SaaS), garantit une cohérence linguistique
-(les deux résumés sont en français) et maintient une qualité homogène entre
-le résumé général et le résumé spécialisé.
+Les deux résumés utilisent le même LLM instructif (`Qwen/Qwen3-4B-Instruct-2507`
+via l'API HF Serverless, avec fallback local Qwen2.5-3B/1.5B si le quota
+est épuisé) via des prompts système distincts. Cette architecture mono-modèle
+simplifie l'infrastructure (un seul service SaaS à monitorer), garantit une
+cohérence linguistique (les deux résumés sont en français) et maintient une
+qualité homogène entre le résumé général et le résumé spécialisé.
 
 Les résultats sont persistés dans `articles.resume` et `articles.resume_ecologique`.
 
@@ -37,9 +38,10 @@ from greentech.data.storage.models import Article
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-# Bornes du texte en entree. Qwen2.5-7B-Instruct supporte 32k tokens mais on
-# limite a 3000 caracteres pour garder une latence raisonnable et eviter les
-# coupures excessives dans les articles tres longs.
+# Bornes du texte en entree. Qwen3-4B-Instruct-2507 supporte 262k tokens de
+# contexte mais on limite a 3000 caracteres pour garder une latence raisonnable,
+# menager le quota HF et rester dans ce que le fallback local Qwen2.5-3B
+# digere sans effort.
 MAX_INPUT_CHARS = 3000
 MIN_INPUT_CHARS = 50
 
@@ -117,7 +119,7 @@ class SummaryResult:
 def _truncate_text(text: str) -> str:
     """Tronque le texte d'entrée à la taille maximale pour l'inférence.
 
-    Qwen2.5-7B-Instruct accepte 32k tokens mais on limite a 3000 caracteres
+    Qwen3-4B-Instruct-2507 accepte 262k tokens mais on limite a 3000 caracteres
     pour garder une latence raisonnable (~2s) et eviter les surcharges cote
     API. On coupe a la derniere phrase complete pour preserver le sens.
 

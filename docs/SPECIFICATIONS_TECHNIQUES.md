@@ -1803,7 +1803,7 @@ la decision finale :
 | `NULL` | Article jamais classifie |
 | `keyword_filter` | Decision du pre-filtre (NON_GREEN direct) OU candidat en attente (si `est_green_it IS NULL`) |
 | `keyword_filter+qwen_llm_judge` | Decision du LLM judge (etage 2) |
-| `meta-llama/Llama-3.2-3B+LoRA` | Decision du modele de production en inference temps reel via `/analyze` |
+| `Qwen/Qwen3.5-4B+LoRA` | Decision du modele de production en inference temps reel via `/analyze` |
 
 Le champ `articles.score_confiance` est renseigne par l'etage 2 et le
 modele de production (valeur nulle pour les NON_GREEN directs).

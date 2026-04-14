@@ -1,21 +1,32 @@
 """Scripts d'entraînement pour les modèles Champion et Challengers.
 
-Champion  : DeBERTa-v3-base (fine-tuning classique via Transformers Trainer)
-Challenger 1 : Qwen2.5-3B (fine-tuning LoRA via PEFT, 3085M params)
-Challenger 2 : Llama 3.2 3B (fine-tuning LoRA via PEFT, 3213M params, gated)
+Champion     : DeBERTa-v3-base (fine-tuning classique via Transformers Trainer)
+Challenger 1 : Qwen2.5-3B (fine-tuning LoRA via PEFT, 3085M params, legacy)
+Challenger 2 : Llama 3.2 3B (fine-tuning LoRA via PEFT, 3213M params, gated, legacy)
+Challenger 3 : Qwen3.5-4B (fine-tuning LoRA via PEFT, 4000M params, Apache-2.0)
 
-Les trois modèles sont entraînés sur le Golden Dataset annoté et comparés
-via MLflow (accuracy, F1, latence, émissions CO2).
+Le challenger Qwen3.5-4B est le modele d'entrainement cible depuis le
+14 avril 2026 : il remplace Llama 3.2 3B comme base du pipeline de
+production (`scripts/retrain_pipeline.py`). Avantages :
+  - Multilingue natif (FR/EN/DE/ES/ZH) pour traiter les articles scrapes
+    sans etape de traduction.
+  - Licence Apache-2.0 (pas de gated access).
+  - Architecture compatible avec la pile actuelle (chat template Qwen,
+    meme tokenizer family que Qwen2.5 deja en place pour le LLM judge).
+
+Tous les modeles sont entraines sur le Golden Dataset annote et compares
+via MLflow (accuracy, F1, MCC, latence, emissions CO2).
 
 Gere le desequilibre extreme du dataset (22 Green IT / 5786 Non Green IT)
 via oversampling de la minorite a ~20%.
 
 Usage:
-    uv run python -m greentech.ai.models.training                  # Tous les modeles
-    uv run python -m greentech.ai.models.training champion-deberta # Champion seul
-    uv run python -m greentech.ai.models.training challenger-qwen  # Challenger Qwen seul
-    uv run python -m greentech.ai.models.training challenger-llama # Challenger Llama seul
-    uv run python -m greentech.ai.models.training benchmark        # Benchmark comparatif
+    uv run python -m greentech.ai.models.training                    # Tous les modeles
+    uv run python -m greentech.ai.models.training champion-deberta   # Champion seul
+    uv run python -m greentech.ai.models.training challenger-qwen    # Qwen2.5-3B (legacy)
+    uv run python -m greentech.ai.models.training challenger-llama   # Llama 3.2 3B (legacy)
+    uv run python -m greentech.ai.models.training challenger-qwen35  # Qwen3.5-4B (recommande)
+    uv run python -m greentech.ai.models.training benchmark          # Benchmark comparatif
 
 """
 
@@ -53,7 +64,26 @@ LABEL2ID = {"Non Green IT": 0, "Green IT": 1}
 ID2LABEL = {v: k for k, v in LABEL2ID.items()}
 
 # Identifiants valides pour le CLI
-VALID_MODELS = ("champion-deberta", "challenger-qwen", "challenger-llama")
+VALID_MODELS = (
+    "champion-deberta",
+    "challenger-qwen",
+    "challenger-llama",
+    "challenger-qwen35",
+)
+
+# Modules cibles LoRA specifiques a l'architecture Qwen3.5 : on couvre
+# toutes les projections lineaires des blocs attention ET MLP. Couvrir le MLP
+# (gate/up/down) en plus de l'attention est critique pour Qwen dont le MLP
+# contient une part importante de la capacite representative.
+QWEN35_LORA_TARGET_MODULES: list[str] = [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+]
 
 
 def compute_metrics(eval_pred: tuple) -> dict[str, float]:
@@ -513,6 +543,53 @@ class ChallengerClassifier(BaseClassifier):
         logger.info(f"Challenger chargé depuis {model_path} sur {device}")
 
 
+class ChallengerQwen35Classifier(ChallengerClassifier):
+    """Classifieur Challenger base sur `Qwen/Qwen3.5-4B` + LoRA.
+
+    Specialise la classe generique `ChallengerClassifier` avec les choix
+    adaptes a Qwen3.5 :
+
+    - Base : `Qwen/Qwen3.5-4B` (~4B parametres, Apache-2.0, multilingue natif)
+    - Sortie : 2 classes (Green IT / Non Green IT) via tete de classification
+      sequence (SEQ_CLS), adaptateurs LoRA appliques aux projections
+      attention ET MLP.
+    - Hyperparametres par defaut calibres pour RX 7900 XTX 24 Go en BF16 :
+      batch 2 + gradient accumulation x4 = batch effectif 8, sequences
+      tronquees a la longueur definie dans `settings.trainer_max_length`.
+
+    Le modele final (LoRA adapter) pese ~80 Mo vs ~8 Go pour le base model :
+    c'est l'adaptateur seul qui est versionne dans `models/production/`
+    et pousse vers DVC/MinIO.
+    """
+
+    def __init__(
+        self,
+        config: TrainingConfig | None = None,
+        lora_config: LoraConfig | None = None,
+    ) -> None:
+        settings = get_settings()
+        if config is None:
+            config = TrainingConfig(
+                nom_modele=settings.huggingface_model_trainer_base,
+                output_dir=BASE_DIR / "models" / "challenger-qwen35",
+                epochs=3,
+                batch_size=2,
+                learning_rate=2e-4,
+                max_length=settings.trainer_max_length,
+            )
+        if lora_config is None:
+            # r=16 : bon compromis capacite / taille d'adaptateur (~80 Mo).
+            # alpha=32 (2*r) conforme aux conventions PEFT.
+            # Dropout 0.05 suffisant avec un dataset fortement oversample.
+            lora_config = LoraConfig(
+                r=16,
+                alpha=32,
+                dropout=0.05,
+                target_modules=list(QWEN35_LORA_TARGET_MODULES),
+            )
+        super().__init__(config, lora_config)
+
+
 def _oversample_minority(
     texts: list[str],
     labels: list[int],
@@ -730,7 +807,7 @@ def _build_classifier_and_config(
                 "lora_alpha": classifier.lora_config.alpha,
             },
         )
-    else:  # challenger-llama
+    elif model_type == "challenger-llama":
         classifier = ChallengerClassifier(
             config=TrainingConfig(
                 nom_modele="meta-llama/Llama-3.2-3B",
@@ -755,12 +832,36 @@ def _build_classifier_and_config(
                 "lora_alpha": classifier.lora_config.alpha,
             },
         )
+    else:  # challenger-qwen35
+        classifier = ChallengerQwen35Classifier()
+        exp_config = ExperimentConfig(
+            nom_experience="greentech-classification",
+            nom_run="challenger-qwen3.5-4b-lora",
+            tags={
+                "type": "challenger-qwen35",
+                "modele": "qwen3.5-4b",
+                "method": "lora",
+                "multilingue": "oui",
+            },
+            params={
+                "model": classifier.config.nom_modele,
+                "epochs": classifier.config.epochs,
+                "batch_size": classifier.config.batch_size,
+                "gradient_accumulation_steps": 4,
+                "learning_rate": classifier.config.learning_rate,
+                "max_length": classifier.config.max_length,
+                "method": "lora",
+                "lora_r": classifier.lora_config.r,
+                "lora_alpha": classifier.lora_config.alpha,
+                "lora_target_modules": ",".join(classifier.lora_config.target_modules or []),
+            },
+        )
 
     return classifier, exp_config
 
 
 async def train_challenger_with_cv(
-    model_type: str = "challenger-llama",
+    model_type: str = "challenger-qwen35",
     *,
     n_splits: int = 5,
     random_state: int = 42,
@@ -808,8 +909,12 @@ async def train_challenger_with_cv(
 
     from greentech.ai.mlops import prometheus_metrics as promm
 
-    if model_type not in ("challenger-llama", "challenger-qwen"):
-        msg = f"K-fold disponible uniquement pour les challengers, pas pour {model_type}"
+    valid_challengers = ("challenger-llama", "challenger-qwen", "challenger-qwen35")
+    if model_type not in valid_challengers:
+        msg = (
+            f"K-fold disponible uniquement pour les challengers "
+            f"({', '.join(valid_challengers)}), pas pour {model_type}"
+        )
         raise ValueError(msg)
 
     all_texts, all_labels = load_full_dataset()
@@ -1154,15 +1259,21 @@ async def benchmark_models() -> dict[str, dict[str, float]]:
         ),
         (
             "challenger_qwen",
-            "Challenger Qwen+LoRA",
+            "Challenger Qwen2.5-3B+LoRA",
             BASE_DIR / "models" / "challenger-qwen",
             "challenger-qwen",
         ),
         (
             "challenger_llama",
-            "Challenger Llama+LoRA",
+            "Challenger Llama 3.2 3B+LoRA",
             BASE_DIR / "models" / "challenger-llama",
             "challenger-llama",
+        ),
+        (
+            "challenger_qwen35",
+            "Challenger Qwen3.5-4B+LoRA",
+            BASE_DIR / "models" / "challenger-qwen35",
+            "challenger-qwen35",
         ),
     ]
 
