@@ -5,15 +5,16 @@ et fournit une interface simple pour classifier les articles en production.
 Met a jour la base PostgreSQL avec les resultats de classification.
 
 Le modele de production est une copie du vainqueur du benchmark
-(DeBERTa, Qwen2.5-3B+LoRA, Llama 3.2 3B+LoRA ou Qwen3.5-4B+LoRA) dans
+(DeBERTa, Qwen2.5-3B+LoRA, Llama 3.2 3B+LoRA ou Qwen3-4B+LoRA) dans
 `models/production/`. La detection du type de modele (complet vs adaptateur
 LoRA) est automatique via la presence du fichier ``adapter_config.json`` :
 
 - Si ``adapter_config.json`` est present, on lit ``base_model_name_or_path``
-  pour reconstruire le bon classifieur LoRA. Si le base model contient
-  ``Qwen3.5`` ou ``Qwen3_5`` on charge ``ChallengerQwen35Classifier`` (avec
-  hyperparametres et target_modules adaptes), sinon on utilise le
-  ``ChallengerClassifier`` generique pour Llama/Qwen2.5.
+  pour reconstruire le bon classifieur LoRA. Si le base model correspond a
+  un Qwen3-4B (presence de ``qwen3-4b`` ou ``qwen3_4b`` dans le nom), on
+  charge ``ChallengerQwen3Classifier`` (avec hyperparametres et
+  target_modules adaptes), sinon on utilise le ``ChallengerClassifier``
+  generique pour Llama/Qwen2.5.
 - Si le fichier est absent, on traite le dossier comme un modele complet
   (``ChampionClassifier``, typiquement DeBERTa).
 
@@ -83,7 +84,7 @@ async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
         # de ChallengerClassifier selon la famille du base model.
         from greentech.ai.models.training import (
             ChallengerClassifier,
-            ChallengerQwen35Classifier,
+            ChallengerQwen3Classifier,
         )
 
         with open(adapter_config_path) as f:
@@ -91,22 +92,21 @@ async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
 
         base_model_name = adapter_meta.get("base_model_name_or_path")
         if not base_model_name:
-            msg = (
-                f"adapter_config.json dans {path} ne contient pas "
-                "'base_model_name_or_path'"
-            )
+            msg = f"adapter_config.json dans {path} ne contient pas 'base_model_name_or_path'"
             raise ValueError(msg)
 
-        # Qwen3.5 a ses propres target_modules LoRA et une config optimisee
-        # (batch/seq length) : on selectionne la sous-classe dediee pour
-        # preserver la coherence entre entrainement et inference.
-        is_qwen35 = "qwen3.5" in base_model_name.lower() or "qwen3_5" in base_model_name.lower()
+        # Qwen3-4B a ses propres target_modules LoRA (attention-only) et une
+        # config optimisee (batch/seq length + gradient checkpointing) : on
+        # selectionne la sous-classe dediee pour preserver la coherence entre
+        # entrainement et inference. Le match est volontairement strict sur
+        # `qwen3-4b` / `qwen3_4b` pour ne pas capturer par erreur les anciens
+        # adaptateurs `Qwen3.5-4B` si jamais il en reste.
+        name_lower = base_model_name.lower()
+        is_qwen3 = "qwen3-4b" in name_lower or "qwen3_4b" in name_lower
         config = TrainingConfig(nom_modele=base_model_name)
-        candidate: BaseClassifier
-        if is_qwen35:
-            candidate = ChallengerQwen35Classifier(config)
-        else:
-            candidate = ChallengerClassifier(config)
+        candidate: BaseClassifier = (
+            ChallengerQwen3Classifier(config) if is_qwen3 else ChallengerClassifier(config)
+        )
         candidate.load(path)
         logger.info(f"Modèle LoRA ({base_model_name}) chargé depuis {path}")
     else:

@@ -101,8 +101,8 @@ CLASSIFIER_SYSTEM_PROMPT = (
     "l'empreinte carbone d'un modele est Green IT.\n\n"
     "Tu dois repondre UNIQUEMENT avec un objet JSON valide, sans texte avant "
     "ni apres, suivant ce schema exact :\n"
-    "{\"est_green_it\": true|false, \"confiance\": 0.0 a 1.0, "
-    "\"raison\": \"explication courte en francais\"}"
+    '{"est_green_it": true|false, "confiance": 0.0 a 1.0, '
+    '"raison": "explication courte en francais"}'
 )
 
 CLASSIFIER_USER_PROMPT_TEMPLATE = (
@@ -162,13 +162,9 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 # Les sequences valides sont \", \\, \/, \b, \f, \n, \r, \t, \uXXXX.
 _INVALID_ESCAPE_RE = re.compile(r'\\(?![\\"/bfnrtu])')
 # Extraction regex de secours quand json.loads refuse toutes les tentatives.
-_FALLBACK_GREEN_RE = re.compile(
-    r'"est[_ ]green[_ ]it"\s*:\s*(true|false)', re.IGNORECASE
-)
+_FALLBACK_GREEN_RE = re.compile(r'"est[_ ]green[_ ]it"\s*:\s*(true|false)', re.IGNORECASE)
 _FALLBACK_CONF_RE = re.compile(r'"confiance"\s*:\s*([\d.]+)')
-_FALLBACK_REASON_RE = re.compile(
-    r'"raison"\s*:\s*"((?:[^"\\]|\\.)*)"', re.DOTALL
-)
+_FALLBACK_REASON_RE = re.compile(r'"raison"\s*:\s*"((?:[^"\\]|\\.)*)"', re.DOTALL)
 
 
 def _fallback_regex_parse(text: str) -> dict[str, object] | None:
@@ -182,9 +178,7 @@ def _fallback_regex_parse(text: str) -> dict[str, object] | None:
     green_match = _FALLBACK_GREEN_RE.search(text)
     if not green_match:
         return None
-    result: dict[str, object] = {
-        "est_green_it": green_match.group(1).lower() == "true"
-    }
+    result: dict[str, object] = {"est_green_it": green_match.group(1).lower() == "true"}
     conf_match = _FALLBACK_CONF_RE.search(text)
     if conf_match:
         try:
@@ -229,8 +223,7 @@ def _parse_verdict(raw: str) -> tuple[bool | None, float, str]:
 
     if payload is None:
         raise ValueError(
-            f"Impossible de parser la reponse LLM meme en mode tolerant : "
-            f"{raw[:200]!r}"
+            f"Impossible de parser la reponse LLM meme en mode tolerant : {raw[:200]!r}"
         )
 
     est_green = payload.get("est_green_it")
@@ -347,9 +340,7 @@ async def verify_green_it_candidate(
                 )
                 await asyncio.sleep(wait)
             else:
-                logger.warning(
-                    f"Echec verification LLM apres {MAX_RETRIES} tentatives : {exc!r}"
-                )
+                logger.warning(f"Echec verification LLM apres {MAX_RETRIES} tentatives : {exc!r}")
 
     return ClassifierVerdict(
         est_green_it=None,
@@ -389,11 +380,7 @@ async def verify_green_it_batch(
         verdict = await verify_green_it_candidate(titre=titre, contenu=contenu)
         verdicts[id_article] = verdict
 
-        if (
-            index < len(articles)
-            and delay_seconds > 0
-            and not is_hf_quota_exhausted()
-        ):
+        if index < len(articles) and delay_seconds > 0 and not is_hf_quota_exhausted():
             await asyncio.sleep(delay_seconds)
 
     return verdicts

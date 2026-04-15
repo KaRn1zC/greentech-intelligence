@@ -1,7 +1,7 @@
 """Pipeline complet de re-collecte, re-annotation et re-entrainement.
 
 Orchestre toutes les etapes pour agrandir le corpus, re-annoter le dataset,
-re-entrainer le modele Qwen3.5-4B + LoRA, benchmarker la nouvelle version
+re-entrainer le modele Qwen3-4B + LoRA, benchmarker la nouvelle version
 contre la meilleure version historique et le modele de base, puis promouvoir
 automatiquement en production UNIQUEMENT si la nouvelle version est meilleure.
 
@@ -9,7 +9,7 @@ Le pipeline garantit que l'application utilise toujours la meilleure version
 entrainee du modele, jamais une regression.
 
 Le modele cible est defini dans ``settings.huggingface_model_trainer_base``
-(par defaut ``Qwen/Qwen3.5-4B``, Apache-2.0, multilingue natif). L'ancien
+(par defaut ``Qwen/Qwen3-4B``, Apache-2.0, multilingue natif). L'ancien
 modele ``meta-llama/Llama-3.2-3B`` reste disponible en tant que challenger
 historique via ``greentech.ai.models.training challenger-llama``.
 
@@ -23,7 +23,7 @@ Usage:
     uv run python scripts/retrain_pipeline.py classify       # Etage 2 : LLM judge sur les candidats
     uv run python scripts/retrain_pipeline.py summarize      # Resumes Green IT confirmes uniquement
     uv run python scripts/retrain_pipeline.py export-golden  # Regenere golden_dataset.csv depuis la DB
-    uv run python scripts/retrain_pipeline.py baseline       # Metriques Qwen3.5-4B sans fine-tuning
+    uv run python scripts/retrain_pipeline.py baseline       # Metriques Qwen3-4B sans fine-tuning
     uv run python scripts/retrain_pipeline.py train          # Entrainement rapide (split 80/20)
     uv run python scripts/retrain_pipeline.py train-cv       # Entrainement robuste (K-fold stratifie K=5)
     uv run python scripts/retrain_pipeline.py benchmark      # Benchmark nouveau vs production vs baseline
@@ -41,7 +41,7 @@ Notes:
     - `train-cv` : entrainement K-fold (~5x plus long) mais evaluation robuste sur
                    les 22 Green IT grace a la rotation train/test et a la moyenne
                    sur les folds. Recommande pour figer une version du modele.
-    - `baseline` : evalue Qwen3.5-4B brut sur l'integralite du dataset (5808 articles).
+    - `baseline` : evalue Qwen3-4B brut sur l'integralite du dataset (5808 articles).
                    Pas de data leakage car le modele n'a rien appris.
 """
 
@@ -68,13 +68,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 MODELS_DIR = BASE_DIR / "models"
 PRODUCTION_DIR = MODELS_DIR / "production"
 VERSIONS_DIR = MODELS_DIR / "versions"
-# Dossier du modele actuellement entraine par le pipeline. Qwen3.5-4B + LoRA
+# Dossier du modele actuellement entraine par le pipeline. Qwen3-4B + LoRA
 # remplace l'ancien Llama 3.2 3B + LoRA comme base d'entrainement par defaut.
 # L'ancien dossier `challenger-llama` reste accessible pour les runs legacy
 # lances via `uv run python -m greentech.ai.models.training challenger-llama`.
-TRAIN_DIR = MODELS_DIR / "challenger-qwen35"
+TRAIN_DIR = MODELS_DIR / "challenger-qwen3"
 # Identifiant du modele dans le registre d'entrainement (`training.py`).
-TRAIN_MODEL_TYPE = "challenger-qwen35"
+TRAIN_MODEL_TYPE = "challenger-qwen3"
 
 # Fichiers de reference pour les metriques
 BEST_METRICS_FILE = MODELS_DIR / "best_metrics.json"
@@ -621,7 +621,7 @@ def step_export_golden() -> bool:
 
     A executer apres la classification hybride pour produire un golden
     dataset qui reflete les decisions du LLM (et non plus du pre-filtre
-    seul). Ce CSV est la source de verite pour l'entrainement Llama.
+    seul). Ce CSV est la source de verite pour l'entrainement Qwen3-4B.
     """
     logger.info("=" * 70)
     logger.info("  EXPORT GOLDEN DATASET (DB -> CSV)")
@@ -667,9 +667,9 @@ def step_archive_current_production() -> str | None:
 
 
 def step_train() -> bool:
-    """Re-entraine Qwen3.5-4B + LoRA sur le dataset courant (split 80/20)."""
+    """Re-entraine Qwen3-4B + LoRA sur le dataset courant (split 80/20)."""
     logger.info("=" * 70)
-    logger.info("  RE-ENTRAINEMENT QWEN3.5-4B + LoRA (split 80/20)")
+    logger.info("  RE-ENTRAINEMENT QWEN3-4B + LoRA (split 80/20)")
     logger.info("=" * 70)
     return _run_module("greentech.ai.models.training", TRAIN_MODEL_TYPE)
 
@@ -683,14 +683,14 @@ async def step_train_cv(
     random_state: int = 42,
     train_final: bool = True,
 ) -> dict | None:
-    """Entraine Qwen3.5-4B + LoRA via K-fold stratifie (K=5 par defaut).
+    """Entraine Qwen3-4B + LoRA via K-fold stratifie (K=5 par defaut).
 
     Chaque fold est entraine avec oversampling de la classe minoritaire, puis
     evalue sur le test du fold (sans oversampling). Les metriques agregees
     (moyenne + ecart-type sur K folds) servent de reference pour la promotion.
 
     Un modele final est re-entraine sur l'integralite des donnees et sauvegarde
-    dans `models/challenger-qwen35/`, pret pour la promotion en production si
+    dans `models/challenger-qwen3/`, pret pour la promotion en production si
     les criteres sont satisfaits.
 
     Args:
@@ -704,7 +704,7 @@ async def step_train_cv(
     from greentech.ai.models.training import train_challenger_with_cv
 
     logger.info("=" * 70)
-    logger.info(f"  RE-ENTRAINEMENT QWEN3.5-4B + LoRA (K-fold K={n_splits})")
+    logger.info(f"  RE-ENTRAINEMENT QWEN3-4B + LoRA (K-fold K={n_splits})")
     logger.info("=" * 70)
 
     try:
@@ -811,7 +811,7 @@ async def step_baseline(force: bool = False) -> dict[str, float | int]:
     Delegue au module `greentech.ai.models.baseline` qui factorise la logique
     de chargement + inference + calcul de metriques pour tout modele
     Hugging Face compatible `AutoModelForSequenceClassification`. Par defaut,
-    evalue `Qwen/Qwen3.5-4B` defini dans ``settings.huggingface_model_baseline``.
+    evalue `Qwen/Qwen3-4B` defini dans ``settings.huggingface_model_baseline``.
 
     La baseline est recalculee si :
     - Aucune baseline n'a ete sauvegardee, OU
@@ -819,7 +819,7 @@ async def step_baseline(force: bool = False) -> dict[str, float | int]:
       metriques incompletes), OU
     - ``force=True`` est explicitement passe, OU
     - Le modele de la baseline existante differe du modele configure (par
-      exemple apres une migration Llama -> Qwen3.5-4B).
+      exemple apres une migration Llama -> Qwen3-4B).
 
     Args:
         force: Si True, recalcule meme si une baseline existe deja.
@@ -871,15 +871,11 @@ async def step_baseline(force: bool = False) -> dict[str, float | int]:
         f"Baseline : {result.model_name} (sans fine-tuning, dataset complet)",
     )
 
-    data = {
-        "model": result.model_name,
-        "date": datetime.now(UTC).isoformat(),
-        "evaluation_scope": "full_dataset",
-        "n_articles": result.n_articles,
-        "duration_seconds": result.duration_seconds,
-        "metrics": dict(result.metrics),
-    }
-    BASELINE_METRICS_FILE.write_text(json.dumps(data, indent=2))
+    # Tracking triple : JSON local + MLflow (run tagge baseline) + Pushgateway
+    # Prometheus (metriques greentech_baseline_* visibles dans Grafana).
+    from greentech.ai.mlops.baseline_tracking import track_baseline
+
+    track_baseline(result, BASELINE_METRICS_FILE)
     logger.info(
         f"Baseline sauvegardee : MCC={result.metrics['mcc']:.4f}, "
         f"F1={result.metrics['f1']:.4f}, Recall={result.metrics['recall']:.4f} "
@@ -901,7 +897,7 @@ async def _evaluate_new_model(
     """Evalue le modele fraichement entraine sur le test set.
 
     Charge l'adaptateur LoRA depuis ``TRAIN_DIR`` (par defaut
-    ``models/challenger-qwen35/``) et execute l'inference. Si le dossier
+    ``models/challenger-qwen3/``) et execute l'inference. Si le dossier
     contient un modele d'une autre famille (par exemple un ancien challenger
     Llama), la sous-classe adequate est instanciee via l'`adapter_config.json`
     pour reconstruire exactement le setup d'entrainement.
@@ -914,7 +910,7 @@ async def _evaluate_new_model(
     from greentech.ai.models.classifier import TrainingConfig
     from greentech.ai.models.training import (
         ChallengerClassifier,
-        ChallengerQwen35Classifier,
+        ChallengerQwen3Classifier,
     )
     from greentech.config import get_settings
 
@@ -925,11 +921,14 @@ async def _evaluate_new_model(
     else:
         base_model_name = get_settings().huggingface_model_trainer_base
 
-    is_qwen35 = "qwen3.5" in base_model_name.lower() or "qwen3_5" in base_model_name.lower()
+    # Match strict sur `qwen3-4b` / `qwen3_4b` pour ne pas capturer par erreur
+    # les anciens adaptateurs `qwen3.5-4b` si jamais il en reste en cache.
+    name_lower = base_model_name.lower()
+    is_qwen3 = "qwen3-4b" in name_lower or "qwen3_4b" in name_lower
     config = TrainingConfig(nom_modele=base_model_name, output_dir=TRAIN_DIR)
     classifier = (
-        ChallengerQwen35Classifier(config=config)
-        if is_qwen35
+        ChallengerQwen3Classifier(config=config)
+        if is_qwen3
         else ChallengerClassifier(config=config)
     )
     classifier.load(TRAIN_DIR)
@@ -1360,7 +1359,7 @@ async def run_pipeline(steps: list[str]) -> None:
             await step_baseline()
             continue
         if step_name == "train-cv":
-            logger.info("\n>>> Re-entrainement Llama (K-fold CV)...")
+            logger.info("\n>>> Re-entrainement Qwen3-4B (K-fold CV)...")
             if await step_train_cv() is None:
                 logger.error("Interrompu a : train-cv")
                 return
@@ -1372,7 +1371,7 @@ async def run_pipeline(steps: list[str]) -> None:
             "classify": ("LLM judge - verification candidats (etage 2)", step_classify),
             "summarize": ("Resumes Green IT confirmes", step_summarize_green),
             "export-golden": ("Export golden_dataset.csv", step_export_golden),
-            "train": ("Re-entrainement Llama (split 80/20)", step_train),
+            "train": ("Re-entrainement Qwen3-4B (split 80/20)", step_train),
             "promote": ("Promotion forcee", step_force_promote),
         }
 
@@ -1429,7 +1428,7 @@ def main() -> None:
         # 3. classify       : LLM judge sur les candidats (etage 2, decision finale)
         # 4. summarize      : resumes general + ecologique sur les Green IT confirmes
         # 5. export-golden  : regenere golden_dataset.csv depuis la DB post-classification
-        # 6. train-cv       : re-entraine Llama avec K-fold CV sur le nouveau golden
+        # 6. train-cv       : re-entraine Qwen3-4B avec K-fold CV sur le nouveau golden
         # 7. auto-promote   : benchmark et promotion conditionnelle
         processed = [
             "collect",

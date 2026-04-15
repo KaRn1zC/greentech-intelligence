@@ -79,8 +79,7 @@ async def list_articles(
     pages = (total + limit - 1) // limit if total > 0 else 0
 
     stmt = (
-        base_query
-        .add_columns(Source.nom.label("nom_source"))
+        base_query.add_columns(Source.nom.label("nom_source"))
         .order_by(Article.date_creation.desc())
         .offset(offset)
         .limit(limit)
@@ -163,8 +162,7 @@ async def search_articles(
     pages = (total + limit - 1) // limit if total > 0 else 0
 
     stmt = (
-        base_query
-        .add_columns(Source.nom.label("nom_source"))
+        base_query.add_columns(Source.nom.label("nom_source"))
         .order_by(Article.date_creation.desc())
         .offset(offset)
         .limit(limit)

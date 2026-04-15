@@ -29,9 +29,7 @@ class TestRegister:
         assert data["est_actif"] is True
         assert "id_utilisateur" in data
 
-    async def test_register_duplicate_email(
-        self, client: AsyncClient, test_user: User
-    ) -> None:
+    async def test_register_duplicate_email(self, client: AsyncClient, test_user: User) -> None:
         """L'inscription avec un email existant retourne 409."""
         response = await client.post(
             "/auth/register",
@@ -60,9 +58,7 @@ class TestRegister:
 class TestLogin:
     """Tests pour POST /auth/login."""
 
-    async def test_login_success(
-        self, client: AsyncClient, test_user: User
-    ) -> None:
+    async def test_login_success(self, client: AsyncClient, test_user: User) -> None:
         """La connexion avec les bons identifiants retourne un token."""
         response = await client.post(
             "/auth/login",
@@ -73,9 +69,7 @@ class TestLogin:
         assert "access_token" in data
         assert data["token_type"] == "bearer"
 
-    async def test_login_wrong_password(
-        self, client: AsyncClient, test_user: User
-    ) -> None:
+    async def test_login_wrong_password(self, client: AsyncClient, test_user: User) -> None:
         """La connexion avec un mauvais mot de passe retourne 401."""
         response = await client.post(
             "/auth/login",
@@ -112,9 +106,7 @@ class TestMe:
 
     async def test_me_invalid_token(self, client: AsyncClient) -> None:
         """Le profil est inaccessible avec un token invalide."""
-        response = await client.get(
-            "/auth/me", headers={"Authorization": "Bearer invalid-token"}
-        )
+        response = await client.get("/auth/me", headers={"Authorization": "Bearer invalid-token"})
         assert response.status_code == 401
 
 
@@ -122,9 +114,7 @@ class TestMe:
 class TestLogout:
     """Tests pour POST /auth/logout."""
 
-    async def test_logout_authenticated(
-        self, client: AsyncClient, auth_headers: dict
-    ) -> None:
+    async def test_logout_authenticated(self, client: AsyncClient, auth_headers: dict) -> None:
         """La deconnexion avec un token valide retourne 200."""
         response = await client.post("/auth/logout", headers=auth_headers)
         assert response.status_code == 200

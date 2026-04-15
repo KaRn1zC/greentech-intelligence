@@ -5,16 +5,16 @@ fine-tuning, avec tracking MLflow complet. Utile avant chaque cycle
 d'entrainement LoRA K-fold pour disposer d'une reference solide contre
 laquelle comparer le gain apporte par le fine-tuning.
 
-Par defaut, evalue `Qwen/Qwen3.5-4B` (valeur de
+Par defaut, evalue `Qwen/Qwen3-4B` (valeur de
 ``settings.huggingface_model_baseline``). Un autre modele peut etre passe
 en argument pour evaluer la baseline d'une variante.
 
 Usage:
-    # Evaluation du modele par defaut (Qwen3.5-4B)
+    # Evaluation du modele par defaut (Qwen3-4B)
     uv run python scripts/benchmark_baseline.py
 
     # Evaluation d'un autre modele
-    uv run python scripts/benchmark_baseline.py Qwen/Qwen3.5-9B
+    uv run python scripts/benchmark_baseline.py Qwen/Qwen3-8B
 
 Artefacts produits:
     - `models/baseline_metrics.json` : metriques + metadata (date, modele, portee)
@@ -25,7 +25,6 @@ Artefacts produits:
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,79 +33,6 @@ from loguru import logger
 
 # Racine du projet (scripts/ est au niveau de la racine)
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-
-def _register_baseline_metrics(
-    model_name: str,
-    metrics: dict,
-    n_articles: int,
-    duration_seconds: float,
-) -> None:
-    """Persiste les metriques baseline dans `models/baseline_metrics.json`.
-
-    Le fichier sert de reference permanente pour le script de benchmark
-    (`scripts/retrain_pipeline.py benchmark`) qui calcule le gain apporte
-    par le fine-tuning vs cette baseline.
-    """
-    output_file = BASE_DIR / "models" / "baseline_metrics.json"
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-
-    payload = {
-        "model": model_name,
-        "date": datetime.now(UTC).isoformat(),
-        "evaluation_scope": "full_dataset",
-        "n_articles": n_articles,
-        "duration_seconds": duration_seconds,
-        "metrics": metrics,
-    }
-    output_file.write_text(json.dumps(payload, indent=2))
-    logger.info(
-        f"Baseline persistee : {output_file} "
-        f"(MCC={metrics['mcc']:.4f}, F1={metrics['f1']:.4f}, "
-        f"Recall={metrics['recall']:.4f})"
-    )
-
-
-def _log_baseline_to_mlflow(
-    model_name: str,
-    metrics: dict,
-    n_articles: int,
-    duration_seconds: float,
-) -> None:
-    """Logge la baseline dans un run MLflow dedie.
-
-    Le run est tagge ``type=baseline`` pour etre filtrable dans l'UI MLflow
-    et facilement compare aux runs d'entrainement LoRA correspondants.
-    """
-    import mlflow
-
-    from greentech.ai.mlops.tracking import ExperimentConfig, tracked_experiment
-
-    safe_name = model_name.replace("/", "_").replace(".", "_")
-    exp_config = ExperimentConfig(
-        nom_experience="greentech-classification",
-        nom_run=f"baseline-{safe_name}",
-        tags={
-            "type": "baseline",
-            "modele": model_name,
-            "method": "zero-shot",
-            "evaluation_scope": "full_dataset",
-        },
-        params={
-            "model": model_name,
-            "method": "zero-shot",
-            "n_articles": n_articles,
-            "duration_seconds": round(duration_seconds, 2),
-        },
-        mesurer_carbone=True,
-    )
-
-    with tracked_experiment(exp_config):
-        # On ne logge que les metriques numeriques (float/int) pour eviter
-        # les erreurs MLflow sur les compteurs bool ou les metadata textuelles.
-        mlflow.log_metrics(
-            {k: float(v) for k, v in metrics.items() if isinstance(v, (int, float))}
-        )
 
 
 def _log_metrics_report(metrics: dict, title: str) -> None:
@@ -194,25 +120,9 @@ async def run_baseline(model_name: str | None = None) -> int:
         f"Baseline : {result.model_name} (zero-shot, {result.n_articles} articles)",
     )
 
-    _register_baseline_metrics(
-        result.model_name,
-        dict(result.metrics),
-        result.n_articles,
-        result.duration_seconds,
-    )
+    from greentech.ai.mlops.baseline_tracking import track_baseline
 
-    try:
-        _log_baseline_to_mlflow(
-            result.model_name,
-            dict(result.metrics),
-            result.n_articles,
-            result.duration_seconds,
-        )
-    except Exception as exc:
-        # L'echec MLflow ne doit pas invalider le run : les metriques sont
-        # deja persistees dans baseline_metrics.json, on trace l'erreur et on
-        # continue pour renvoyer un code de sortie zero.
-        logger.warning(f"MLflow indisponible, baseline non trackee : {exc}")
+    track_baseline(result, BASE_DIR / "models" / "baseline_metrics.json")
 
     return 0
 

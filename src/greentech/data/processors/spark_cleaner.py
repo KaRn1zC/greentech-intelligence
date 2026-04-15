@@ -448,9 +448,7 @@ def run_spark_cleaning() -> int:
 
         # Source Fichier (arXiv)
         try:
-            file_df = read_raw_json_from_minio(
-                spark, settings.minio_bucket_raw, "file"
-            )
+            file_df = read_raw_json_from_minio(spark, settings.minio_bucket_raw, "file")
             file_clean = clean_file_data(file_df)
             dataframes.append(file_clean)
             logger.info(f"Fichier : {file_clean.count()} articles chargés")

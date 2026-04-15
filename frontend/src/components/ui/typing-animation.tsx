@@ -103,7 +103,14 @@ export function TypingAnimation({
     [words, children]
   )
 
+  // Reinitialisation complete de l'animation quand la source textuelle
+  // change. Le reset doit etre declenche en reaction a `animationSourceKey`
+  // (derive des props) : un useEffect est le seul endroit permis pour
+  // appeler plusieurs setStates dependants sans acceder aux refs pendant le
+  // render (interdit par `react-hooks/refs`). Composant decoratif, pas de
+  // logique metier affectee par le re-render cascade.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset explicite declenche par changement de source (composant decoratif magic-ui)
     setDisplayedText("")
     setCurrentWordIndex(0)
     setCurrentCharIndex(0)

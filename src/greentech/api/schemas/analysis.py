@@ -47,9 +47,7 @@ class AnalysisJobCreated(BaseModel):
     """Reponse apres soumission d'une analyse."""
 
     job_id: uuid.UUID = Field(..., description="Identifiant unique du job d'analyse")
-    statut: AnalysisStatus = Field(
-        default=AnalysisStatus.EN_ATTENTE, description="Statut initial"
-    )
+    statut: AnalysisStatus = Field(default=AnalysisStatus.EN_ATTENTE, description="Statut initial")
     message: str = Field(
         default="Analyse soumise avec succes",
         description="Message informatif",

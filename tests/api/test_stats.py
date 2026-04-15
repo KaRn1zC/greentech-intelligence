@@ -48,9 +48,7 @@ class TestGlobalStats:
         data = response.json()
         assert data["total_articles"] == 0
 
-    async def test_stats_with_data(
-        self, client: AsyncClient, stats_data: None
-    ) -> None:
+    async def test_stats_with_data(self, client: AsyncClient, stats_data: None) -> None:
         """Les stats refletent les donnees en base."""
         response = await client.get("/stats")
         assert response.status_code == 200
@@ -64,9 +62,7 @@ class TestGlobalStats:
 class TestDailyStats:
     """Tests pour GET /stats/daily."""
 
-    async def test_daily_stats(
-        self, client: AsyncClient, stats_data: None
-    ) -> None:
+    async def test_daily_stats(self, client: AsyncClient, stats_data: None) -> None:
         """Les stats quotidiennes retournent les donnees du jour."""
         response = await client.get("/stats/daily?days=7")
         assert response.status_code == 200
@@ -80,9 +76,7 @@ class TestDailyStats:
 class TestSourceStats:
     """Tests pour GET /stats/sources."""
 
-    async def test_source_stats(
-        self, client: AsyncClient, stats_data: None
-    ) -> None:
+    async def test_source_stats(self, client: AsyncClient, stats_data: None) -> None:
         """Les stats par source retournent au moins une source."""
         response = await client.get("/stats/sources")
         assert response.status_code == 200

@@ -77,9 +77,7 @@ class TestCreateAnalysis:
         data = response.json()
         assert "job_id" in data
 
-    async def test_submit_no_auth_returns_401(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_submit_no_auth_returns_401(self, client: AsyncClient) -> None:
         """La soumission sans token d'authentification retourne 401."""
         response = await client.post(
             "/analyze",
@@ -143,9 +141,7 @@ class TestGetAnalysisStatus:
         response = await client.get("/analyze/not-a-uuid", headers=auth_headers)
         assert response.status_code == 422
 
-    async def test_get_status_no_auth_returns_401(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_get_status_no_auth_returns_401(self, client: AsyncClient) -> None:
         """L'acces sans token retourne 401."""
         fake_id = str(uuid.uuid4())
         response = await client.get(f"/analyze/{fake_id}")
@@ -192,9 +188,7 @@ class TestAnalysisPipeline:
     ) -> None:
         """Le pipeline texte complet termine avec les composants IA mockes."""
         mock_classify.return_value = _mock_prediction()
-        mock_summarize.return_value = AsyncMock(
-            succes=True, resume="Resume de test."
-        )
+        mock_summarize.return_value = AsyncMock(succes=True, resume="Resume de test.")
 
         post_resp = await client.post(
             "/analyze",

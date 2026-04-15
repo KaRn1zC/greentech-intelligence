@@ -67,9 +67,7 @@ class _InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
-        logger.opt(depth=depth, exception=record.exc_info).log(
-            level, record.getMessage()
-        )
+        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 
 def _loki_sink(message: Any) -> None:
@@ -115,9 +113,7 @@ def _loki_sink(message: Any) -> None:
         "streams": [
             {
                 "stream": labels,
-                "values": [
-                    [str(int(datetime.now(UTC).timestamp() * 1e9)), json.dumps(log_entry)]
-                ],
+                "values": [[str(int(datetime.now(UTC).timestamp() * 1e9)), json.dumps(log_entry)]],
             }
         ]
     }

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from greentech.data.storage.models import Article, Source
 from tests.conftest import test_session_factory
@@ -111,9 +110,7 @@ class TestListArticles:
 class TestGetArticle:
     """Tests pour GET /articles/{id}."""
 
-    async def test_get_existing(
-        self, client: AsyncClient, sample_articles: list[Article]
-    ) -> None:
+    async def test_get_existing(self, client: AsyncClient, sample_articles: list[Article]) -> None:
         """Le detail d'un article existant retourne 200."""
         article_id = sample_articles[0].id_article
         response = await client.get(f"/articles/{article_id}")

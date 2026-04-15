@@ -20,7 +20,6 @@ from greentech.api.main import app
 from greentech.api.security.auth import create_access_token, hash_password
 from greentech.data.storage.models import Base, DailyStats, User
 
-
 # === Compatibilite SQLite : remplacer JSONB par JSON ===
 
 # Le modele DailyStats utilise JSONB (PostgreSQL). Pour les tests SQLite,
@@ -33,9 +32,7 @@ DailyStats.__table__.c.articles_par_source.type = JSON()
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
-test_session_factory = async_sessionmaker(
-    test_engine, class_=AsyncSession, expire_on_commit=False
-)
+test_session_factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 # Activer le support des foreign keys dans SQLite

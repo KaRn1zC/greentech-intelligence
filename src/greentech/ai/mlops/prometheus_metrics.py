@@ -113,6 +113,72 @@ training_last_push_timestamp = Gauge(
     registry=_REGISTRY,
 )
 
+# Metriques de la baseline (modele pre-entraine sans fine-tuning).
+# Label "model" permet de distinguer plusieurs runs sur des architectures
+# differentes (Qwen3-4B, Qwen2.5-3B, Llama 3.2 3B, etc.) dans Grafana.
+baseline_mcc = Gauge(
+    "greentech_baseline_mcc",
+    "MCC de la baseline (modele pre-entraine sans fine-tuning)",
+    ["model"],
+    registry=_REGISTRY,
+)
+
+baseline_f1 = Gauge(
+    "greentech_baseline_f1",
+    "F1-score Green IT de la baseline",
+    ["model"],
+    registry=_REGISTRY,
+)
+
+baseline_recall = Gauge(
+    "greentech_baseline_recall",
+    "Recall Green IT de la baseline",
+    ["model"],
+    registry=_REGISTRY,
+)
+
+baseline_precision = Gauge(
+    "greentech_baseline_precision",
+    "Precision Green IT de la baseline",
+    ["model"],
+    registry=_REGISTRY,
+)
+
+baseline_accuracy = Gauge(
+    "greentech_baseline_accuracy",
+    "Accuracy globale de la baseline",
+    ["model"],
+    registry=_REGISTRY,
+)
+
+baseline_balanced_accuracy = Gauge(
+    "greentech_baseline_balanced_accuracy",
+    "Balanced accuracy de la baseline (moyenne sensibilite/specificite)",
+    ["model"],
+    registry=_REGISTRY,
+)
+
+baseline_duration_seconds = Gauge(
+    "greentech_baseline_duration_seconds",
+    "Duree totale de l'evaluation baseline",
+    ["model"],
+    registry=_REGISTRY,
+)
+
+baseline_n_articles = Gauge(
+    "greentech_baseline_n_articles",
+    "Nombre d'articles evalues par la baseline",
+    ["model"],
+    registry=_REGISTRY,
+)
+
+baseline_last_push_timestamp = Gauge(
+    "greentech_baseline_last_push_timestamp_seconds",
+    "Horodatage Unix du dernier push baseline - utile pour detecter une stase",
+    ["model"],
+    registry=_REGISTRY,
+)
+
 
 def push_metrics(job_name: str = "greentech-training") -> None:
     """Pousse le snapshot courant du registre vers le Pushgateway.
@@ -144,12 +210,12 @@ def update_gpu_memory(model_type: str, run_name: str) -> None:
             return
         allocated = torch.cuda.memory_allocated()
         reserved = torch.cuda.memory_reserved()
-        training_gpu_memory_allocated_bytes.labels(
-            model_type=model_type, run_name=run_name
-        ).set(allocated)
-        training_gpu_memory_reserved_bytes.labels(
-            model_type=model_type, run_name=run_name
-        ).set(reserved)
+        training_gpu_memory_allocated_bytes.labels(model_type=model_type, run_name=run_name).set(
+            allocated
+        )
+        training_gpu_memory_reserved_bytes.labels(model_type=model_type, run_name=run_name).set(
+            reserved
+        )
     except Exception as exc:
         logger.debug(f"Lecture memoire GPU impossible : {exc}")
 
@@ -211,3 +277,44 @@ def record_cv_aggregated(
     training_cv_mcc_std.labels(**labels).set(float(mcc_std))
     training_last_push_timestamp.labels(**labels).set(time.time())
     push_metrics()
+
+
+def record_baseline_metrics(
+    *,
+    model_name: str,
+    metrics: dict[str, float | int],
+    n_articles: int,
+    duration_seconds: float,
+) -> None:
+    """Enregistre les metriques baseline dans le registre et les pousse.
+
+    Permet aux dashboards Grafana d'afficher la baseline comme reference
+    immuable a cote des courbes de training K-fold. Le job Pushgateway
+    est distinct (``greentech-baseline``) pour que les metriques survivent
+    meme si un job de training pousse en parallele avec le meme label.
+
+    Args:
+        model_name: Identifiant HF du modele evalue (ex. ``Qwen/Qwen3-4B``).
+            Sert de label Prometheus, donc doit etre stable entre runs.
+        metrics: Dictionnaire complet renvoye par ``compute_classification_metrics``.
+        n_articles: Nombre d'articles traites par la baseline.
+        duration_seconds: Duree totale de l'evaluation.
+    """
+    labels = {"model": model_name}
+
+    for key, gauge in (
+        ("mcc", baseline_mcc),
+        ("f1", baseline_f1),
+        ("recall", baseline_recall),
+        ("precision", baseline_precision),
+        ("accuracy", baseline_accuracy),
+        ("balanced_accuracy", baseline_balanced_accuracy),
+    ):
+        if key in metrics and metrics[key] is not None:
+            gauge.labels(**labels).set(float(metrics[key]))
+
+    baseline_duration_seconds.labels(**labels).set(float(duration_seconds))
+    baseline_n_articles.labels(**labels).set(int(n_articles))
+    baseline_last_push_timestamp.labels(**labels).set(time.time())
+
+    push_metrics(job_name="greentech-baseline")

@@ -83,8 +83,15 @@ export function AnimatedGridPattern({
     [getPos]
   )
 
+  // Regeneration des carres quand les dimensions ou numSquares changent.
+  // `generateSquares` utilise `Math.random()` (non autorise par
+  // `react-hooks/purity` dans un `useMemo` ou pendant le render) et depend
+  // des dimensions mesurees via ResizeObserver (systeme externe). Le setState
+  // est donc legitimement place dans un useEffect. Composant decoratif issu
+  // de magic-ui : pas de logique metier impactee.
   useEffect(() => {
     if (dimensions.width && dimensions.height) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- sync avec ResizeObserver + Math.random impur
       setSquares(generateSquares(numSquares))
     }
   }, [dimensions.width, dimensions.height, generateSquares, numSquares])

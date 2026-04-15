@@ -65,7 +65,7 @@ class BaselineResult:
     """Resultat de l'evaluation baseline d'un modele.
 
     Attributes:
-        model_name: Identifiant du modele evalue (ex. ``Qwen/Qwen3.5-4B``).
+        model_name: Identifiant du modele evalue (ex. ``Qwen/Qwen3-4B``).
         metrics: Dictionnaire complet des metriques
             (mcc, f1, precision, recall, accuracy, matrice de confusion...).
         predictions: Liste des labels predits, dans l'ordre des articles.

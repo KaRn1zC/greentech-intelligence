@@ -289,17 +289,13 @@ class LocalQwenClient:
 
         available = cls._available_memory_gb(device)
         if available is None:
-            logger.debug(
-                "Memoire non mesurable sur ce systeme, tentative avec le modele demande"
-            )
+            logger.debug("Memoire non mesurable sur ce systeme, tentative avec le modele demande")
             return requested
 
         # Seuils calibres pour le 3B par defaut. Pour un 7B le code essaiera
         # d'abord le chargement et basculera sur OOM via le try/except en aval.
         threshold = (
-            _MIN_VRAM_GB_FOR_DEFAULT_FP16
-            if device == "cuda"
-            else _MIN_RAM_GB_FOR_DEFAULT_FP32
+            _MIN_VRAM_GB_FOR_DEFAULT_FP16 if device == "cuda" else _MIN_RAM_GB_FOR_DEFAULT_FP32
         )
         # Si on a affaire a un 7B, on exige deux fois plus de memoire qu'un 3B
         # pour deviner correctement la trajectoire. Le fallback final sur OOM
@@ -364,8 +360,7 @@ class LocalQwenClient:
 
             def _load(name: str) -> tuple[PreTrainedTokenizerBase, PreTrainedModel]:
                 logger.info(
-                    f"Chargement du modele local {name} "
-                    f"(device={device}, dtype={dtype})..."
+                    f"Chargement du modele local {name} (device={device}, dtype={dtype})..."
                 )
                 tok = AutoTokenizer.from_pretrained(
                     name,
@@ -390,9 +385,10 @@ class LocalQwenClient:
                 # que les erreurs "CUDA out of memory" remontees differemment
                 # selon la version de PyTorch/ROCm.
                 message = str(err).lower()
-                is_oom = isinstance(
-                    err, (torch.cuda.OutOfMemoryError, MemoryError)
-                ) or "out of memory" in message
+                is_oom = (
+                    isinstance(err, (torch.cuda.OutOfMemoryError, MemoryError))
+                    or "out of memory" in message
+                )
                 if not is_oom or effective_name == lightweight_name:
                     raise
                 logger.warning(
@@ -418,9 +414,7 @@ class LocalQwenClient:
             self._dtype = dtype
             self.model_name = effective_name
 
-            logger.info(
-                f"Modele local {effective_name} charge et pret a l'inference"
-            )
+            logger.info(f"Modele local {effective_name} charge et pret a l'inference")
 
     def _generate_sync(
         self,
@@ -472,9 +466,7 @@ class LocalQwenClient:
         # On ne garde que les tokens reellement generes (apres le prompt).
         input_length = inputs["input_ids"].shape[1]
         generated_tokens = outputs[0][input_length:]
-        generated_text = self._tokenizer.decode(
-            generated_tokens, skip_special_tokens=True
-        ).strip()
+        generated_text = self._tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
         return _fix_mojibake(generated_text)
 
     async def chat_completion(

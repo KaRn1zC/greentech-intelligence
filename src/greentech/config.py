@@ -82,31 +82,42 @@ class Settings(BaseSettings):
     # Qwen3-4B que les summarizers : un seul service HF a maintenir.
     huggingface_model_classifier_llm: str = "Qwen/Qwen3-4B-Instruct-2507"
     # === Classifieur entraine en interne (baseline + fine-tuning LoRA) ===
-    # `Qwen/Qwen3.5-4B` (licence Apache-2.0, 27 fevrier 2026) est la generation
-    # Qwen la plus recente disponible sur le Hub au 14 avril 2026. Choisi
-    # comme base du pipeline d'entrainement pour trois raisons :
+    # `Qwen/Qwen3-4B` (licence Apache-2.0, publie le 26 juillet 2025) est le
+    # LLM texte officiel 4B d'Alibaba, pleinement supporte par `transformers`
+    # comme `AutoModelForCausalLM` et `AutoModelForSequenceClassification`.
+    # Choisi comme base du pipeline d'entrainement pour trois raisons :
     #   1. Multilingue natif (FR/EN/DE/ES/ZH) : les articles techniques scrapes
     #      depuis des sources non anglophones sont traites sans etape de
     #      traduction, directement exploites par la classification.
-    #   2. Taille 4B : entrainement LoRA K-fold tenable sur RX 7900 XTX 24 Go
-    #      (~14 Go VRAM avec adaptateurs r=16 + AdamW, batch size 4-6).
-    #      Inference ~0.4 s/article en BF16 sur le meme GPU.
-    #   3. Chat template Qwen stable entre les generations : compatibilite
-    #      directe avec le reste du pipeline (summarizer, LLM judge).
+    #   2. Architecture dense transformer standard : entrainement LoRA K-fold
+    #      tenable sur RX 7900 XTX 24 Go (~14 Go VRAM avec adaptateurs r=16 +
+    #      AdamW + gradient checkpointing, batch 2 + grad_accum 4). Inference
+    #      ~0.4 s/article en BF16 sur le meme GPU.
+    #   3. Chat template Qwen aligne sur `Qwen3-4B-Instruct-2507` deja utilise
+    #      pour les summarizers et le LLM judge : une seule famille a maintenir.
     # Ce modele remplace l'ancien `meta-llama/Llama-3.2-3B` gated (besoin de
     # demande d'acces HF) comme base du challenger fine-tune sur le golden
     # dataset et promu en production par `scripts/retrain_pipeline.py`.
-    huggingface_model_trainer_base: str = "Qwen/Qwen3.5-4B"
+    #
+    # Note : la tentative precedente avec `Qwen/Qwen3.5-4B` a echoue car il
+    # s'agit en realite d'un VLM (image-text-to-text, ~4.66B parametres dont
+    # ~500 Mo de blocs visuels inutiles), avec une architecture a attention
+    # lineaire hybride necessitant `flash-linear-attention` + `causal-conv1d`
+    # non disponibles sous ROCm. Le fallback torch pur saturait la VRAM et
+    # gelait le systeme au premier step d'entrainement.
+    huggingface_model_trainer_base: str = "Qwen/Qwen3-4B"
     # Meme modele utilise comme baseline : evalue zero-shot (sans fine-tuning)
     # sur l'integralite du dataset annote pour mesurer le gain apporte par
     # l'entrainement LoRA. Avoir la meme base en baseline et challenger permet
     # de comparer strictement l'impact du fine-tuning, sans bruit lie au
     # changement d'architecture.
-    huggingface_model_baseline: str = "Qwen/Qwen3.5-4B"
-    # Longueur maximale des sequences tokenizees lors de l'entrainement. 1024
-    # tokens couvrent 95% des articles du corpus sans troncature destructive,
-    # tout en maintenant un cout memoire raisonnable pour le LoRA K-fold.
-    trainer_max_length: int = 1024
+    huggingface_model_baseline: str = "Qwen/Qwen3-4B"
+    # Longueur maximale des sequences tokenizees lors de l'entrainement. 512
+    # tokens couvrent la majorite des articles du corpus (les plus longs
+    # tronquent leur queue peu informative) et divisent par ~4 la consommation
+    # memoire de l'attention par rapport a 1024, ce qui rend le LoRA K-fold
+    # stable sur 24 Go de VRAM avec gradient checkpointing actif.
+    trainer_max_length: int = 512
     # Fallback local n1 : `Qwen/Qwen2.5-3B-Instruct`. Choisi comme repli
     # principal parce qu'il est le plus proche en taille de parametres du
     # Qwen3-4B cloud (~6 Go FP16 sur GPU), tout en restant chargeable sur

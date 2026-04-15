@@ -142,9 +142,7 @@ async def chat_completion(
 
     if is_hf_quota_exhausted():
         local = LocalQwenClient.get()
-        return await local.chat_completion(
-            messages, max_tokens=max_tokens, temperature=temperature
-        )
+        return await local.chat_completion(messages, max_tokens=max_tokens, temperature=temperature)
 
     client = AsyncInferenceClient(
         model=model,
@@ -161,20 +159,14 @@ async def chat_completion(
     except Exception as exc:
         if _is_quota_exhausted_error(exc):
             mark_hf_quota_exhausted()
-            logger.info(
-                "Nouvel essai de la requete en cours sur le modele local apres 402"
-            )
+            logger.info("Nouvel essai de la requete en cours sur le modele local apres 402")
             local = LocalQwenClient.get()
             return await local.chat_completion(
                 messages, max_tokens=max_tokens, temperature=temperature
             )
         if _is_model_not_supported_error(exc):
-            mark_hf_unavailable(
-                f"modele '{model}' non servi par les Inference Providers actifs"
-            )
-            logger.info(
-                f"Modele {model} indisponible cote HF, bascule sur le modele local"
-            )
+            mark_hf_unavailable(f"modele '{model}' non servi par les Inference Providers actifs")
+            logger.info(f"Modele {model} indisponible cote HF, bascule sur le modele local")
             local = LocalQwenClient.get()
             return await local.chat_completion(
                 messages, max_tokens=max_tokens, temperature=temperature

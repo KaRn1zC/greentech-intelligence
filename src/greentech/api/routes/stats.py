@@ -96,12 +96,10 @@ async def get_daily_stats(
         select(
             date_col.label("jour"),
             func.count(Article.id_article).label("total"),
-            func.count(
-                case((Article.est_green_it.is_(True), Article.id_article))
-            ).label("green"),
-            func.count(
-                case((Article.est_green_it.is_(False), Article.id_article))
-            ).label("non_green"),
+            func.count(case((Article.est_green_it.is_(True), Article.id_article))).label("green"),
+            func.count(case((Article.est_green_it.is_(False), Article.id_article))).label(
+                "non_green"
+            ),
             func.avg(Article.score_confiance).label("confiance_moy"),
         )
         .where(func.date(Article.date_creation) >= date_debut)
@@ -156,12 +154,10 @@ async def get_source_stats(
             Source.type,
             Source.derniere_collecte,
             func.count(Article.id_article).label("total"),
-            func.count(
-                case((Article.est_green_it.is_(True), Article.id_article))
-            ).label("green"),
-            func.count(
-                case((Article.est_green_it.is_(False), Article.id_article))
-            ).label("non_green"),
+            func.count(case((Article.est_green_it.is_(True), Article.id_article))).label("green"),
+            func.count(case((Article.est_green_it.is_(False), Article.id_article))).label(
+                "non_green"
+            ),
         )
         .outerjoin(Article, Source.id_source == Article.id_source)
         .group_by(Source.id_source, Source.nom, Source.type, Source.derniere_collecte)

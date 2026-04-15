@@ -7,21 +7,28 @@
 
 ## Architecture actuelle
 
-- **Modele en production** : Qwen3.5-4B + LoRA (adapter_model.safetensors, ~80 Mo)
-- **Base model** : `Qwen/Qwen3.5-4B` (Apache-2.0, 27 fevrier 2026), multilingue natif
-  (FR/EN/DE/ES/ZH), sortie HF la plus recente disponible au 14 avril 2026.
-- **Dossier d'entrainement** : `models/challenger-qwen35/`
+- **Modele en production** : Qwen3-4B + LoRA (adapter_model.safetensors, ~30 Mo)
+- **Base model** : `Qwen/Qwen3-4B` (Apache-2.0, 26 juillet 2025), dense transformer
+  standard, multilingue natif (FR/EN/DE/ES/ZH).
+- **Dossier d'entrainement** : `models/challenger-qwen3/`
 - **Emplacement production** : `models/production/`
 - **Versioning** : DVC (remote MinIO s3://models/dvc)
 - **Chargement** : Lazy-loading au premier appel d'inference via `get_classifier()`.
   La detection du type de modele est automatique via `adapter_config.json` :
-  `Qwen3.5` => `ChallengerQwen35Classifier`, Llama/Qwen2.5 => `ChallengerClassifier`.
+  `qwen3-4b` => `ChallengerQwen3Classifier`, Llama/Qwen2.5 => `ChallengerClassifier`.
 
 > **Migration** : le modele de production est passe de `meta-llama/Llama-3.2-3B`
-> a `Qwen/Qwen3.5-4B` le 14 avril 2026. Motifs : licence Apache-2.0 (contre
+> a `Qwen/Qwen3-4B` le 15 avril 2026. Motifs : licence Apache-2.0 (contre
 > gated access Llama), multilinguisme natif pour traiter les articles scrapes
 > depuis des sources non anglophones, et alignement avec la famille Qwen deja
 > utilisee pour le LLM judge et les summarizers.
+>
+> Une tentative intermediaire avec `Qwen/Qwen3.5-4B` a ete abandonnee parce
+> que ce modele est en realite un VLM (image-text-to-text) a architecture
+> d'attention lineaire hybride qui requiert `flash-linear-attention` et
+> `causal-conv1d` non supportes sous ROCm. L'entrainement LoRA saturait la
+> VRAM au premier step et gelait le systeme complet. `Qwen3-4B` (sans le
+> ".5") est le LLM texte officiel, dense et pleinement compatible.
 
 ---
 
@@ -67,21 +74,50 @@ uv run python scripts/retrain_pipeline.py baseline
 ```
 
 Chaque run produit :
-- `models/challenger-qwen35/` : adapter LoRA entraine (Qwen3.5-4B)
+- `models/challenger-qwen3/` : adapter LoRA entraine (Qwen3-4B)
 - `models/cv_report.json` (uniquement en mode train-cv) : metriques par fold + agregees
-- `models/baseline_metrics.json` : reference permanente du modele brut (Qwen3.5-4B zero-shot)
+- `models/baseline_metrics.json` : reference permanente du modele brut (Qwen3-4B zero-shot)
 - MLflow : tracking des runs (http://localhost:5000)
 
 Pour evaluer la baseline de maniere isolee (avec un run MLflow dedie et
 un log CO2 separe), utiliser le script specialise :
 
 ```bash
-# Evaluation baseline Qwen3.5-4B avec tracking MLflow
+# Evaluation baseline Qwen3-4B avec tracking MLflow
 uv run python scripts/benchmark_baseline.py
 
 # Baseline d'un autre modele (pour comparer plusieurs architectures)
-uv run python scripts/benchmark_baseline.py Qwen/Qwen3.5-9B
+uv run python scripts/benchmark_baseline.py Qwen/Qwen3-8B
 ```
+
+### Warning attendu au chargement du modele baseline
+
+Au premier chargement de `Qwen/Qwen3-4B` via `AutoModelForSequenceClassification`,
+Transformers affiche un avertissement `MISSING : score.weight`. Ce message est
+**volontaire** et ne signale aucune anomalie :
+
+**`MISSING : score.weight`**
+`AutoModelForSequenceClassification` ajoute une tete `score` (Linear
+`hidden_size -> num_labels`) par-dessus le modele de base. Comme le checkpoint
+HF est un LM causal (pas un classifier), cette tete **n'existe pas** dans le
+checkpoint et est donc **initialisee aleatoirement**.
+
+C'est exactement le design attendu de la baseline (cf. docstring
+`src/greentech/ai/models/baseline.py` lignes 16-20) : on mesure la performance
+"chance + biais" du modele brut, sans prompt engineering ni fine-tuning. La tete
+aleatoire est la reference bas niveau que le fine-tuning LoRA doit battre
+significativement (criteres de promotion ci-dessous).
+
+> **Note historique** : la tentative avortee avec `Qwen/Qwen3.5-4B` (un VLM)
+> affichait en plus ~22 cles `UNEXPECTED : model.visual.*` (poids du vision
+> encoder inutiles). Leur presence dans les logs est le signal qu'on a charge
+> le mauvais modele — si tu revois cela, verifier immediatement que
+> `settings.huggingface_model_baseline` pointe bien vers `Qwen/Qwen3-4B`.
+
+**Consequence attendue** : les metriques baseline sont generalement proches du
+hasard (MCC proche de 0, accuracy proche du taux majoritaire). Si au contraire
+elles sont elevees alors que la tete est aleatoire, c'est un signal d'alerte
+(biais du dataset, fuite de labels dans les texts, etc.).
 
 Verifier dans le rapport ou MLflow :
 - **MCC** (Matthews Correlation Coefficient) : **critere principal**, robuste au
@@ -91,6 +127,64 @@ Verifier dans le rapport ou MLflow :
 - **Stabilite entre folds** (K-fold uniquement) : std du MCC <= 0.15.
 - **Temps d'inference** : acceptable (< 15s sur CPU).
 - **Empreinte carbone** : documentee (CodeCarbon).
+
+### Interpretation des resultats baseline (reference 2026-04-15)
+
+Le premier run baseline de `Qwen/Qwen3-4B` sur le dataset complet (6354
+articles dont 22 Green IT, soit 0.35 % de positifs) a produit les metriques
+ci-dessous sur RX 7900 XTX (ROCm, BF16), en 12 min 27 s d'inference pure :
+
+| Metrique           | Valeur   | Lecture                                                    |
+|--------------------|----------|------------------------------------------------------------|
+| MCC                | 0.0047   | ~0 : comportement quasi-aleatoire                          |
+| Balanced accuracy  | 50.32 %  | Confirme : decision proche du pile-ou-face                 |
+| F1                 | 0.0069   | Tres bas                                                    |
+| Accuracy           | 0.98 %   | Pire que la regle triviale "toujours Non Green IT" (99.65 %) |
+| Precision          | 0.35 %   | Quasi nulle                                                 |
+| Recall Green IT    | 100 %    | Trompeur (voir ci-dessous)                                  |
+| Specificite        | 0.63 %   | 40 / 6332 Non Green IT correctement classes                |
+| Latence moyenne    | 117 ms   | Acceptable (p95 = 138 ms)                                   |
+
+Matrice de confusion observee :
+
+```
+                Predit Green IT   Predit Non Green IT
+Reel Green IT        22 (TP)            0 (FN)
+Reel Non Green IT  6 292 (FP)          40 (TN)
+```
+
+**Analyse du comportement** : le modele predit Green IT pour 6314 / 6354
+articles (99.4 %). Ce biais massif vers la classe 1 est le symptome
+caracteristique d'une tete `score` **initialisee aleatoirement** : les poids
+gaussiens du `Linear(hidden_size -> 2)` favorisent par hasard la classe 1. Avec
+une autre seed de PyTorch, on pourrait obtenir le biais inverse (tout predit
+en Non Green IT). Le `MCC ~ 0` et la balanced accuracy a 50 % confirment qu'il
+n'y a aucune discrimination reelle entre les classes.
+
+**Pourquoi Recall = 100 % n'est pas un signal positif** : en classant quasi
+tous les articles en Green IT, le modele capte mecaniquement les 22 vrais
+positifs sans aucune comprehension du contenu. C'est du bruit statistique
+deguise en rappel parfait. MCC et balanced accuracy sont les metriques qui
+demasquent ce piege.
+
+**Verdict** : resultat attendu et coherent avec le design documente dans
+`baseline.py` (tete aleatoire = reference "chance + biais"). Pas de signal
+d'anomalie (fuite de labels, biais exploite, etc.). Cette baseline fixe la
+**borne basse absolue** contre laquelle le fine-tuning LoRA devra prouver son
+gain.
+
+**Objectifs pour le fine-tuning LoRA** (a valider par K-fold) :
+
+| Critere                        | Seuil         | Baseline       | Cible raisonnable |
+|--------------------------------|---------------|----------------|-------------------|
+| MCC                            | `> 0` strict  | 0.0047         | **> 0.5**         |
+| Recall Green IT                | `>= 0.5`      | 1.0 (fallacieux) | >= 0.5 avec vraie discrimination |
+| F1                             | `>= histo -5%`| 0.0069         | **> 0.6**         |
+| Stabilite K-fold (std MCC)     | `<= 0.15`     | N/A            | A mesurer         |
+
+Le vrai defi du fine-tuning n'est pas le recall (facile a tenir avec un
+modele biaise) mais la **precision** : descendre drastiquement les 6292 faux
+positifs tout en preservant les 22 vrais Green IT.
 
 ---
 

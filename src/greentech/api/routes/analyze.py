@@ -469,8 +469,7 @@ async def create_analysis_from_file(
     )
 
     logger.info(
-        f"Analyse fichier soumise {job_id} : "
-        f"nom='{fichier.filename}' taille={len(contenu)} chars"
+        f"Analyse fichier soumise {job_id} : nom='{fichier.filename}' taille={len(contenu)} chars"
     )
     return AnalysisJobCreated(job_id=job_id)
 

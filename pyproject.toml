@@ -72,11 +72,21 @@ dependencies = [
 ]
 
 # === Configuration UV pour PyTorch ROCm (AMD GPU RX 7900 XTX) ===
-# Force UV a utiliser les wheels ROCm depuis le repo AMD au lieu de PyPI
+# Force UV a utiliser les wheels ROCm depuis le repo AMD UNIQUEMENT sur Windows
+# (plateforme du developpeur avec la RX 7900 XTX). Sur Linux/macOS (CI GitHub
+# Actions, serveurs Render, autres contributeurs), UV tombe back sur les wheels
+# CPU/CUDA depuis PyPI grace au marker `sys_platform == 'win32'`, ce qui permet
+# a la CI de se resoudre sans GPU AMD ni binaire ROCm Windows.
 [tool.uv.sources]
-torch = { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2/torch-2.9.1%2Brocmsdk20260116-cp312-cp312-win_amd64.whl" }
-torchvision = { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2/torchvision-0.24.1%2Brocmsdk20260116-cp312-cp312-win_amd64.whl" }
-torchaudio = { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2/torchaudio-2.9.1%2Brocmsdk20260116-cp312-cp312-win_amd64.whl" }
+torch = [
+    { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2/torch-2.9.1%2Brocmsdk20260116-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
+]
+torchvision = [
+    { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2/torchvision-0.24.1%2Brocmsdk20260116-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
+]
+torchaudio = [
+    { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2/torchaudio-2.9.1%2Brocmsdk20260116-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
+]
 
 [tool.uv]
 # Le repo AMD contient les wheels ROCm (torch, rocm_sdk_*, etc.)
@@ -173,9 +183,19 @@ exclude_lines = [
 ]
 
 [dependency-groups]
+# UV lit ce groupe en priorite avec `uv sync --dev` (PEP 735). Il doit donc
+# contenir l'ensemble des deps de developpement, y compris celles dupliquees
+# dans [project.optional-dependencies] pour compatibilite avec pip.
 dev = [
     "aiosqlite>=0.22.1",
     "bcrypt>=5.0.0",
     "pillow>=12.1.0",
     "ruff>=0.15.0",
+    # Pytest + plugins : requis par la CI `uv run pytest tests/` et par les
+    # workflows locaux. Sans ces entrees, `uv sync --dev` n'installe pas
+    # pytest meme si `[project.optional-dependencies].dev` le mentionne.
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "pre-commit>=3.6.0",
 ]

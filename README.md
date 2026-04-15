@@ -12,7 +12,7 @@ Le systeme collecte des articles depuis plusieurs sources (API, scraping, fichie
 1. **Pre-filtre mots-cles permissif** (etage 1) : scoring multi-criteres qui distingue les articles manifestement Non Green IT (rejet direct) des **candidats** qui meritent une verification plus fine.
 2. **LLM judge** (etage 2) : les candidats passent par un LLM instructif (`Qwen/Qwen2.5-7B-Instruct`) qui tranche en zero-shot avec un prompt specialise. L'appel se fait via l'API Hugging Face Serverless, avec un **fallback automatique sur GPU AMD local** (ROCm) si le quota mensuel HF est epuise (HTTP 402).
 
-Un **classifieur de production** supplementaire (`Qwen/Qwen3.5-4B + LoRA`, Apache-2.0, multilingue natif FR/EN/DE/ES/ZH) fine-tune sur le golden dataset produit par cette classification hybride est utilise pour l'inference temps reel via l'endpoint `/analyze`. Il remplace depuis avril 2026 l'ancien modele `meta-llama/Llama-3.2-3B` (gated) et permet de classifier directement des articles dans plusieurs langues sans etape de traduction prealable.
+Un **classifieur de production** supplementaire (`Qwen/Qwen3-4B + LoRA`, Apache-2.0, multilingue natif FR/EN/DE/ES/ZH) fine-tune sur le golden dataset produit par cette classification hybride est utilise pour l'inference temps reel via l'endpoint `/analyze`. Il remplace depuis avril 2026 l'ancien modele `meta-llama/Llama-3.2-3B` (gated) et permet de classifier directement des articles dans plusieurs langues sans etape de traduction prealable.
 
 Pour les articles confirmes Green IT, deux resumes sont generes via le meme LLM instructif Qwen : un resume general et un resume centre sur les aspects ecologiques.
 
@@ -171,11 +171,19 @@ Cela ajoute les conteneurs `greentech-api` (port 8000) et `greentech-frontend` (
 
 > **Note** : En developpement, il est plus pratique de lancer l'API et le frontend hors Docker (voir section 7).
 
+### Etape 4 : Arreter l'infrastructure
+
+```bash
+docker compose --profile "*" down
+```
+
+Le wildcard `--profile "*"` active tous les profils declares dans `docker-compose.yml` et garantit que les conteneurs `greentech-api` et `greentech-frontend` (profil `full`) sont bien supprimes avec les services de base. Sans ce flag, `docker compose down` ignore les services du profil `full` et laisse le reseau `greentech-network` en etat `still in use`.
+
 ---
 
 ## 6. Recuperer le modele IA
 
-Le modele entraine (Qwen3.5-4B + LoRA, ~80 Mo) est versionne via DVC et stocke dans MinIO. Les fichiers du modele dans `models/production/` sont inclus dans le depot Git pour simplifier l'utilisation.
+Le modele entraine (Qwen3-4B + LoRA, ~30 Mo) est versionne via DVC et stocke dans MinIO. Les fichiers du modele dans `models/production/` sont inclus dans le depot Git pour simplifier l'utilisation.
 
 ### Option A : Utiliser les fichiers deja presents (recommande)
 
@@ -184,18 +192,18 @@ Les fichiers suivants sont deja dans `models/production/` :
 ```
 models/production/
   adapter_config.json       # Configuration LoRA (r=16, alpha=32, target: attention + MLP)
-  adapter_model.safetensors # Poids du modele fine-tune (~80 Mo)
+  adapter_model.safetensors # Poids du modele fine-tune (~30 Mo)
   tokenizer.json            # Tokenizer du modele de base
   tokenizer_config.json     # Configuration du tokenizer
   README.md                 # Model Card (metriques, hyperparametres)
 ```
 
 Au premier appel d'inference, le systeme :
-1. Telecharge automatiquement le modele de base `Qwen/Qwen3.5-4B` depuis Hugging Face (~8 Go en BF16, cache local)
+1. Telecharge automatiquement le modele de base `Qwen/Qwen3-4B` depuis Hugging Face (~8 Go en BF16, cache local)
 2. Charge les poids LoRA depuis `models/production/adapter_model.safetensors`
 3. Met le modele en memoire pour les requetes suivantes
 
-> **Important** : `Qwen/Qwen3.5-4B` est sous licence **Apache-2.0**, librement
+> **Important** : `Qwen/Qwen3-4B` est sous licence **Apache-2.0**, librement
 > accessible sans demande d'acces. Il suffit d'un `HUGGINGFACE_TOKEN` valide
 > dans `.env` (scope `read`) pour beneficier d'un debit de telechargement
 > correct. Aucune acceptation de licence n'est requise.
@@ -222,13 +230,13 @@ Cela telecharge les 5 fichiers depuis le bucket MinIO `s3://models/dvc`.
 
 | Parametre | Valeur |
 |-----------|--------|
-| **Modele de base** | `Qwen/Qwen3.5-4B` (~4 milliards de parametres, multilingue natif) |
+| **Modele de base** | `Qwen/Qwen3-4B` (~4 milliards de parametres, dense transformer, multilingue natif) |
 | **Licence** | Apache-2.0 (librement accessible, pas de gated access) |
 | **Methode** | LoRA (Low-Rank Adaptation) via PEFT |
 | **Rang LoRA (r)** | 16 |
 | **Alpha LoRA** | 32 |
 | **Dropout LoRA** | 0.05 |
-| **Modules cibles** | `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj` |
+| **Modules cibles** | `q_proj`, `k_proj`, `v_proj`, `o_proj` (attention uniquement, MLP exclu pour garder la VRAM sous 24 Go avec gradient checkpointing) |
 | **Parametres entrainables** | ~20 M / 4 000 M (~0.5%) |
 | **Taille des poids LoRA** | ~80 Mo (`adapter_model.safetensors`) |
 | **Epochs** | 3 |
@@ -250,7 +258,7 @@ Les 3 architectures comparees lors du benchmark initial (septembre 2025 a fevrie
 | **CO2** | 97.8 g | 108.8 g | 112.0 g |
 
 Llama 3.2 3B + LoRA a ete le champion de production jusqu'en avril 2026.
-Il est remplace par **Qwen3.5-4B + LoRA** pour trois raisons :
+Il est remplace par **Qwen3-4B + LoRA** pour trois raisons :
 - **Multilinguisme natif** (FR/EN/DE/ES/ZH) : traitement direct d'articles
   non anglophones, sans etape de traduction.
 - **Licence Apache-2.0** : pas de demande d'acces gated Meta.
@@ -411,7 +419,7 @@ Le corpus initial contient 5808 articles provenant de 3 sources, deja stockes da
 
 Le pipeline de re-entrainement sert a **ajouter de nouveaux articles** depuis les sources en ligne, puis a re-entrainer le modele sur le corpus elargi (anciens + nouveaux). Les articles deja en base ne sont jamais perdus ni re-ingeres (deduplication par URL).
 
-Le modele est toujours re-entraine **depuis le modele de base** Qwen3.5-4B (pas depuis la version precedemment fine-tunee). Les poids LoRA sont recalcules entierement a chaque entrainement sur le dataset complet.
+Le modele est toujours re-entraine **depuis le modele de base** Qwen3-4B (pas depuis la version precedemment fine-tunee). Les poids LoRA sont recalcules entierement a chaque entrainement sur le dataset complet.
 
 La promotion en production est **conditionnelle** : le nouveau modele ne remplace l'ancien que s'il a un F1 superieur ou egal. L'application utilise donc toujours la meilleure version jamais entrainee.
 
@@ -430,7 +438,7 @@ Cette commande execute 7 etapes dans l'ordre (pipeline complet avec classificati
 | **3. classify** (etage 2) | **LLM judge** : envoie les articles `CANDIDATE` a `Qwen/Qwen2.5-7B-Instruct` via l'API HF Serverless (fallback automatique sur GPU local ROCm si quota HF epuise). Le LLM tranche avec un prompt zero-shot specialise et ecrit le verdict final (`est_green_it=true/false`, `score_confiance`, `modele_classification='keyword_filter+qwen_llm_judge'`). |
 | **4. summarize** | Genere les **deux resumes** (general + ecologique) uniquement pour les articles confirmes Green IT (`est_green_it=true` + `resume IS NULL OR resume_ecologique IS NULL`). Appels paralleles via `asyncio.gather`. Utilise le meme dispatcher avec fallback local. |
 | **5. export-golden** | Regenere `data/golden_dataset.csv` a partir de l'etat final de la DB (post-etage 2). Ce CSV sert de source de verite pour l'entrainement du classifieur. |
-| **6. train-cv** | Re-entraine **Qwen3.5-4B + LoRA** en **K-fold stratifie (K=5)**, puis entraine un modele final sur l'integralite des donnees. Les metriques par fold et agregees sont trackees dans MLflow + `models/cv_report.json`. L'empreinte CO2 est mesuree par CodeCarbon. |
+| **6. train-cv** | Re-entraine **Qwen3-4B + LoRA** en **K-fold stratifie (K=5)**, puis entraine un modele final sur l'integralite des donnees. Les metriques par fold et agregees sont trackees dans MLflow + `models/cv_report.json`. L'empreinte CO2 est mesuree par CodeCarbon. |
 | **7. auto-promote** | Benchmark le nouveau modele vs le meilleur historique vs la baseline. Evalue 4 criteres composites : MCC >= seuil, Recall Green IT >= 0.5, F1 non-regression, stabilite CV. Si tous OK : archive l'ancien, copie le nouveau en production, enregistre ses metriques. Sinon : rien ne change, l'ancien reste en production. |
 
 ### Ajouter des fichiers manuellement
@@ -533,7 +541,7 @@ Chaque promotion archive automatiquement l'ancien modele :
 ```
 models/
   production/              # Modele actif (utilise par l'API)
-  challenger-qwen35/       # Derniere version entrainee (Qwen3.5-4B + LoRA, modele final post-CV)
+  challenger-qwen3/        # Derniere version entrainee (Qwen3-4B + LoRA, modele final post-CV)
   challenger-llama/        # Ancienne version legacy (Llama 3.2 3B + LoRA, archive)
   cv_fold_1/ ... cv_fold_5/  # Adapters LoRA de chaque fold (train-cv)
   best_metrics.json        # Metriques completes du meilleur modele promu
@@ -558,14 +566,14 @@ docker compose restart api
 ### Entrainer les 4 modeles (benchmark complet inter-architectures)
 
 Pour relancer la competition entre les 4 architectures disponibles (DeBERTa,
-Qwen2.5-3B, Llama 3.2 3B, Qwen3.5-4B) :
+Qwen2.5-3B, Llama 3.2 3B, Qwen3-4B) :
 
 ```bash
 # Entraine les 4 modeles sequentiellement (champion + 3 challengers)
 uv run python -m greentech.ai.models.training
 
 # Ou entraine un modele specifique
-uv run python -m greentech.ai.models.training challenger-qwen35  # Nouveau champion recommande
+uv run python -m greentech.ai.models.training challenger-qwen3   # Nouveau champion recommande
 uv run python -m greentech.ai.models.training challenger-llama   # Legacy
 uv run python -m greentech.ai.models.training challenger-qwen    # Legacy
 uv run python -m greentech.ai.models.training champion-deberta   # Encoder seq-cls classique

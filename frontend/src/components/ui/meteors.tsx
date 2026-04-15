@@ -25,8 +25,13 @@ export const Meteors = ({
     []
   )
 
+  // Effet d'initialisation : on a besoin de `Math.random()` (non autorise par
+  // `react-hooks/purity` dans un `useMemo`) et de `window.innerWidth` (non
+  // disponible au premier render SSR). Le setState est volontairement fait
+  // ici car les styles dependent de valeurs externes impures. Composant
+  // decoratif issu de magic-ui, pas de logique metier sous-jacente.
   useEffect(() => {
-    const styles = [...new Array(number)].map(() => ({
+    const styles = Array.from({ length: number }, () => ({
       "--angle": -angle + "deg",
       top: "-5%",
       left: `calc(0% + ${Math.floor(Math.random() * window.innerWidth)}px)`,
@@ -35,6 +40,7 @@ export const Meteors = ({
         Math.floor(Math.random() * (maxDuration - minDuration) + minDuration) +
         "s",
     }))
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initialisation unique depuis valeurs impures (Math.random, window)
     setMeteorStyles(styles)
   }, [number, minDelay, maxDelay, minDuration, maxDuration, angle])
 

@@ -198,8 +198,7 @@ async def summarize_text(text: str) -> SummaryResult:
         summary = contenu.strip()
         backend = _backend_tag(modele)
         logger.info(
-            f"Resume general genere en {elapsed_ms}ms "
-            f"({len(summary)} chars, backend={backend})"
+            f"Resume general genere en {elapsed_ms}ms ({len(summary)} chars, backend={backend})"
         )
 
         if not summary:
@@ -254,9 +253,7 @@ async def summarize_green_aspects(text: str) -> SummaryResult:
     modele = settings.huggingface_model_green_summarizer
 
     if not text or len(text.strip()) < MIN_INPUT_CHARS:
-        logger.warning(
-            f"Texte trop court pour le resume ecologique ({len(text)} chars)"
-        )
+        logger.warning(f"Texte trop court pour le resume ecologique ({len(text)} chars)")
         return SummaryResult(
             id_article=0,
             resume=None,
@@ -289,8 +286,7 @@ async def summarize_green_aspects(text: str) -> SummaryResult:
         summary = contenu.strip()
         backend = _backend_tag(modele)
         logger.info(
-            f"Resume ecologique genere en {elapsed_ms}ms "
-            f"({len(summary)} chars, backend={backend})"
+            f"Resume ecologique genere en {elapsed_ms}ms ({len(summary)} chars, backend={backend})"
         )
 
         if not summary:
@@ -347,9 +343,7 @@ async def summarize_green_for_article(
         return await _summarize_green_impl(article_id, own_session)
 
 
-async def _summarize_green_impl(
-    article_id: int, session: AsyncSession
-) -> SummaryResult:
+async def _summarize_green_impl(article_id: int, session: AsyncSession) -> SummaryResult:
     """Implementation interne : lit l'article, genere le resume ecologique, persiste."""
     stmt = select(Article).where(Article.id_article == article_id)
     result = await session.execute(stmt)
@@ -420,9 +414,7 @@ async def summarize_article(
         return await _summarize_article_impl(article_id, own_session)
 
 
-async def _summarize_article_impl(
-    article_id: int, session: AsyncSession
-) -> SummaryResult:
+async def _summarize_article_impl(article_id: int, session: AsyncSession) -> SummaryResult:
     """Implementation interne du resume d'article avec session geree par l'appelant.
 
     Args:
@@ -470,8 +462,7 @@ async def _summarize_article_impl(
         await session.execute(stmt_update)
         await session.commit()
         logger.info(
-            f"Article id={article_id} : résumé stocké en base "
-            f"({len(summary_result.resume)} chars)"
+            f"Article id={article_id} : résumé stocké en base ({len(summary_result.resume)} chars)"
         )
 
     return summary_result
@@ -519,8 +510,7 @@ async def summarize_batch(
             return []
 
         logger.info(
-            f"Résumé de {len(articles)} articles en cours "
-            f"(green_it_only={green_it_only})..."
+            f"Résumé de {len(articles)} articles en cours (green_it_only={green_it_only})..."
         )
         results: list[SummaryResult] = []
 
@@ -595,10 +585,7 @@ async def summarize_green_it_articles(
         logger.info("Aucun article Green IT en attente de résumé")
         return stats
 
-    logger.info(
-        f"Résumé Green IT : {len(article_ids)} articles "
-        f"(ecological={include_ecological})"
-    )
+    logger.info(f"Résumé Green IT : {len(article_ids)} articles (ecological={include_ecological})")
 
     for index, id_article in enumerate(article_ids, start=1):
         logger.info(f"[{index}/{len(article_ids)}] Article {id_article}")

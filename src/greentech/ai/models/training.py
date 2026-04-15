@@ -3,16 +3,25 @@
 Champion     : DeBERTa-v3-base (fine-tuning classique via Transformers Trainer)
 Challenger 1 : Qwen2.5-3B (fine-tuning LoRA via PEFT, 3085M params, legacy)
 Challenger 2 : Llama 3.2 3B (fine-tuning LoRA via PEFT, 3213M params, gated, legacy)
-Challenger 3 : Qwen3.5-4B (fine-tuning LoRA via PEFT, 4000M params, Apache-2.0)
+Challenger 3 : Qwen3-4B (fine-tuning LoRA via PEFT, ~4000M params, Apache-2.0)
 
-Le challenger Qwen3.5-4B est le modele d'entrainement cible depuis le
-14 avril 2026 : il remplace Llama 3.2 3B comme base du pipeline de
+Le challenger Qwen3-4B est le modele d'entrainement cible depuis le
+15 avril 2026 : il remplace Llama 3.2 3B comme base du pipeline de
 production (`scripts/retrain_pipeline.py`). Avantages :
+  - Architecture dense transformer standard, pleinement supportee par
+    `transformers` et compatible ROCm sans dependance exotique.
   - Multilingue natif (FR/EN/DE/ES/ZH) pour traiter les articles scrapes
     sans etape de traduction.
   - Licence Apache-2.0 (pas de gated access).
-  - Architecture compatible avec la pile actuelle (chat template Qwen,
-    meme tokenizer family que Qwen2.5 deja en place pour le LLM judge).
+  - Meme famille que `Qwen3-4B-Instruct-2507` deja utilise pour les
+    summarizers et le LLM judge : chat template et tokenizer unifies.
+
+La tentative precedente avec `Qwen/Qwen3.5-4B` a ete abandonnee parce qu'il
+s'agit en realite d'un modele multimodal vision-langage (image-text-to-text)
+avec une architecture a attention lineaire hybride necessitant
+`flash-linear-attention` + `causal-conv1d` - aucun support ROCm fiable.
+L'utilisation d'`AutoModelForSequenceClassification` chargeait les blocs
+visuels comme poids "UNEXPECTED" et saturait la VRAM au premier step.
 
 Tous les modeles sont entraines sur le Golden Dataset annote et compares
 via MLflow (accuracy, F1, MCC, latence, emissions CO2).
@@ -21,12 +30,12 @@ Gere le desequilibre extreme du dataset (22 Green IT / 5786 Non Green IT)
 via oversampling de la minorite a ~20%.
 
 Usage:
-    uv run python -m greentech.ai.models.training                    # Tous les modeles
-    uv run python -m greentech.ai.models.training champion-deberta   # Champion seul
-    uv run python -m greentech.ai.models.training challenger-qwen    # Qwen2.5-3B (legacy)
-    uv run python -m greentech.ai.models.training challenger-llama   # Llama 3.2 3B (legacy)
-    uv run python -m greentech.ai.models.training challenger-qwen35  # Qwen3.5-4B (recommande)
-    uv run python -m greentech.ai.models.training benchmark          # Benchmark comparatif
+    uv run python -m greentech.ai.models.training                   # Tous les modeles
+    uv run python -m greentech.ai.models.training champion-deberta  # Champion seul
+    uv run python -m greentech.ai.models.training challenger-qwen   # Qwen2.5-3B (legacy)
+    uv run python -m greentech.ai.models.training challenger-llama  # Llama 3.2 3B (legacy)
+    uv run python -m greentech.ai.models.training challenger-qwen3  # Qwen3-4B (recommande)
+    uv run python -m greentech.ai.models.training benchmark         # Benchmark comparatif
 
 """
 
@@ -68,21 +77,21 @@ VALID_MODELS = (
     "champion-deberta",
     "challenger-qwen",
     "challenger-llama",
-    "challenger-qwen35",
+    "challenger-qwen3",
 )
 
-# Modules cibles LoRA specifiques a l'architecture Qwen3.5 : on couvre
-# toutes les projections lineaires des blocs attention ET MLP. Couvrir le MLP
-# (gate/up/down) en plus de l'attention est critique pour Qwen dont le MLP
-# contient une part importante de la capacite representative.
-QWEN35_LORA_TARGET_MODULES: list[str] = [
+# Modules cibles LoRA specifiques a l'architecture Qwen3 : on couvre les
+# quatre projections lineaires de l'attention uniquement. On exclut
+# volontairement les projections MLP (gate/up/down) parce qu'elles sont
+# ~3x plus grosses que celles d'attention et multiplieraient par autant la
+# consommation memoire des gradients et des etats d'optimiseur, sans gain
+# evident sur une tache de classification binaire. Limiter LoRA a
+# l'attention permet de garder le K-fold stable sur 24 Go de VRAM.
+QWEN3_LORA_TARGET_MODULES: list[str] = [
     "q_proj",
     "k_proj",
     "v_proj",
     "o_proj",
-    "gate_proj",
-    "up_proj",
-    "down_proj",
 ]
 
 
@@ -337,16 +346,20 @@ class ChallengerClassifier(BaseClassifier):
         val_texts: list[str],
         val_labels: list[int],
     ) -> dict[str, float]:
-        """Entraîne Llama 3.2 3B avec LoRA sur le dataset annoté.
+        """Entraine le modele de base configure avec LoRA sur le dataset annote.
+
+        La base effectivement utilisee depend de `self.config.nom_modele` (Qwen3-4B
+        par defaut via `ChallengerQwen3Classifier`, Qwen2.5-3B ou Llama 3.2 3B pour
+        les sous-classes legacy).
 
         Args:
-            train_texts: Textes d'entraînement.
+            train_texts: Textes d'entrainement.
             train_labels: Labels (0/1).
             val_texts: Textes de validation.
             val_labels: Labels de validation.
 
         Returns:
-            Métriques finales (accuracy, f1, precision, recall).
+            Metriques finales (accuracy, f1, precision, recall).
         """
         from peft import LoraConfig as PeftLoraConfig
         from peft import TaskType, get_peft_model
@@ -416,9 +429,20 @@ class ChallengerClassifier(BaseClassifier):
             seed=self.config.seed,
             bf16=True,
             gradient_accumulation_steps=4,
+            # Gradient checkpointing : echange le cout memoire des activations
+            # contre un leger surcout en temps de calcul (~20%). Indispensable
+            # pour tenir un LoRA 4B en BF16 sur 24 Go de VRAM avec `use_reentrant=False`
+            # (recommande par transformers >=5).
+            gradient_checkpointing=True,
+            gradient_checkpointing_kwargs={"use_reentrant": False},
             logging_steps=10,
             report_to="none",
         )
+
+        # Le gradient checkpointing exige que le cache KV soit desactive :
+        # les activations ne sont pas stockees pour le backward et elles
+        # seraient recalculees depuis le cache, ce qui casse l'entrainement.
+        self.model.config.use_cache = False
 
         trainer = Trainer(
             model=self.model,
@@ -428,7 +452,9 @@ class ChallengerClassifier(BaseClassifier):
             compute_metrics=compute_metrics,
         )
 
-        logger.info("Demarrage de l'entrainement Challenger (Qwen2.5-3B + LoRA)...")
+        logger.info(
+            f"Demarrage de l'entrainement Challenger ({self.config.nom_modele} + LoRA)..."
+        )
         train_result = trainer.train()
 
         eval_result = trainer.evaluate()
@@ -440,14 +466,14 @@ class ChallengerClassifier(BaseClassifier):
         }
 
     def _prepare_dataset(self, texts: list[str], labels: list[int]) -> Dataset:
-        """Tokenize les textes pour Llama.
+        """Tokenize les textes pour le challenger (Qwen ou Llama).
 
         Args:
             texts: Liste de textes bruts.
             labels: Liste de labels correspondants.
 
         Returns:
-            Dataset tokenizé.
+            Dataset tokenise.
         """
         dataset = Dataset.from_dict({"text": texts, "label": labels})
 
@@ -464,13 +490,13 @@ class ChallengerClassifier(BaseClassifier):
         return dataset
 
     async def predict(self, text: str) -> PredictionResult:
-        """Classifie un texte avec Llama + LoRA.
+        """Classifie un texte avec la base du challenger + LoRA.
 
         Args:
-            text: Texte de l'article à classifier.
+            text: Texte de l'article a classifier.
 
         Returns:
-            Résultat avec label et score de confiance.
+            Resultat avec label et score de confiance.
         """
         if self.model is None or self.tokenizer is None:
             msg = "Modèle non chargé. Appelez load() ou train() d'abord."
@@ -543,21 +569,24 @@ class ChallengerClassifier(BaseClassifier):
         logger.info(f"Challenger chargé depuis {model_path} sur {device}")
 
 
-class ChallengerQwen35Classifier(ChallengerClassifier):
-    """Classifieur Challenger base sur `Qwen/Qwen3.5-4B` + LoRA.
+class ChallengerQwen3Classifier(ChallengerClassifier):
+    """Classifieur Challenger base sur `Qwen/Qwen3-4B` + LoRA.
 
     Specialise la classe generique `ChallengerClassifier` avec les choix
-    adaptes a Qwen3.5 :
+    adaptes a Qwen3-4B :
 
-    - Base : `Qwen/Qwen3.5-4B` (~4B parametres, Apache-2.0, multilingue natif)
+    - Base : `Qwen/Qwen3-4B` (~4B parametres, Apache-2.0, multilingue natif,
+      architecture dense transformer standard compatible ROCm).
     - Sortie : 2 classes (Green IT / Non Green IT) via tete de classification
-      sequence (SEQ_CLS), adaptateurs LoRA appliques aux projections
-      attention ET MLP.
+      sequence (SEQ_CLS), adaptateurs LoRA appliques aux projections de
+      l'attention uniquement (q/k/v/o). Le MLP est volontairement exclu
+      pour garder la consommation VRAM compatible avec une RX 7900 XTX.
     - Hyperparametres par defaut calibres pour RX 7900 XTX 24 Go en BF16 :
       batch 2 + gradient accumulation x4 = batch effectif 8, sequences
-      tronquees a la longueur definie dans `settings.trainer_max_length`.
+      tronquees a la longueur definie dans `settings.trainer_max_length`
+      (512 par defaut), gradient checkpointing active pour tenir la memoire.
 
-    Le modele final (LoRA adapter) pese ~80 Mo vs ~8 Go pour le base model :
+    Le modele final (LoRA adapter) pese ~30 Mo vs ~8 Go pour le base model :
     c'est l'adaptateur seul qui est versionne dans `models/production/`
     et pousse vers DVC/MinIO.
     """
@@ -571,21 +600,22 @@ class ChallengerQwen35Classifier(ChallengerClassifier):
         if config is None:
             config = TrainingConfig(
                 nom_modele=settings.huggingface_model_trainer_base,
-                output_dir=BASE_DIR / "models" / "challenger-qwen35",
+                output_dir=BASE_DIR / "models" / "challenger-qwen3",
                 epochs=3,
                 batch_size=2,
                 learning_rate=2e-4,
                 max_length=settings.trainer_max_length,
             )
         if lora_config is None:
-            # r=16 : bon compromis capacite / taille d'adaptateur (~80 Mo).
+            # r=16 : bon compromis capacite / taille d'adaptateur (~30 Mo
+            # avec target_modules limites a l'attention).
             # alpha=32 (2*r) conforme aux conventions PEFT.
             # Dropout 0.05 suffisant avec un dataset fortement oversample.
             lora_config = LoraConfig(
                 r=16,
                 alpha=32,
                 dropout=0.05,
-                target_modules=list(QWEN35_LORA_TARGET_MODULES),
+                target_modules=list(QWEN3_LORA_TARGET_MODULES),
             )
         super().__init__(config, lora_config)
 
@@ -756,7 +786,8 @@ def _build_classifier_and_config(
     """Construit le classifieur et sa config MLflow selon le type demande.
 
     Args:
-        model_type: Un de 'champion-deberta', 'challenger-qwen', 'challenger-llama'.
+        model_type: Un de 'champion-deberta', 'challenger-qwen',
+            'challenger-llama', 'challenger-qwen3'.
 
     Returns:
         Tuple (classifieur, config MLflow).
@@ -832,14 +863,14 @@ def _build_classifier_and_config(
                 "lora_alpha": classifier.lora_config.alpha,
             },
         )
-    else:  # challenger-qwen35
-        classifier = ChallengerQwen35Classifier()
+    else:  # challenger-qwen3
+        classifier = ChallengerQwen3Classifier()
         exp_config = ExperimentConfig(
             nom_experience="greentech-classification",
-            nom_run="challenger-qwen3.5-4b-lora",
+            nom_run="challenger-qwen3-4b-lora",
             tags={
-                "type": "challenger-qwen35",
-                "modele": "qwen3.5-4b",
+                "type": "challenger-qwen3",
+                "modele": "qwen3-4b",
                 "method": "lora",
                 "multilingue": "oui",
             },
@@ -848,6 +879,7 @@ def _build_classifier_and_config(
                 "epochs": classifier.config.epochs,
                 "batch_size": classifier.config.batch_size,
                 "gradient_accumulation_steps": 4,
+                "gradient_checkpointing": True,
                 "learning_rate": classifier.config.learning_rate,
                 "max_length": classifier.config.max_length,
                 "method": "lora",
@@ -861,7 +893,7 @@ def _build_classifier_and_config(
 
 
 async def train_challenger_with_cv(
-    model_type: str = "challenger-qwen35",
+    model_type: str = "challenger-qwen3",
     *,
     n_splits: int = 5,
     random_state: int = 42,
@@ -887,7 +919,7 @@ async def train_challenger_with_cv(
     estimation honnete de la performance sur donnees non vues.
 
     Args:
-        model_type: "challenger-llama" ou "challenger-qwen".
+        model_type: "challenger-llama", "challenger-qwen" ou "challenger-qwen3".
         n_splits: Nombre de folds (defaut 5).
         random_state: Seed pour la reproductibilite du split.
         oversample_ratio: Ratio cible de la minorite apres oversampling (sur le train de chaque fold).
@@ -909,7 +941,7 @@ async def train_challenger_with_cv(
 
     from greentech.ai.mlops import prometheus_metrics as promm
 
-    valid_challengers = ("challenger-llama", "challenger-qwen", "challenger-qwen35")
+    valid_challengers = ("challenger-llama", "challenger-qwen", "challenger-qwen3")
     if model_type not in valid_challengers:
         msg = (
             f"K-fold disponible uniquement pour les challengers "
@@ -998,9 +1030,7 @@ async def train_challenger_with_cv(
                 fold_preds.append(pred.label.value)
                 fold_latencies.append(pred.temps_ms)
 
-            fold_metrics_dict = _compute_fold_metrics(
-                test_labels_fold, fold_preds, fold_latencies
-            )
+            fold_metrics_dict = _compute_fold_metrics(test_labels_fold, fold_preds, fold_latencies)
             fold_metrics_dict["fold"] = fold_idx
             fold_metrics_dict["n_test"] = len(test_texts_fold)
             fold_metrics_dict["n_green_test"] = n_green_test
@@ -1026,11 +1056,7 @@ async def train_challenger_with_cv(
                 run_name=cv_run_name,
                 fold=fold_idx,
                 total_folds=n_splits,
-                metrics={
-                    k: v
-                    for k, v in fold_metrics_dict.items()
-                    if isinstance(v, int | float)
-                },
+                metrics={k: v for k, v in fold_metrics_dict.items() if isinstance(v, int | float)},
                 duration_seconds=fold_duration,
             )
 
@@ -1194,7 +1220,8 @@ async def train_single(model_type: str) -> dict[str, float]:
     """Entraîne un seul modele avec tracking MLflow et mesure carbone.
 
     Args:
-        model_type: Un de 'champion-deberta', 'challenger-qwen', 'challenger-llama'.
+        model_type: Un de 'champion-deberta', 'challenger-qwen',
+            'challenger-llama', 'challenger-qwen3'.
 
     Returns:
         Metriques finales du modele entraine.
@@ -1270,10 +1297,10 @@ async def benchmark_models() -> dict[str, dict[str, float]]:
             "challenger-llama",
         ),
         (
-            "challenger_qwen35",
-            "Challenger Qwen3.5-4B+LoRA",
-            BASE_DIR / "models" / "challenger-qwen35",
-            "challenger-qwen35",
+            "challenger_qwen3",
+            "Challenger Qwen3-4B+LoRA",
+            BASE_DIR / "models" / "challenger-qwen3",
+            "challenger-qwen3",
         ),
     ]
 
@@ -1397,7 +1424,7 @@ if __name__ == "__main__":
 
     from greentech.utils.logger import setup_logging
 
-    # Loki active : permet de suivre l'entrainement Llama en direct via
+    # Loki active : permet de suivre l'entrainement en direct via
     # Grafana Explore (filtres {module="training"}, {level="info"}).
     setup_logging(level="INFO", enable_loki=True)
 

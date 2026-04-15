@@ -32,13 +32,17 @@ Architecture a 4 modeles en competition :
 | **Champion** DeBERTa-v3-base | Encoder | 86M | Full fine-tuning | ENTRAINE | 0.44 | 99.6% | 97.8g |
 | **Challenger 1** Qwen2.5-3B | Causal LM | 3085M | LoRA (r=16) | ENTRAINE | 0.40 | 99.74% | 108.8g |
 | **Challenger 2** Llama 3.2 3B | Causal LM | 3213M | LoRA (r=16) | ENTRAINE | 0.667 | 99.83% | 112.0g |
-| **Challenger 3** Qwen3.5-4B | Causal LM (multilingue) | ~4000M | LoRA (r=16, attn+MLP) | PRET A ENTRAINER | - | - | - |
+| **Challenger 3** Qwen3-4B | Causal LM (multilingue) | ~4000M | LoRA (r=16, attention only) | PRET A ENTRAINER | - | - | - |
 
 - Oversampling de la classe minoritaire (22 → 1152, ratio 20%)
 - Benchmark final initial execute sur 1162 articles de test
 - **Vainqueur historique** : Llama 3.2 3B + LoRA (F1=0.667, precision 1.0, recall 0.50)
-- **Nouveau modele cible depuis avril 2026** : Qwen3.5-4B + LoRA (Apache-2.0,
+- **Nouveau modele cible depuis avril 2026** : Qwen3-4B + LoRA (Apache-2.0,
   multilingue natif, remplace Llama gated). Metriques en cours de mesure.
+- **Note** : une tentative intermediaire avec `Qwen/Qwen3.5-4B` (15 avril 2026)
+  a ete abandonnee — ce modele est en realite un VLM (image-text-to-text)
+  avec attention lineaire hybride non supportee sous ROCm, provoquant des
+  freezes systeme a l'entrainement LoRA.
 
 #### Section 3.4 : Validation & Packaging - **TERMINEE**
 - Tests Deepchecks ecrits et fonctionnels
@@ -63,7 +67,7 @@ Architecture a 4 modeles en competition :
 - Suite de tests d'integration : **39 tests**, tous passent
 - Middleware logging, CORS configurable via env, gestion d'erreurs globale
 - Integration du modele IA vainqueur dans inference.py (dispatch automatique :
-  Qwen3.5-4B + LoRA si adapter_config pointe vers Qwen3.5, Llama 3.2 3B + LoRA
+  Qwen3-4B + LoRA si adapter_config pointe vers qwen3-4b, Llama 3.2 3B + LoRA
   sinon, DeBERTa si pas d'adapter_config)
 - Documentation OpenAPI/Swagger complete sur /docs et /redoc
 - Dockerfile.api multi-stage (uv, python:3.12-slim, non-root)
