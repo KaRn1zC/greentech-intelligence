@@ -44,7 +44,7 @@
 
 | Donnée | Source | Type | Sensible | Collectée | Stockée | Exposée API |
 |--------|--------|------|----------|-----------|---------|-------------|
-| Nom complet de l'auteur | NewsData.io, TechCrunch, arXiv | Identité | ⚠️ Oui | Oui | **Non** (anonymisée) | **Non** |
+| Nom complet de l'auteur | The Guardian, Dev.to, TechCrunch, arXiv | Identité | ⚠️ Oui | Oui | **Non** (anonymisée) | **Non** |
 | Initiales de l'auteur | Transformation automatique | Pseudonyme | Non | Non | Oui | Oui |
 | Adresse e-mail | (non collectée) | Contact | ⚠️ Oui | **Non** | **Non** | **Non** |
 | Titre de l'article | Toutes sources | Contenu éditorial | Non | Oui | Oui | Oui |
@@ -135,8 +135,9 @@ Les données personnelles identifiées dans les sources de collecte sont :
 
 | Source | Donnée | Champ brut | Nature | Traitement |
 |--------|--------|------------|--------|------------|
-| NewsData.io | Nom de l'auteur | `creator` (array) | Identité | Anonymisation |
-| TechCrunch | Nom de l'auteur | Extrait du HTML | Identité | Anonymisation |
+| The Guardian | Nom de l'auteur | `fields.byline` (string) | Identité | Anonymisation |
+| Dev.to | Nom de l'auteur | `user.name` (string) | Identité | Anonymisation |
+| TechCrunch | Nom de l'auteur | Extrait du HTML (`a[href*="/author/"]`) | Identité | Anonymisation |
 | arXiv | Noms des chercheurs | `authors` (string) | Identité | Anonymisation |
 
 ### 4.2 Règles d'anonymisation automatique
@@ -287,7 +288,8 @@ DELETE FROM articles WHERE id_article IN (...);
 
 | Service | Fournisseur | Localisation | Données transmises | Base légale |
 |---------|-------------|--------------|-------------------|-------------|
-| **NewsData.io API** | NewsData.io | États-Unis | Mots-clés de recherche uniquement | Clause contractuelle type |
+| **The Guardian API** | Guardian News & Media | Royaume-Uni | Mots-clés de recherche uniquement | Clause contractuelle type |
+| **Dev.to API** | Forem Inc. | États-Unis | Tags de recherche uniquement | Clause contractuelle type |
 | **Hugging Face API** | Hugging Face Inc. | États-Unis | Texte des articles (anonymisé) | Clause contractuelle type |
 | **Hébergement** | Render | États-Unis | Données applicatives | Clause contractuelle type |
 

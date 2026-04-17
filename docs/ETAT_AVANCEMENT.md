@@ -1,6 +1,6 @@
 # Etat d'avancement du projet - GreenTech Intelligence
 
-> **Derniere mise a jour** : 2026-04-14
+> **Derniere mise a jour** : 2026-04-17
 
 ---
 
@@ -10,7 +10,7 @@
 Toutes les dependances et outils sont installes et configures.
 
 ### ETAPE 2 : Data Factory & Gestion de Donnees (Bloc E1) - **TERMINEE**
-Pipeline complet operationnel : 3 sources de collecte, nettoyage PySpark, ingestion PostgreSQL.
+Pipeline complet operationnel : 4 sources actives de collecte (The Guardian, Dev.to, TechCrunch, arXiv), nettoyage PySpark, ingestion PostgreSQL.
 
 ### ETAPE 3 : Intelligence Artificielle (Blocs E2 & E3) - **TERMINEE**
 
@@ -20,7 +20,7 @@ Pipeline complet operationnel : 3 sources de collecte, nettoyage PySpark, ingest
 - Module summarizer.py developpe et fonctionnel
 
 #### Section 3.2 : Preparation des Donnees & MLOps - **TERMINEE**
-- **Golden Dataset** : CREE et annote (5808 articles, 22 Green IT / 5786 Non Green IT)
+- **Golden Dataset** : CREE et annote (5730 articles, 17 Green IT / 5713 Non Green IT). Feature d'entrainement : `titre + resume_classification` (resume LLM style abstract, 150-220 mots)
 - **DVC** : Initialise, remote MinIO configure, dataset versionne et pousse (s3://models/dvc)
 
 #### Section 3.3 : Entrainement & Competition des Modeles - **TERMINEE**
@@ -153,7 +153,7 @@ Le projet utilise des noms de colonnes en **francais** dans toute la stack (SQL,
 
 ### Classification hybride en deux etages
 Le scoring mots-cles historique a ete refactore en **pre-filtre permissif**,
-complete par un LLM judge (`Qwen/Qwen2.5-7B-Instruct`) qui tranche les
+complete par un LLM judge (`Qwen/Qwen3-4B-Instruct-2507`) qui tranche les
 cas ambigus. Le golden dataset est desormais regenere a partir de la DB
 post-LLM, pas du scoring seul.
 

@@ -10,26 +10,57 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- TABLES DE CONFIGURATION
 -- =============================================================================
 
--- Table de configuration des recherches (Source SQL dynamique)
+-- Table de configuration des recherches (Source SQL dynamique).
+-- type_source accepte les categories generiques (api, scraping, file) ainsi
+-- que les sous-types dedies a chaque API REST/JSON (guardian, devto,
+-- newsdata legacy). Cela permet aux collecteurs de filtrer precisement
+-- leurs mots-cles sans se marcher dessus.
 CREATE TABLE IF NOT EXISTS search_config (
     id_config SERIAL PRIMARY KEY,
     mot_cle VARCHAR(100) NOT NULL,
     url_source TEXT,
-    type_source VARCHAR(20) CHECK (type_source IN ('api', 'scraping', 'file')),
+    type_source VARCHAR(20) CHECK (type_source IN ('api', 'scraping', 'file', 'guardian', 'devto', 'newsdata')),
     priorite INTEGER DEFAULT 1,
     actif BOOLEAN DEFAULT true,
     date_creation TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     date_modification TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Données initiales de configuration
+-- Donnees initiales de configuration. Depuis avril 2026, les collecteurs
+-- REST/JSON utilisent The Guardian Open Platform (tier Developer,
+-- 5000 req/jour) et Dev.to / Forem API (pas de cle requise). NewsData.io
+-- reste configurable via type_source='newsdata' pour usage futur, mais
+-- n'est pas alimentee par defaut a cause de la troncature "ONLY AVAILABLE
+-- IN PAID PLANS" en free tier.
 INSERT INTO search_config (mot_cle, type_source, priorite) VALUES
-    ('Green IT', 'api', 1),
-    ('Sustainable AI', 'api', 1),
-    ('Eco-friendly Tech', 'api', 2),
+    -- === The Guardian (API REST/JSON principale, Green IT / Sustainability) ===
+    ('green IT', 'guardian', 1),
+    ('sustainable AI', 'guardian', 1),
+    ('data center sustainability', 'guardian', 2),
+    ('carbon footprint computing', 'guardian', 2),
+    ('energy efficient AI', 'guardian', 2),
+    ('green cloud computing', 'guardian', 2),
+    ('renewable energy technology', 'guardian', 3),
+    ('eco-friendly software', 'guardian', 3),
+    ('sustainable digital infrastructure', 'guardian', 3),
+    ('e-waste recycling', 'guardian', 3),
+    ('smart grid technology', 'guardian', 3),
+    ('low power machine learning', 'guardian', 3),
+    ('climate tech', 'guardian', 2),
+    ('circular economy technology', 'guardian', 3),
+    ('carbon neutral data center', 'guardian', 2),
+    -- === Dev.to (tags Green IT / sustainability) ===
+    ('greenit', 'devto', 1),
+    ('sustainability', 'devto', 1),
+    ('climatechange', 'devto', 2),
+    ('webperf', 'devto', 2),
+    ('environment', 'devto', 2),
+    ('cleanenergy', 'devto', 3),
+    ('sustainabletech', 'devto', 3),
+    ('greensoftware', 'devto', 3),
+    -- === TechCrunch (scraping hybride RSS + HTML) ===
     ('Carbon Footprint Software', 'scraping', 2),
     ('Energy Efficient Computing', 'scraping', 2),
-    ('Sustainable Software Development', 'api', 3),
     ('Data Center Sustainability', 'scraping', 3)
 ON CONFLICT DO NOTHING;
 
@@ -201,11 +232,28 @@ LIMIT 100;
 -- DONNÉES DE TEST (Développement uniquement)
 -- =============================================================================
 
--- Sources de test
-INSERT INTO sources (nom, type, url_base, description) VALUES
-    ('NewsData.io', 'api', 'https://newsdata.io/api/1/latest', 'API REST actualites technologiques'),
-    ('TechCrunch Climate', 'scraping', 'https://techcrunch.com/category/climate/', 'Blog tech - section Climate (Scraping Playwright)'),
-    ('arXiv Dataset', 'file', 'https://www.kaggle.com/datasets/Cornell-University/arxiv', 'Dataset scientifique Cornell University (1.7M+ articles)')
+-- Sources de donnees utilisees par le projet (3 types distincts pour
+-- satisfaire le critere E1 / C1 du referentiel de certification : une API
+-- REST/JSON, un scraping hybride, et un dataset volumineux traite avec Spark).
+INSERT INTO sources (nom, type, url_base, description, est_active) VALUES
+    ('The Guardian', 'api', 'https://content.guardianapis.com',
+     'API REST/JSON du journal The Guardian (tier Developer gratuit, 5000 req/jour, 12 req/s). Source principale REST/JSON depuis avril 2026 : contenu integral garanti (bodyText), sections environment/technology/sustainable-business.',
+     true),
+    ('Dev.to', 'api', 'https://dev.to/api',
+     'API publique Dev.to / Forem (aucune cle requise). Source REST/JSON complementaire apportant un registre technique/developpeur (tags greenit, sustainability, climatechange, webperf, environment).',
+     true),
+    ('TechCrunch Climate', 'scraping', 'https://techcrunch.com/category/climate/',
+     'Scraping hybride RSS + HTML Scrapy + Playwright. Section Climate de TechCrunch, articles complets extraits depuis le DOM rendu.',
+     true),
+    ('arXiv Dataset', 'file', 'https://www.kaggle.com/datasets/Cornell-University/arxiv',
+     'Dataset scientifique Cornell University (~1.7M articles, 3.6 Go JSON). Traite avec Apache Spark pour filtrer les categories cs.AI/cs.LG/cs.CL/cs.CV/cs.SE.',
+     true),
+    -- NewsData.io : conservee comme source historique mais desactivee par
+    -- defaut depuis avril 2026 a cause de la troncature systematique du
+    -- contenu en free tier (message "ONLY AVAILABLE IN PAID PLANS").
+    ('NewsData.io', 'api', 'https://newsdata.io/api/1/latest',
+     'LEGACY - Source API REST/JSON desactivee en avril 2026 (free tier tronque le contenu au placeholder "ONLY AVAILABLE IN PAID PLANS", dataset inexploitable). Remplacee par The Guardian.',
+     false)
 ON CONFLICT (nom) DO NOTHING;
 
 -- =============================================================================

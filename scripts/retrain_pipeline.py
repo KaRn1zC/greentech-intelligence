@@ -18,23 +18,26 @@ Usage:
     uv run python scripts/retrain_pipeline.py
 
     # Etapes individuelles
-    uv run python scripts/retrain_pipeline.py collect        # Collecte depuis les sources
-    uv run python scripts/retrain_pipeline.py annotate       # Etage 1 : pre-filtre mots-cles (binaire)
-    uv run python scripts/retrain_pipeline.py classify       # Etage 2 : LLM judge sur les candidats
-    uv run python scripts/retrain_pipeline.py summarize      # Resumes Green IT confirmes uniquement
-    uv run python scripts/retrain_pipeline.py export-golden  # Regenere golden_dataset.csv depuis la DB
-    uv run python scripts/retrain_pipeline.py baseline       # Metriques Qwen3-4B sans fine-tuning
-    uv run python scripts/retrain_pipeline.py train          # Entrainement rapide (split 80/20)
-    uv run python scripts/retrain_pipeline.py train-cv       # Entrainement robuste (K-fold stratifie K=5)
-    uv run python scripts/retrain_pipeline.py benchmark      # Benchmark nouveau vs production vs baseline
-    uv run python scripts/retrain_pipeline.py auto-promote   # Benchmark + promotion conditionnelle
-    uv run python scripts/retrain_pipeline.py promote        # Promotion manuelle (forcee)
+    uv run python scripts/retrain_pipeline.py collect            # Collecte depuis les sources
+    uv run python scripts/retrain_pipeline.py clean              # Supprime articles inexploitables (< 50 chars, NULL, placeholder)
+    uv run python scripts/retrain_pipeline.py summarize-classif  # Resume LLM pour tous les articles (feature d'entrainement)
+    uv run python scripts/retrain_pipeline.py annotate           # Etage 1 : pre-filtre mots-cles (binaire)
+    uv run python scripts/retrain_pipeline.py classify           # Etage 2 : LLM judge sur les candidats
+    uv run python scripts/retrain_pipeline.py summarize-green    # Resume ecologique pour les Green IT confirmes
+    uv run python scripts/retrain_pipeline.py summarize          # Alias : enchaine summarize-classif puis summarize-green
+    uv run python scripts/retrain_pipeline.py export-golden      # Regenere golden_dataset.csv depuis la DB
+    uv run python scripts/retrain_pipeline.py baseline           # Metriques Qwen3-4B sans fine-tuning
+    uv run python scripts/retrain_pipeline.py train              # Entrainement rapide (split 80/20)
+    uv run python scripts/retrain_pipeline.py train-cv           # Entrainement robuste (K-fold stratifie K=5)
+    uv run python scripts/retrain_pipeline.py benchmark          # Benchmark nouveau vs production vs baseline
+    uv run python scripts/retrain_pipeline.py auto-promote       # Benchmark + promotion conditionnelle
+    uv run python scripts/retrain_pipeline.py promote            # Promotion manuelle (forcee)
 
     # Ingerer un fichier manuellement
     uv run python scripts/retrain_pipeline.py ingest-file data/mon_fichier.json
 
     # Combiner des etapes (workflow recommande apres ajout de nouvelles donnees)
-    uv run python scripts/retrain_pipeline.py collect annotate classify summarize export-golden train-cv auto-promote
+    uv run python scripts/retrain_pipeline.py collect clean summarize-classif annotate classify summarize-green export-golden train-cv auto-promote
 
 Notes:
     - `train`    : entrainement 80/20 rapide, evaluation fragile (4 Green IT au test)
@@ -138,6 +141,14 @@ _LOGURU_LINE_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \| [A-Z]+\s+\|"
 )
 
+# Regex pour stripper les codes ANSI (coloration loguru console) AVANT de
+# tester _LOGURU_LINE_RE. Sans ce stripping, les lignes colorees du
+# subprocess (\033[32m...\033[0m) ne sont pas reconnues comme "deja
+# formatees par loguru" et sont re-loggees a tort comme ERROR par
+# _forward_stream, produisant des centaines de faux positifs (incident du
+# 17 avril 2026 : 869 fausses erreurs sur sql_ingester).
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
 # Regex detectant les warnings Python standards (`warnings.warn` via stderr).
 # Ces lignes ne passent pas par loguru et ne sont donc PAS dans le fichier de
 # log sans capture explicite. Exemples :
@@ -191,8 +202,12 @@ def _forward_stream(
 
         # Les lignes deja formatees par loguru sont ecrites dans le fichier
         # de log commun par le sous-process lui-meme : ne pas les republier
-        # depuis le parent (doublons garantis).
-        if _LOGURU_LINE_RE.match(line):
+        # depuis le parent (doublons garantis). On strip les codes ANSI avant
+        # le test car loguru en mode console colore ses lignes avec des
+        # escape sequences (\033[32m...\033[0m) qui empechent le regex
+        # loguru de matcher sur le texte brut.
+        clean_line = _ANSI_ESCAPE_RE.sub("", line)
+        if _LOGURU_LINE_RE.match(clean_line):
             traceback_active = False
             continue
 
@@ -521,16 +536,35 @@ def _log_detailed_metrics(metrics: dict, titre: str) -> None:
 
 
 def step_collect() -> bool:
-    """Re-collecte des donnees depuis les sources configurees."""
+    """Re-collecte des donnees depuis les sources configurees.
+
+    Interroge sequentiellement les trois types de sources :
+
+    1. **API REST/JSON** : The Guardian (source principale, 5000 req/jour)
+       puis Dev.to (complement, aucune cle requise). La NewsData.io est
+       desactivee depuis avril 2026 car son free tier tronque le contenu
+       au message "ONLY AVAILABLE IN PAID PLANS".
+    2. **Scraping** : TechCrunch Climate (Scrapy + Playwright sur le DOM rendu).
+    3. **Nettoyage + Ingestion SQL** sur l'ensemble des nouveaux articles.
+
+    Les erreurs sur les collectes REST/JSON n'interrompent pas le pipeline :
+    on continue avec les sources restantes, puis on fait le bilan final.
+    Seul un echec du nettoyage Spark ou de l'ingestion SQL est considere
+    comme bloquant.
+    """
     logger.info("=" * 70)
     logger.info("  COLLECTE DES DONNEES")
     logger.info("=" * 70)
 
     ok = True
 
-    logger.info("\n--- Collecte API (NewsData.io) ---")
-    if not _run_module("greentech.data.collectors.api_collector"):
-        logger.warning("Collecte API echouee (cle API manquante ?), on continue")
+    logger.info("\n--- Collecte API (The Guardian) ---")
+    if not _run_module("greentech.data.collectors.guardian_collector"):
+        logger.warning("Collecte Guardian echouee (cle API manquante ou quota), on continue")
+
+    logger.info("\n--- Collecte API (Dev.to) ---")
+    if not _run_module("greentech.data.collectors.devto_collector"):
+        logger.warning("Collecte Dev.to echouee (probleme reseau ?), on continue")
 
     logger.info("\n--- Scraping web (TechCrunch) ---")
     if not _run_module("greentech.data.collectors.scraper"):
@@ -570,63 +604,271 @@ def step_ingest_file(file_path: str) -> bool:
 
 
 # =============================================================================
+# NETTOYAGE (suppression des articles inexploitables)
+# =============================================================================
+
+
+async def step_clean() -> bool:
+    """Supprime les articles inexploitables de la base de donnees.
+
+    Cible trois categories d'articles qui polluent le dataset sans apporter
+    aucun signal a l'entrainement du classifieur ni au resume :
+
+    1. Articles **sans contenu** (``contenu IS NULL``) : ingestion echouee
+       ou partielle, pas de texte a analyser.
+    2. Articles **au contenu trop court** (< 50 caracteres) : abstracts
+       arXiv corrompus/tronques dans le dump Kaggle, ou articles web dont
+       l'extraction a echoue. Le LLM ne peut rien en tirer et ils font
+       gonfler le compteur d'echecs du pipeline de resume.
+    3. Articles avec le **placeholder NewsData.io** (``"ONLY AVAILABLE IN
+       PAID PLANS"``) : vestiges de l'ancien pipeline NewsData dont le
+       free tier tronquait le contenu. Filet de securite au cas ou de
+       nouveaux articles arrivent depuis MinIO legacy.
+
+    L'etape est idempotente (DELETE WHERE) et rapide (quelques secondes).
+    Elle s'insere entre ``collect`` et ``summarize-classif`` dans le
+    pipeline par defaut, mais peut aussi etre lancee manuellement via
+    ``uv run python scripts/retrain_pipeline.py clean``.
+    """
+    from sqlalchemy import delete, func, or_
+
+    from greentech.ai.services.classification_summarizer import (
+        CLASSIFICATION_MIN_INPUT_CHARS,
+    )
+    from greentech.data.storage.database import async_session_factory
+    from greentech.data.storage.models import Article
+
+    logger.info("=" * 70)
+    logger.info("  NETTOYAGE DES ARTICLES INEXPLOITABLES")
+    logger.info("=" * 70)
+
+    async with async_session_factory() as session:
+        # Comptage pre-suppression pour le log detaille
+        from sqlalchemy import select
+
+        preview = await session.execute(
+            select(
+                func.count().filter(Article.contenu.is_(None)).label("sans_contenu"),
+                func.count()
+                .filter(
+                    Article.contenu.isnot(None),
+                    func.length(Article.contenu) < CLASSIFICATION_MIN_INPUT_CHARS,
+                )
+                .label("trop_courts"),
+                func.count()
+                .filter(Article.contenu.contains("ONLY AVAILABLE IN PAID PLANS"))
+                .label("placeholder_newsdata"),
+            )
+        )
+        row = preview.one()
+        sans_contenu = row.sans_contenu
+        trop_courts = row.trop_courts
+        placeholder = row.placeholder_newsdata
+
+        total_a_supprimer = sans_contenu + trop_courts + placeholder
+        if total_a_supprimer == 0:
+            logger.info("Aucun article inexploitable detecte, base propre")
+            return True
+
+        logger.info(
+            f"Articles a supprimer : {total_a_supprimer} "
+            f"(sans contenu={sans_contenu}, trop courts={trop_courts}, "
+            f"placeholder NewsData={placeholder})"
+        )
+
+        # Suppression en une requete atomique
+        stmt = delete(Article).where(
+            or_(
+                Article.contenu.is_(None),
+                func.length(Article.contenu) < CLASSIFICATION_MIN_INPUT_CHARS,
+                Article.contenu.contains("ONLY AVAILABLE IN PAID PLANS"),
+            )
+        )
+        result = await session.execute(stmt)
+        await session.commit()
+        nb_supprimes = result.rowcount
+
+    logger.info(f"Nettoyage termine : {nb_supprimes} articles supprimes")
+    return True
+
+
+# =============================================================================
 # ANNOTATION (pipeline de classification hybride en deux etages)
 # =============================================================================
 
 
-def step_annotate() -> bool:
+async def step_annotate() -> bool:
     """Etage 1 : pre-filtre mots-cles permissif.
 
     Applique le scoring multi-criteres sur tous les articles non encore
     classifies pour decider : NON_GREEN (rejet direct) ou CANDIDATE (a
     envoyer au LLM judge). Ecrit le resultat dans la colonne
     `articles.modele_classification = 'keyword_filter'`.
+
+    Appel direct de ``scripts.auto_annotate_dataset.run_prefilter`` dans le
+    meme process Python que le pipeline. Cette architecture remplace le
+    lancement subprocess historique pour eviter la saturation du PIPE
+    stdout/stderr sous Windows (incident du 16 avril 2026 : freeze
+    systematique apres ~4 articles a cause du buffer PIPE 4-8 KB
+    surcharge par les logs SQLAlchemy verbose).
     """
     logger.info("=" * 70)
     logger.info("  PRE-FILTRE MOTS-CLES (etage 1)")
     logger.info("=" * 70)
-    return _run_script("scripts/auto_annotate_dataset.py")
+    from auto_annotate_dataset import run_prefilter
+
+    try:
+        stats = await run_prefilter()
+    except Exception as exc:
+        logger.exception(f"Echec pre-filtre mots-cles : {exc}")
+        return False
+    logger.info(f"Pre-filtre termine : {stats}")
+    return True
 
 
-def step_classify() -> bool:
+async def step_classify() -> bool:
     """Etage 2 : verification LLM des candidats.
 
-    Interroge `Qwen/Qwen2.5-7B-Instruct` via HF Serverless pour classifier
-    definitivement les articles marques CANDIDATE par l'etage 1. Met a jour
-    `est_green_it` et passe `modele_classification` a
+    Interroge `Qwen/Qwen3-4B-Instruct-2507` via HF Serverless (avec fallback
+    local Qwen2.5-3B sur GPU AMD ROCm si le quota est epuise) pour
+    classifier definitivement les articles marques CANDIDATE par l'etage 1.
+    Met a jour `est_green_it` et passe `modele_classification` a
     `'keyword_filter+qwen_llm_judge'`.
+
+    Le LLM judge lit le `contenu` brut (pas le resume) pour maximiser la
+    qualite du ground truth : il a 32k tokens de contexte dispo cote
+    cloud, donc autant lui donner l'article complet.
+
+    Appel direct Python dans le process courant (voir ``step_annotate``
+    pour la motivation anti-PIPE).
     """
     logger.info("=" * 70)
     logger.info("  LLM JUDGE - VERIFICATION DES CANDIDATS (etage 2)")
     logger.info("=" * 70)
-    return _run_script("scripts/classify_candidates.py")
+    from classify_candidates import classify_all_candidates
+
+    try:
+        stats = await classify_all_candidates()
+    except Exception as exc:
+        logger.exception(f"Echec LLM judge : {exc}")
+        return False
+    logger.info(f"LLM judge termine : {stats}")
+    return True
 
 
-def step_summarize_green() -> bool:
-    """Genere les resumes (general + ecologique) pour les articles Green IT.
+async def step_summarize_classification() -> bool:
+    """Genere le resume de classification pour tous les articles.
 
-    Applique le summarizer Qwen uniquement aux articles confirmes Green IT
-    (`est_green_it = true`) qui n'ont pas encore de `resume`. Appelle en
-    parallele `summarize_article` et `summarize_green_for_article` via
-    `asyncio.gather` pour chaque article.
+    Applique le prompt centralise (``CLASSIFICATION_SYSTEM_PROMPT`` +
+    ``CLASSIFICATION_USER_PROMPT_TEMPLATE``) a l'integralite du dataset.
+    Ecrit le resultat dans ``articles.resume``. Cette colonne devient
+    ensuite la feature d'entrainement principale : c'est elle qui est
+    concatenee au titre et envoyee au classifieur Qwen3-4B + LoRA.
+
+    Idempotent par defaut : saute les articles ayant deja un resume.
+    L'appel se fait en direct (import + await) plutot qu'en subprocess
+    pour eviter le freeze systemique observe en subprocess sous Windows
+    (saturation PIPE par les logs SQLAlchemy verbose, incident 16 avril
+    2026). Le Qwen local est charge une seule fois et reste disponible
+    pour l'etape ``summarize-green`` qui suit, evitant un cold start de
+    ~5 minutes entre les deux etapes.
     """
     logger.info("=" * 70)
-    logger.info("  RESUMES DES ARTICLES GREEN IT CONFIRMES")
+    logger.info("  RESUMES DE CLASSIFICATION (tous articles)")
     logger.info("=" * 70)
-    return _run_module("greentech.ai.services.summarizer")
+    from greentech.ai.services.summarizer import (
+        summarize_all_articles_for_classification,
+    )
+
+    try:
+        stats = await summarize_all_articles_for_classification()
+    except Exception as exc:
+        logger.exception(f"Echec resumes classification : {exc}")
+        return False
+
+    total = stats.get("total", 0)
+    succes = stats.get("succes", 0)
+    echecs = stats.get("echecs", 0)
+    logger.info(
+        f"Resumes de classification termines : {succes}/{total} succes, {echecs} echecs"
+    )
+    # Seuil d'acceptation : on tolere jusqu'a 5% d'echecs (articles au
+    # contenu degenere, API ponctuellement indisponible). Au-dela on
+    # considere que quelque chose cloche structurellement et on stoppe
+    # le pipeline pour investigation avant de propager des resumes
+    # incomplets aux etapes en aval.
+    if total > 0 and echecs / total > 0.05:
+        logger.error(
+            f"Taux d'echec trop eleve ({echecs / total:.1%}), arret pipeline"
+        )
+        return False
+    return True
 
 
-def step_export_golden() -> bool:
+async def step_summarize_green() -> bool:
+    """Genere le resume ecologique pour les articles Green IT confirmes.
+
+    Applique le prompt specialise Green IT aux articles dont
+    ``est_green_it = True`` et qui n'ont pas encore de
+    ``resume_ecologique``. Ce resume complete le ``resume`` general et
+    alimente la section "aspects ecologiques" de la page detail UI.
+
+    Appel direct Python dans le process courant.
+    """
+    logger.info("=" * 70)
+    logger.info("  RESUMES ECOLOGIQUES (Green IT uniquement)")
+    logger.info("=" * 70)
+    from greentech.ai.services.summarizer import summarize_green_only
+
+    try:
+        stats = await summarize_green_only()
+    except Exception as exc:
+        logger.exception(f"Echec resumes ecologiques : {exc}")
+        return False
+
+    logger.info(f"Resumes ecologiques termines : {stats}")
+    return True
+
+
+async def step_summarize_all() -> bool:
+    """Enchaine les deux passes de resume : classification puis ecologique.
+
+    Utile quand on lance l'etape alias ``summarize`` (ancienne terminologie)
+    ou quand on veut regenerer completement les deux colonnes ``resume`` et
+    ``resume_ecologique`` en un seul appel du pipeline. Les nouveaux scripts
+    preferent invoquer les deux etapes separement (``summarize-classif``
+    puis ``summarize-green``) pour un controle plus fin.
+
+    Returns:
+        True si les deux passes ont reussi.
+    """
+    if not await step_summarize_classification():
+        return False
+    return await step_summarize_green()
+
+
+async def step_export_golden() -> bool:
     """Regenere `data/golden_dataset.csv` depuis l'etat final de la DB.
 
     A executer apres la classification hybride pour produire un golden
     dataset qui reflete les decisions du LLM (et non plus du pre-filtre
     seul). Ce CSV est la source de verite pour l'entrainement Qwen3-4B.
+
+    Appel direct Python dans le process courant.
     """
     logger.info("=" * 70)
     logger.info("  EXPORT GOLDEN DATASET (DB -> CSV)")
     logger.info("=" * 70)
-    return _run_script("scripts/export_golden_dataset.py")
+    from export_golden_dataset import export_from_db
+
+    try:
+        stats = await export_from_db()
+    except Exception as exc:
+        logger.exception(f"Echec export golden dataset : {exc}")
+        return False
+
+    logger.info(f"Export termine : {stats}")
+    return True
 
 
 # =============================================================================
@@ -1365,23 +1607,60 @@ async def run_pipeline(steps: list[str]) -> None:
                 return
             continue
 
-        sync_steps = {
-            "collect": ("Collecte des donnees", step_collect),
+        # Etapes executees en appel Python direct (async) au lieu de
+        # subprocess pour eviter la saturation du PIPE stdout/stderr sous
+        # Windows (incident 16 avril 2026 : freeze systematique apres ~4
+        # articles du fait des logs SQLAlchemy verbose qui remplissent le
+        # buffer PIPE 4-8 KB). Le chargement du modele Qwen est mutualise
+        # entre summarize-classif et summarize-green (economie ~5 min de
+        # cold start).
+        async_steps = {
+            "clean": (
+                "Nettoyage articles inexploitables",
+                step_clean,
+            ),
+            "summarize-classif": (
+                "Resumes de classification (tous articles)",
+                step_summarize_classification,
+            ),
             "annotate": ("Pre-filtre mots-cles (etage 1)", step_annotate),
             "classify": ("LLM judge - verification candidats (etage 2)", step_classify),
-            "summarize": ("Resumes Green IT confirmes", step_summarize_green),
+            "summarize-green": (
+                "Resumes ecologiques (Green IT uniquement)",
+                step_summarize_green,
+            ),
+            # Alias historique : "summarize" declenche les deux passes
+            # (classification puis green) pour compatibilite avec les anciennes
+            # commandes. A eviter dans les nouveaux scripts qui preferent les
+            # deux noms explicites.
+            "summarize": ("Resumes (classification + Green IT)", step_summarize_all),
             "export-golden": ("Export golden_dataset.csv", step_export_golden),
+        }
+
+        # Etapes qui restent en subprocess : `collect` (Spark a besoin d'un
+        # process Python dedie pour sa JVM), `train`, `promote`. Le volume
+        # de logs de ces etapes est bien plus faible que celui de
+        # summarize-classif, donc pas de risque de saturation PIPE.
+        sync_steps = {
+            "collect": ("Collecte des donnees", step_collect),
             "train": ("Re-entrainement Qwen3-4B (split 80/20)", step_train),
             "promote": ("Promotion forcee", step_force_promote),
         }
 
+        if step_name in async_steps:
+            label, async_func = async_steps[step_name]
+            logger.info(f"\n>>> {label}...")
+            if not await async_func():
+                logger.error(f"Interrompu a : {step_name}")
+                return
+            continue
+
         if step_name not in sync_steps:
-            valid = list(sync_steps.keys()) + [
-                "benchmark",
-                "auto-promote",
-                "baseline",
-                "train-cv",
-            ]
+            valid = (
+                list(async_steps.keys())
+                + list(sync_steps.keys())
+                + ["benchmark", "auto-promote", "baseline", "train-cv"]
+            )
             logger.error(f"Etape inconnue : {step_name}")
             logger.info(f"Valides : {', '.join(valid)}, ingest-file <path>")
             return
@@ -1409,6 +1688,15 @@ def main() -> None:
     # pour suivre l'avancement du pipeline en direct via l'Explore Loki.
     setup_logging(level="INFO", enable_loki=True)
 
+    # Ajoute le dossier scripts/ au sys.path pour permettre les imports
+    # directs des modules `auto_annotate_dataset`, `classify_candidates` et
+    # `export_golden_dataset` depuis les `step_*` async. Ces modules ne
+    # sont pas dans le package `greentech` (ils sont a la racine de
+    # scripts/) donc on leur donne acces via le sys.path.
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+
     args = sys.argv[1:]
 
     processed: list[str] = []
@@ -1423,18 +1711,30 @@ def main() -> None:
 
     if not processed:
         # Pipeline complet recommande :
-        # 1. collect        : collecte depuis toutes les sources
-        # 2. annotate       : pre-filtre mots-cles (etage 1, binaire CANDIDATE/NON_GREEN)
-        # 3. classify       : LLM judge sur les candidats (etage 2, decision finale)
-        # 4. summarize      : resumes general + ecologique sur les Green IT confirmes
-        # 5. export-golden  : regenere golden_dataset.csv depuis la DB post-classification
-        # 6. train-cv       : re-entraine Qwen3-4B avec K-fold CV sur le nouveau golden
-        # 7. auto-promote   : benchmark et promotion conditionnelle
+        # 1. collect            : collecte depuis toutes les sources
+        # 2. clean              : supprime les articles inexploitables
+        #                         (contenu NULL, < 50 chars, placeholder
+        #                         NewsData "ONLY AVAILABLE IN PAID PLANS")
+        # 3. summarize-classif  : resume LLM style abstract pour TOUS les
+        #                         articles (source unique de verite de la
+        #                         feature d'entrainement)
+        # 4. annotate           : pre-filtre mots-cles (etage 1, binaire
+        #                         CANDIDATE/NON_GREEN) sur le contenu brut
+        # 5. classify           : LLM judge sur les candidats (etage 2,
+        #                         decision finale) sur le contenu brut
+        # 6. summarize-green    : resume ecologique pour les Green IT confirmes
+        # 7. export-golden      : regenere golden_dataset.csv depuis la DB
+        #                         post-classification avec `resume_classification`
+        # 8. train-cv           : re-entraine Qwen3-4B avec K-fold CV sur le
+        #                         nouveau golden (feature = titre + resume)
+        # 9. auto-promote       : benchmark et promotion conditionnelle
         processed = [
             "collect",
+            "clean",
+            "summarize-classif",
             "annotate",
             "classify",
-            "summarize",
+            "summarize-green",
             "export-golden",
             "train-cv",
             "auto-promote",

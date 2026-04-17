@@ -145,8 +145,9 @@ up
 - **VRAM insuffisante** : Un autre processus occupe la VRAM.
   Solution : `nvidia-smi` ou Task Manager > Details > GPU memory.
 - **Modele non telecharge** : Le cache `~/.cache/huggingface/hub` doit
-  contenir `models--Qwen--Qwen2.5-7B-Instruct` (~15 Go). Sinon il se
-  telecharge au premier usage.
+  contenir `models--Qwen--Qwen3-4B-Instruct-2507` (cloud HF) et/ou
+  `models--Qwen--Qwen2.5-3B-Instruct` (~6 Go, fallback local). Sinon
+  ils se telechargent au premier usage.
 
 ---
 

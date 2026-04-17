@@ -125,9 +125,18 @@ async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
 async def classify_article(article_id: int) -> PredictionResult:
     """Classifie un article et stocke le résultat en base.
 
-    Lit l'article depuis PostgreSQL, exécute l'inférence, puis met à jour
-    les colonnes `est_green_it`, `score_confiance`, `modele_classification`
-    et `date_analyse`.
+    Lit l'article depuis PostgreSQL, exécute l'inférence sur le **résumé
+    de classification** (colonne ``articles.resume``), puis met à jour
+    les colonnes ``est_green_it``, ``score_confiance``,
+    ``modele_classification`` et ``date_analyse``.
+
+    Le classifieur a été entraîné sur la concaténation
+    ``titre + "\\n\\n" + resume`` : on reproduit strictement cette
+    représentation à l'inférence pour éviter toute dérive de distribution.
+    Si le résumé n'a pas été généré au préalable (colonne ``resume``
+    à NULL), l'appelant doit invoquer ``summarize_article`` avant d'appeler
+    cette fonction — c'est le rôle de ``_run_analysis`` dans la route
+    ``/analyze`` et du pipeline batch ``summarize-classif``.
 
     Args:
         article_id: Identifiant de l'article en base.
@@ -136,7 +145,8 @@ async def classify_article(article_id: int) -> PredictionResult:
         Résultat de la classification.
 
     Raises:
-        ValueError: Si l'article n'existe pas ou n'a pas de contenu.
+        ValueError: Si l'article n'existe pas, n'a pas de contenu ou n'a
+            pas encore de résumé de classification.
     """
     classifier = await get_classifier()
 
@@ -153,8 +163,18 @@ async def classify_article(article_id: int) -> PredictionResult:
             msg = f"Article id={article_id} sans contenu"
             raise ValueError(msg)
 
-        # Inférence
-        prediction = await classifier.predict(article.contenu)
+        if not article.resume:
+            msg = (
+                f"Article id={article_id} sans resume de classification. "
+                "Lancer summarize_article() avant classify_article() "
+                "(ou le batch scripts/generate_classification_summaries.py)."
+            )
+            raise ValueError(msg)
+
+        # Inference : on reproduit strictement la feature d'entrainement
+        # titre + "\n\n" + resume pour eviter toute derive de distribution.
+        texte_pour_classification = f"{article.titre}\n\n{article.resume}"
+        prediction = await classifier.predict(texte_pour_classification)
 
         # Mise à jour en base
         from datetime import datetime
@@ -182,17 +202,27 @@ async def classify_article(article_id: int) -> PredictionResult:
 
 
 async def classify_batch(*, limit: int = 100, force: bool = False) -> list[PredictionResult]:
-    """Classifie un lot d'articles non encore analysés.
+    """Classifie un lot d'articles deja resumes.
+
+    Ne selectionne que les articles disposant d'un ``resume`` non vide :
+    la classification doit s'executer sur le resume (feature d'entrainement),
+    pas sur le contenu brut. Lancer ``summarize_all_articles_for_classification``
+    (ou le script batch ``generate_classification_summaries.py``) avant
+    d'invoquer cette fonction sur un nouveau corpus.
 
     Args:
-        limit: Nombre maximum d'articles à traiter.
-        force: Si True, re-classifie aussi les articles déjà analysés.
+        limit: Nombre maximum d'articles a traiter.
+        force: Si True, re-classifie aussi les articles deja analyses.
 
     Returns:
-        Liste des résultats de classification.
+        Liste des resultats de classification.
     """
     async with async_session_factory() as session:
-        stmt = select(Article.id_article).where(Article.contenu.isnot(None))
+        stmt = (
+            select(Article.id_article)
+            .where(Article.contenu.isnot(None))
+            .where(Article.resume.isnot(None))
+        )
         if not force:
             stmt = stmt.where(Article.est_green_it.is_(None))
         stmt = stmt.limit(limit)
@@ -201,7 +231,7 @@ async def classify_batch(*, limit: int = 100, force: bool = False) -> list[Predi
         article_ids = [row[0] for row in result.all()]
 
     if not article_ids:
-        logger.info("Aucun article à classifier")
+        logger.info("Aucun article a classifier (pas de resume disponible ou deja classifies)")
         return []
 
     logger.info(f"Classification de {len(article_ids)} articles...")
@@ -213,7 +243,7 @@ async def classify_batch(*, limit: int = 100, force: bool = False) -> list[Predi
 
     green = sum(1 for r in results if r.est_green_it)
     non_green = len(results) - green
-    logger.info(f"Batch terminé : {green} Green IT / {non_green} Non Green IT")
+    logger.info(f"Batch termine : {green} Green IT / {non_green} Non Green IT")
 
     return results
 

@@ -4,6 +4,27 @@
 > Document de reference pour la conception du MCD et le developpement
 > des modules de collecte, nettoyage et stockage (Etape 2 - Bloc E1).
 
+> **Mise a jour avril 2026** : Ce document a ete redige initialement avec
+> NewsData.io comme source API principale et `Qwen/Qwen2.5-7B-Instruct`
+> comme LLM judge. Depuis avril 2026 :
+>
+> - **Sources API actives** : `The Guardian` (Open Platform, 5000 req/jour)
+>   et `Dev.to` (API Forem, pas de cle requise) ont remplace NewsData.io
+>   dont le free tier tronquait le contenu. Les collecteurs correspondants
+>   sont `guardian_collector.py` et `devto_collector.py`.
+> - **LLM instructif** : `Qwen/Qwen3-4B-Instruct-2507` remplace
+>   `Qwen/Qwen2.5-7B-Instruct` pour le LLM judge, les resumes et le
+>   fallback local. Voir `config.py` pour les valeurs actuelles.
+> - **Feature d'entrainement** : le classifieur est desormais entraine sur
+>   `titre + resume_classification` (resume LLM style abstract, 150-220 mots)
+>   au lieu de `titre + 500 premiers caracteres du contenu brut`.
+> - **Etape `clean`** ajoutee au pipeline pour supprimer les articles
+>   inexploitables (contenu < 50 chars, placeholder NewsData).
+>
+> Les sections ci-dessous decrivant NewsData.io, `api_collector.py` et
+> `Qwen/Qwen2.5-7B-Instruct` restent pertinentes comme documentation
+> historique et pour comprendre l'architecture initiale du collecteur API.
+
 ---
 
 ## 1. Vue d'ensemble du flux de donnees
@@ -1713,7 +1734,7 @@ de milliers de transactions individuelles.
 
 ---
 
-### 11.3 Etage 2 : LLM judge Qwen2.5-7B avec fallback local
+### 11.3 Etage 2 : LLM judge Qwen3-4B-Instruct-2507 avec fallback local
 
 **Fichiers** :
 - `src/greentech/ai/services/classifier_llm.py` : interface metier (prompt, parsing)
@@ -1836,8 +1857,8 @@ uv run python scripts/retrain_pipeline.py annotate classify summarize export-gol
 | Variable | Description |
 |----------|-------------|
 | `HUGGINGFACE_TOKEN` | Token HF (scope `read`). Sert a l'API Serverless et au telechargement du modele local en fallback. |
-| `HUGGINGFACE_MODEL_CLASSIFIER_LLM` | Modele LLM judge (defaut : `Qwen/Qwen2.5-7B-Instruct`). |
-| `HUGGINGFACE_MODEL_LOCAL_FALLBACK` | Modele local utilise en fallback (defaut : `Qwen/Qwen2.5-7B-Instruct`, meme que HF pour continuite). |
+| `HUGGINGFACE_MODEL_CLASSIFIER_LLM` | Modele LLM judge (defaut : `Qwen/Qwen3-4B-Instruct-2507`). |
+| `HUGGINGFACE_MODEL_LOCAL_FALLBACK` | Modele local utilise en fallback (defaut : `Qwen/Qwen2.5-3B-Instruct`). |
 
 ---
 

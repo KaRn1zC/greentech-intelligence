@@ -32,55 +32,96 @@ BATCH_SIZE = 50
 
 # Mapping des noms de sources du Parquet vers les noms en base PostgreSQL.
 # Les collecteurs produisent des valeurs variées pour source_nom :
-#   - API NewsData.io : le source_id de l'API (ex: "bbc_news", "techradar")
-#   - Scraping : "TechCrunch Climate" (fixe)
-#   - Fichier arXiv : "arXiv Dataset" (fixe)
+#   - Guardian : "theguardian.com" (fixe)
+#   - Dev.to : "dev.to" (fixe)
+#   - TechCrunch : "TechCrunch Climate" (fixe)
+#   - arXiv : "arXiv Dataset" (fixe)
+#   - NewsData.io (legacy) : le source_id de l'API (ex: "bbc_news", "techradar")
 SOURCE_NAME_MAPPING: dict[str, str] = {
-    "newsdata": "NewsData.io",
-    "newsdata.io": "NewsData.io",
+    # Guardian Content API (source REST/JSON principale depuis avril 2026)
+    "theguardian.com": "The Guardian",
+    "theguardian": "The Guardian",
+    "the guardian": "The Guardian",
+    "guardian": "The Guardian",
+    # Dev.to / Forem API (source REST/JSON complementaire)
+    "dev.to": "Dev.to",
+    "devto": "Dev.to",
+    # TechCrunch (scraping hybride)
     "TechCrunch Climate": "TechCrunch Climate",
     "techcrunch": "TechCrunch Climate",
+    "techcrunch.com": "TechCrunch Climate",
+    # arXiv (dataset Kaggle)
     "arXiv Dataset": "arXiv Dataset",
     "arxiv": "arXiv Dataset",
     "arxiv_dataset": "arXiv Dataset",
+    # NewsData.io (legacy, desactivee)
+    "newsdata": "NewsData.io",
+    "newsdata.io": "NewsData.io",
 }
 
 
-def _resolve_source_name(raw_name: str | None) -> str:
-    """Résout le nom canonique de la source depuis la valeur brute du Parquet.
+def _resolve_source_name(raw_name: str | None, url: str | None = None) -> str:
+    """Resout le nom canonique de la source depuis source_nom ou URL.
 
-    Le champ source_nom dans les données nettoyées peut contenir
-    soit un nom canonique (ex: "TechCrunch Climate"), soit un identifiant
-    spécifique à l'API (ex: "bbc_news" depuis NewsData.io).
+    Applique en cascade plusieurs strategies de resolution :
+
+    1. Correspondance exacte dans ``SOURCE_NAME_MAPPING``.
+    2. Correspondance insensible a la casse.
+    3. Heuristique par mot-cle dans ``raw_name`` (techcrunch, arxiv, ...).
+    4. **Heuristique par URL** (filet de securite) : si l'URL de l'article
+       pointe vers un domaine connu (theguardian.com, dev.to, techcrunch.com,
+       arxiv.org), on retourne la source correspondante independamment
+       de ``raw_name``.
+    5. Fallback : NewsData.io (source historique de type 'api').
+
+    La resolution par URL est la plus robuste car chaque collecteur stocke
+    systematiquement l'URL d'origine de l'article, contrairement au champ
+    ``source_nom`` qui peut etre un identifiant API specifique (ex: "bbc_news"
+    pour NewsData) plutot que le nom de la plateforme source.
 
     Args:
         raw_name: Valeur brute du champ source_nom dans le Parquet.
+        url: URL de l'article, utilisee comme filet de securite si
+            ``raw_name`` est inconnu.
 
     Returns:
-        Nom canonique de la source tel que défini dans la table sources.
+        Nom canonique de la source tel que defini dans la table ``sources``.
     """
-    if not raw_name:
-        return "NewsData.io"
-
-    # Correspondance exacte
-    if raw_name in SOURCE_NAME_MAPPING:
+    # 1. Correspondance exacte via source_nom
+    if raw_name and raw_name in SOURCE_NAME_MAPPING:
         return SOURCE_NAME_MAPPING[raw_name]
 
-    # Correspondance insensible à la casse
-    raw_lower = raw_name.lower()
-    for key, value in SOURCE_NAME_MAPPING.items():
-        if key.lower() == raw_lower:
-            return value
+    # 2. Correspondance insensible a la casse via source_nom
+    if raw_name:
+        raw_lower = raw_name.lower()
+        for key, value in SOURCE_NAME_MAPPING.items():
+            if key.lower() == raw_lower:
+                return value
 
-    # Heuristique : les source_id inconnus de l'API NewsData.io
-    # sont des identifiants de médias (ex: "bbc_news", "techradar")
-    # qui transitent tous par le pipeline NewsData.io
-    if "techcrunch" in raw_lower:
-        return "TechCrunch Climate"
-    if "arxiv" in raw_lower:
-        return "arXiv Dataset"
+        # 3. Heuristique par mot-cle dans source_nom
+        if "theguardian" in raw_lower or "guardian" in raw_lower:
+            return "The Guardian"
+        if "dev.to" in raw_lower or raw_lower == "devto":
+            return "Dev.to"
+        if "techcrunch" in raw_lower:
+            return "TechCrunch Climate"
+        if "arxiv" in raw_lower:
+            return "arXiv Dataset"
 
-    # Par défaut, un source_nom inconnu provient de NewsData.io
+    # 4. Heuristique par URL (filet de securite contre les source_nom
+    # incoherents, frequents avec l'ancien pipeline NewsData.io)
+    if url:
+        url_lower = url.lower()
+        if "theguardian.com" in url_lower:
+            return "The Guardian"
+        if "dev.to/" in url_lower:
+            return "Dev.to"
+        if "techcrunch.com" in url_lower:
+            return "TechCrunch Climate"
+        if "arxiv.org" in url_lower:
+            return "arXiv Dataset"
+
+    # 5. Fallback : NewsData.io (source legacy par defaut)
     return "NewsData.io"
 
 
@@ -253,13 +294,8 @@ async def ingest_to_postgresql(records: list[dict[str, Any]]) -> dict[str, int]:
 
             for record in batch:
                 try:
-                    # Résolution de la source
-                    raw_source = record.get("source_nom")
-                    resolved_name = _resolve_source_name(raw_source)
-                    id_source = await _ensure_source_exists(session, source_cache, resolved_name)
-                    sources_utilisees.add(resolved_name)
-
-                    # Préparation des valeurs de l'article
+                    # Preparation des valeurs de l'article (URL d'abord pour
+                    # permettre la resolution de source par heuristique URL).
                     url = record.get("url") or ""
                     if not url:
                         stats["erreurs"] += 1
@@ -270,10 +306,30 @@ async def ingest_to_postgresql(records: list[dict[str, Any]]) -> dict[str, int]:
                         stats["erreurs"] += 1
                         continue
 
+                    contenu = record.get("contenu") or ""
+
+                    # Filet de securite : on refuse les articles NewsData.io
+                    # dont le contenu a ete tronque au placeholder du free
+                    # tier. Ces entrees sont inexploitables pour l'entrainement
+                    # et pourrissent le ground truth si on les laisse passer.
+                    if "ONLY AVAILABLE IN PAID PLANS" in contenu:
+                        stats["ignores"] += 1
+                        continue
+
+                    # Resolution de la source : on passe l'URL en second
+                    # parametre pour que le fallback URL (heuristique sur les
+                    # domaines connus) puisse corriger un source_nom
+                    # incoherent (ex: source_id NewsData applique par erreur
+                    # a un article Guardian legacy).
+                    raw_source = record.get("source_nom")
+                    resolved_name = _resolve_source_name(raw_source, url=url)
+                    id_source = await _ensure_source_exists(session, source_cache, resolved_name)
+                    sources_utilisees.add(resolved_name)
+
                     values: dict[str, Any] = {
                         "titre": titre,
                         "url": url,
-                        "contenu": record.get("contenu"),
+                        "contenu": contenu,
                         "auteur": (record.get("auteur") or "")[:200] or None,
                         "date_publication": _parse_iso_date(record.get("date_publication")),
                         "langue": (record.get("langue") or "en")[:10],

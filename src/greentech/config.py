@@ -164,7 +164,18 @@ class Settings(BaseSettings):
     # --- Data Collection ---
     scraping_user_agent: str = "GreenTech-Bot/1.0"
     scraping_delay_seconds: int = 2
+    # Legacy : cle NewsData.io, conservee pour historique mais la source est
+    # desactivee depuis le 16 avril 2026 (contenu tronque "ONLY AVAILABLE IN
+    # PAID PLANS" en free tier, dataset pourri).
     api_news_key: str = ""
+    # Cle API The Guardian Open Platform (tier Developer : 5000 req/jour,
+    # 12 req/s, non-commercial). Remplace NewsData.io comme source REST/JSON
+    # principale. Obtention gratuite et immediate sur
+    # https://open-platform.theguardian.com/access/
+    guardian_api_key: str = ""
+    # Dev.to / Forem API : aucune cle necessaire en lecture publique, on
+    # garde une variable optionnelle pour passer en write API plus tard.
+    devto_api_key: str = ""
 
     # --- Monitoring ---
     loki_url: str = "http://localhost:3100"

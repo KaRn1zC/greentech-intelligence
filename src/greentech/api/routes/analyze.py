@@ -60,20 +60,95 @@ MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx", ".html", ".htm"}
 
 
-async def _extract_text_from_url(url: str) -> tuple[str, str]:
-    """Extrait le titre et le contenu textuel d'une URL.
+def _extract_article_from_html(html: str, *, url: str | None = None) -> tuple[str | None, str]:
+    """Isole le titre et le corps d'article d'un document HTML via trafilatura.
 
-    Effectue une requete HTTP GET et extrait le texte brut du HTML
-    en supprimant les balises. Methode simplifiee adaptee aux articles.
+    Trafilatura combine des heuristiques DOM et ``justext`` pour eliminer le
+    boilerplate (menus, footers, cookies, widgets sociaux, scripts, balises
+    de navigation). Specialise sur les articles de presse, il evite que le
+    modele de classification et le resumeur ne voient que du texte d'interface
+    au lieu du contenu reel. En cas d'echec (SPA vide, paywall, page tres
+    atypique), on retombe sur une extraction regex minimale pour garantir
+    qu'on ait au moins quelque chose a analyser.
+
+    Args:
+        html: Document HTML complet, deja decode en texte.
+        url: URL d'origine, utilisee par trafilatura pour activer certaines
+            heuristiques specifiques a un domaine (optionnel).
+
+    Returns:
+        Tuple (titre_ou_None, contenu_texte). Le titre peut etre None si
+        aucun ``<title>`` ni metadonnee n'a pu etre detecte.
+    """
+    from trafilatura import bare_extraction
+
+    titre: str | None = None
+    texte: str = ""
+
+    try:
+        doc = bare_extraction(
+            html,
+            url=url,
+            include_comments=False,
+            include_tables=True,
+            favor_precision=True,
+            with_metadata=True,
+        )
+    except Exception as exc:
+        logger.warning(f"Extraction trafilatura echouee ({url or 'html brut'}) : {exc}")
+        doc = None
+
+    # L'API trafilatura peut retourner un Document dataclass ou un dict selon
+    # la version et les options. On gere les deux pour rester robuste a une
+    # montee de version mineure.
+    if doc is not None:
+        if isinstance(doc, dict):
+            titre_extrait = doc.get("title") or ""
+            texte = (doc.get("text") or doc.get("raw_text") or "").strip()
+        else:
+            titre_extrait = getattr(doc, "title", "") or ""
+            texte = (getattr(doc, "text", None) or getattr(doc, "raw_text", "") or "").strip()
+        titre = titre_extrait.strip() or None
+
+    if texte:
+        return titre, texte
+
+    # Fallback : trafilatura n'a rien trouve (page atypique, JS-rendered, ...).
+    # On garde l'ancienne extraction regex comme filet de securite ; elle est
+    # bruyante mais vaut mieux qu'un contenu vide qui ferait echouer le
+    # pipeline en aval.
+    logger.info(f"Fallback regex pour l'extraction HTML (url={url})")
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+    if title_match and not titre:
+        titre = title_match.group(1).strip() or None
+
+    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return titre, text
+
+
+async def _extract_text_from_url(url: str) -> tuple[str, str]:
+    """Telecharge une URL et en extrait le titre + le corps d'article.
+
+    Utilise httpx pour la requete HTTP (controle fin du timeout, du
+    User-Agent et de la politique de redirection), puis delegue l'extraction
+    a ``_extract_article_from_html`` qui s'appuie sur trafilatura pour
+    isoler le contenu principal. Le titre extrait est tronque a 500
+    caracteres pour tenir dans la contrainte de la colonne ``articles.titre``.
 
     Args:
         url: URL de l'article a extraire.
 
     Returns:
-        Tuple (titre, contenu_texte).
+        Tuple (titre, contenu_texte) ou le contenu est limite au corps
+        d'article. Le titre retombe sur l'URL si aucune metadonnee n'est
+        disponible, pour garantir un affichage lisible dans l'UI.
 
     Raises:
-        HTTPException: Si l'URL est inaccessible.
+        HTTPException: 422 si l'URL est inaccessible ou si le serveur
+            distant a retourne une erreur HTTP.
     """
     try:
         async with httpx.AsyncClient(
@@ -88,32 +163,27 @@ async def _extract_text_from_url(url: str) -> tuple[str, str]:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=msg)
 
     html = response.text
-
-    # Extraction basique du titre
-    title_match = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
-    titre = title_match.group(1).strip() if title_match else url
-
-    # Suppression des balises HTML pour obtenir le texte brut
-    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = re.sub(r"\s+", " ", text).strip()
-
-    return titre, text
+    titre, contenu = _extract_article_from_html(html, url=url)
+    return (titre or url)[:500], contenu
 
 
 def _extract_text_from_html_bytes(raw: bytes) -> str:
-    """Extrait le texte brut d'un document HTML stocke en memoire.
+    """Extrait le corps d'article d'un HTML brut via trafilatura.
 
-    Applique la meme strategie que `_extract_text_from_url` (suppression des
-    balises script/style puis des autres balises), adaptee a un contenu deja
-    telecharge pour eviter un aller-retour reseau.
+    Utilise lors de l'upload d'un fichier ``.html`` / ``.htm`` : la logique
+    d'extraction est identique a celle d'une URL, mais sans aller-retour
+    reseau. Le titre est ignore ici car l'appelant (``_extract_text_from_upload``)
+    se sert du nom de fichier comme titre par defaut.
+
+    Args:
+        raw: Contenu brut du fichier HTML.
+
+    Returns:
+        Texte du corps d'article debarrasse du boilerplate.
     """
     html = raw.decode("utf-8", errors="replace")
-    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
-    text = re.sub(r"<[^>]+>", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    _, contenu = _extract_article_from_html(html)
+    return contenu
 
 
 def _extract_text_from_pdf(raw: bytes) -> str:
@@ -231,8 +301,22 @@ async def _run_analysis(
 ) -> None:
     """Execute la chaine complete d'analyse IA en arriere-plan.
 
-    Orchestre : extraction → classification → resume → stockage.
-    Met a jour le statut du job a chaque etape.
+    Orchestre l'enchainement strictement sequentiel :
+
+    1. Extraction du contenu (trafilatura pour URL, pypdf/docx pour uploads)
+    2. Insertion en base (ou recuperation si URL deja connue)
+    3. Resume de classification via LLM (peuple ``articles.resume``)
+    4. Classification Qwen3-4B + LoRA sur le resume
+       (reproduit la feature d'entrainement ``titre + resume``)
+    5. Resume ecologique si l'article est classifie Green IT
+       (peuple ``articles.resume_ecologique``)
+    6. Log d'analyse dans ``analysis_logs``
+    7. Mise a jour du statut du job en memoire
+
+    Le resume de classification (etape 3) est genere AVANT la classification
+    (etape 4) car le classifieur Qwen3-4B + LoRA a ete entraine sur le
+    resume, pas sur le contenu brut. Cet ordre garantit l'absence de
+    derive de distribution entre entrainement et inference.
 
     Args:
         job_id: Identifiant du job d'analyse.
@@ -285,61 +369,79 @@ async def _run_analysis(
 
             id_article = article.id_article
 
-        # 3. Classification IA
-        est_green_it: bool | None = None
-        score_confiance: float | None = None
-        modele_nom: str | None = None
-        temps_ms: int | None = None
-
-        try:
-            from greentech.ai.models.inference import classify_article
-
-            prediction = await classify_article(id_article)
-            est_green_it = prediction.est_green_it
-            score_confiance = prediction.score_confiance
-            modele_nom = prediction.modele
-            temps_ms = prediction.temps_ms
-        except FileNotFoundError:
-            logger.warning("Modele de production non disponible, classification ignoree")
-        except Exception as e:
-            logger.error(f"Erreur classification : {e}")
-
-        # 4. Resumes via HuggingFace SaaS (Qwen3-4B-Instruct-2507, fallback local)
-        #    - Resume general : toujours genere si contenu suffisant
-        #    - Resume ecologique : uniquement si article classe Green IT
-        #    Les deux appels sont parallelises via asyncio.gather pour minimiser la latence.
-        resume: str | None = None
-        resume_ecologique: str | None = None
-
-        import asyncio
-
+        # 3. Resume de classification (feature d'entree du classifieur)
+        #    Le classifieur Qwen3-4B + LoRA a ete entraine sur `titre + resume`
+        #    (et non sur le contenu brut) pour garantir une distribution
+        #    uniforme entre toutes les sources (arXiv, TechCrunch, NewsData,
+        #    uploads). On doit donc generer le resume AVANT la classification
+        #    et utiliser le meme prompt centralise qu'a l'entrainement.
         from greentech.ai.services.summarizer import (
             summarize_article,
             summarize_green_for_article,
         )
 
-        taches = [summarize_article(id_article)]
+        resume: str | None = None
+        resume_ecologique: str | None = None
+
+        try:
+            resume_result = await summarize_article(id_article)
+            if resume_result.succes:
+                resume = resume_result.resume
+            else:
+                logger.warning(
+                    f"Resume de classification echoue pour article {id_article} : "
+                    f"{resume_result.erreur}"
+                )
+        except Exception as exc:
+            logger.error(f"Erreur resume de classification : {exc}")
+
+        # 4. Classification IA sur le resume (lecture de articles.resume)
+        est_green_it: bool | None = None
+        score_confiance: float | None = None
+        modele_nom: str | None = None
+        temps_ms: int | None = None
+
+        if resume is None:
+            # Sans resume, la classification ne peut pas s'executer (classify_article
+            # leve ValueError si articles.resume est NULL). On preserve le job en
+            # statut terminal mais sans prediction, plutot que de propager une erreur.
+            logger.warning(
+                f"Classification sautee pour article {id_article} : "
+                "pas de resume disponible"
+            )
+        else:
+            try:
+                from greentech.ai.models.inference import classify_article
+
+                prediction = await classify_article(id_article)
+                est_green_it = prediction.est_green_it
+                score_confiance = prediction.score_confiance
+                modele_nom = prediction.modele
+                temps_ms = prediction.temps_ms
+            except FileNotFoundError:
+                logger.warning("Modele de production non disponible, classification ignoree")
+            except Exception as e:
+                logger.error(f"Erreur classification : {e}")
+
+        # 5. Resume ecologique (uniquement si Green IT confirme)
+        #    Genere apres la classification, sur le contenu complet de l'article
+        #    (et non sur le resume) car cette synthese est destinee a l'affichage
+        #    utilisateur et peut se permettre un contexte plus riche que celui
+        #    contraint par le budget tokens du classifieur.
         if est_green_it is True:
-            taches.append(summarize_green_for_article(id_article))
+            try:
+                green_result = await summarize_green_for_article(id_article)
+                if green_result.succes:
+                    resume_ecologique = green_result.resume
+                else:
+                    logger.warning(
+                        f"Resume ecologique echoue pour article {id_article} : "
+                        f"{green_result.erreur}"
+                    )
+            except Exception as exc:
+                logger.error(f"Erreur resume ecologique : {exc}")
 
-        resultats_resumes = await asyncio.gather(*taches, return_exceptions=True)
-
-        # Resume general
-        general = resultats_resumes[0]
-        if isinstance(general, Exception):
-            logger.error(f"Erreur resume general : {general}")
-        elif general.succes:
-            resume = general.resume
-
-        # Resume ecologique (si applicable)
-        if est_green_it is True and len(resultats_resumes) > 1:
-            green = resultats_resumes[1]
-            if isinstance(green, Exception):
-                logger.error(f"Erreur resume ecologique : {green}")
-            elif green.succes:
-                resume_ecologique = green.resume
-
-        # 5. Log d'analyse
+        # 6. Log d'analyse
         async with async_session_factory() as session:
             log = AnalysisLog(
                 id_article=id_article,
@@ -351,7 +453,7 @@ async def _run_analysis(
             session.add(log)
             await session.commit()
 
-        # 6. Mise a jour du job
+        # 7. Mise a jour du job
         _jobs[job_id] = AnalysisResult(
             job_id=job_id,
             statut=AnalysisStatus.TERMINE,

@@ -51,14 +51,24 @@ const PIE_COLORS = [
 ]
 
 export function DashboardPage() {
+  // Compteur incremente par AnalyzeSection a la fin de chaque analyse reussie.
+  // Les sections qui lisent des donnees cote serveur (StatsGrid,
+  // ClassificationBreakdown, RecentArticlesSection) l'utilisent comme cle de
+  // dependance d'effet pour re-fetcher automatiquement et refleter
+  // l'apparition du nouvel article sans rechargement manuel de la page.
+  const [refreshToken, setRefreshToken] = useState(0)
+  const notifyAnalysisComplete = useCallback(() => {
+    setRefreshToken((token) => token + 1)
+  }, [])
+
   return (
     <div className="space-y-8">
       <DashboardHeader />
-      <StatsGrid />
-      <AnalyzeSection />
+      <StatsGrid refreshToken={refreshToken} />
+      <AnalyzeSection onAnalysisComplete={notifyAnalysisComplete} />
       <div className="grid gap-6 lg:grid-cols-5">
-        <ClassificationBreakdown className="lg:col-span-2" />
-        <RecentArticlesSection className="lg:col-span-3" />
+        <ClassificationBreakdown className="lg:col-span-2" refreshToken={refreshToken} />
+        <RecentArticlesSection className="lg:col-span-3" refreshToken={refreshToken} />
       </div>
     </div>
   )
@@ -106,16 +116,20 @@ function DashboardHeader() {
 // Grille de metriques principales (4 cards)
 // ============================================================================
 
-function StatsGrid() {
+function StatsGrid({ refreshToken }: { refreshToken: number }) {
   const [stats, setStats] = useState<GlobalStats | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Re-fetch a chaque incrementation de `refreshToken` (analyse terminee).
+  // On n'affiche plus le Skeleton sur les refresh silencieux pour eviter le
+  // flash visuel : le premier chargement est le seul cas ou `loading` reste
+  // vrai jusqu'au succes, ensuite on met a jour `stats` en place.
   useEffect(() => {
     getStats()
       .then(setStats)
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [])
+  }, [refreshToken])
 
   if (loading || !stats) {
     return (
@@ -168,7 +182,7 @@ function StatsGrid() {
 // Section Analyse d'article (URL / texte / fichier)
 // ============================================================================
 
-function AnalyzeSection() {
+function AnalyzeSection({ onAnalysisComplete }: { onAnalysisComplete: () => void }) {
   const [input, setInput] = useState("")
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
@@ -197,6 +211,10 @@ function AnalyzeSection() {
           toast.success(
             status.est_green_it ? "Article classe Green IT" : "Article classe Non Green IT",
           )
+          // Notifie le parent pour que les sections Stats / Repartition /
+          // Derniers articles rafraichissent leur contenu et refletent
+          // immediatement la presence du nouvel article classifie.
+          onAnalysisComplete()
         } else if (status.statut === "erreur") {
           stopPolling()
           setResult(status)
@@ -467,12 +485,18 @@ function AnalysisResultCard({ result }: { result: AnalysisResult }) {
 // Repartition de classification (camembert)
 // ============================================================================
 
-function ClassificationBreakdown({ className }: { className?: string }) {
+function ClassificationBreakdown({
+  className,
+  refreshToken,
+}: {
+  className?: string
+  refreshToken: number
+}) {
   const [stats, setStats] = useState<GlobalStats | null>(null)
 
   useEffect(() => {
     getStats().then(setStats).catch(() => {})
-  }, [])
+  }, [refreshToken])
 
   const pieData = useMemo(() => {
     if (!stats) return []
@@ -563,7 +587,13 @@ function LegendRow({ color, label, value }: { color: string; label: string; valu
 // Articles recents
 // ============================================================================
 
-function RecentArticlesSection({ className }: { className?: string }) {
+function RecentArticlesSection({
+  className,
+  refreshToken,
+}: {
+  className?: string
+  refreshToken: number
+}) {
   const [articles, setArticles] = useState<ArticleListItem[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -572,7 +602,7 @@ function RecentArticlesSection({ className }: { className?: string }) {
       .then((data) => setArticles(data.articles))
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [])
+  }, [refreshToken])
 
   return (
     <section className={cn("overflow-hidden rounded-2xl border border-border/60 bg-card p-6", className)}>

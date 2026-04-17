@@ -223,9 +223,13 @@ Environnement Node.js (via npm) :
 ### 3.2 Preparation des Donnees & MLOps (Data Ops)
 
 - [x] **Creation du Dataset d'Or (Golden Dataset)** :
-  - [x] Constitution du dataset complet (5808 articles depuis 3 sources : arXiv, NewsData.io, TechCrunch)
+  - [x] Constitution initiale : 5808 articles depuis 3 sources (arXiv, NewsData.io, TechCrunch)
   - [x] Annotation binaire par scoring multi-criteres (100+ indicateurs ponderes) : "Green IT" (1) ou "Non Green IT" (0)
   - [x] Verification manuelle des resultats et correction iterative des faux positifs/negatifs
+  - [x] **Avril 2026 : migration vers The Guardian + Dev.to** : 1316 articles NewsData
+    supprimes (contenu tronque en free tier), sources remplacees par The Guardian
+    Open Platform (5000 req/jour) et Dev.to (pas de cle requise) pour garantir un
+    contenu integral exploitable par le classifieur.
 - [x] **Mise en place du Versioning (DVC)** :
   - [x] Initialisation de DVC (dvc init) dans le projet
   - [x] Configuration du "Remote" DVC vers le bucket MinIO clean-data ou un dossier dedie

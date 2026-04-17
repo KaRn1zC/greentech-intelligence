@@ -7,7 +7,15 @@
 > (phase de selection) qui a conduit au choix de **BART-large-CNN** comme
 > premiere solution retenue. Apres les crash tests en conditions reelles
 > (cold-starts >120s, resume en anglais pour un public francophone,
-> qualite extractive limitee), le choix a evolue vers **Qwen2.5-7B-Instruct**.
+> qualite extractive limitee), le choix a evolue vers **Qwen2.5-7B-Instruct**
+> puis vers **Qwen3-4B-Instruct-2507** (avril 2026).
+>
+> **Mise a jour avril 2026** : Le modele LLM instructif utilise en production
+> est desormais `Qwen/Qwen3-4B-Instruct-2507` (unification summarizer +
+> LLM judge + fallback local `Qwen/Qwen2.5-3B-Instruct`). Les references
+> a `Qwen/Qwen2.5-7B-Instruct` ci-dessous documentent l'architecture de
+> la version precedente (mars 2026) et les resultats du benchmark qui a
+> conduit a ce choix. Les conclusions restent valides.
 > L'historique complet de la migration est detaille dans la section 8.
 > L'architecture finale unifiee (un seul modele pour les deux resumes) est
 > decrite dans la section 9.

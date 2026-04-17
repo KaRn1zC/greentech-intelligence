@@ -10,7 +10,7 @@ Plateforme web d'analyse et classification automatique d'articles technologiques
 Le systeme collecte des articles depuis plusieurs sources (API, scraping, fichiers), les nettoie via Apache Spark, puis applique une **classification hybride en deux etages** :
 
 1. **Pre-filtre mots-cles permissif** (etage 1) : scoring multi-criteres qui distingue les articles manifestement Non Green IT (rejet direct) des **candidats** qui meritent une verification plus fine.
-2. **LLM judge** (etage 2) : les candidats passent par un LLM instructif (`Qwen/Qwen2.5-7B-Instruct`) qui tranche en zero-shot avec un prompt specialise. L'appel se fait via l'API Hugging Face Serverless, avec un **fallback automatique sur GPU AMD local** (ROCm) si le quota mensuel HF est epuise (HTTP 402).
+2. **LLM judge** (etage 2) : les candidats passent par un LLM instructif (`Qwen/Qwen3-4B-Instruct-2507`) qui tranche en zero-shot avec un prompt specialise. L'appel se fait via l'API Hugging Face Serverless, avec un **fallback automatique sur GPU AMD local** (`Qwen/Qwen2.5-3B-Instruct` via ROCm) si le quota mensuel HF est epuise (HTTP 402).
 
 Un **classifieur de production** supplementaire (`Qwen/Qwen3-4B + LoRA`, Apache-2.0, multilingue natif FR/EN/DE/ES/ZH) fine-tune sur le golden dataset produit par cette classification hybride est utilise pour l'inference temps reel via l'endpoint `/analyze`. Il remplace depuis avril 2026 l'ancien modele `meta-llama/Llama-3.2-3B` (gated) et permet de classifier directement des articles dans plusieurs langues sans etape de traduction prealable.
 
@@ -345,12 +345,11 @@ Trois modes d'entree sont disponibles sur le **Dashboard** :
 Cliquez ensuite sur le bouton d'envoi (ou appuyez sur Entree). L'analyse se deroule
 en arriere-plan (~1-30s selon que le modele est deja charge ou non) :
 
-- Le modele IA local classifie l'article comme **Green IT** ou **Non Green IT**
-- Le LLM instructif **`Qwen/Qwen2.5-7B-Instruct`** genere un **resume general automatique en francais**.
+- Le LLM instructif **`Qwen/Qwen3-4B-Instruct-2507`** genere un **resume de classification** (style abstract scientifique, 150-220 mots) qui sert de feature d'entree au classifieur.
   - L'appel passe d'abord par l'API Hugging Face Serverless Inference (gratuit, fair-use).
-  - En cas de quota mensuel epuise (HTTP 402), le dispatcher bascule automatiquement sur le **meme modele Qwen execute en local** sur le GPU AMD RX 7900 XTX via ROCm 7.2, sans interruption du service.
-- Si l'article est classe Green IT, un second appel parallele au meme modele avec un prompt different genere un **resume specifique aux aspects ecologiques** abordes, egalement en francais.
-- Ces deux resumes ne sont generes que pour les **articles Green IT confirmes** en mode batch, afin d'economiser les credits HF et de limiter la charge sur le GPU local. Pour les analyses temps reel via l'endpoint `/analyze`, le resume general est toujours produit.
+  - En cas de quota mensuel epuise (HTTP 402), le dispatcher bascule automatiquement sur **`Qwen/Qwen2.5-3B-Instruct`** execute en local sur le GPU AMD RX 7900 XTX via ROCm 7.2, sans interruption du service.
+- Le modele IA fine-tune (**Qwen3-4B + LoRA**) classifie l'article comme **Green IT** ou **Non Green IT** a partir du resume.
+- Si l'article est classe Green IT, un second appel au meme LLM avec un prompt specifique genere un **resume des aspects ecologiques**, egalement en francais.
 
 Le resultat s'affiche avec :
 - Le statut Green IT (badge vert) ou Non Green IT (badge rouge)
@@ -412,16 +411,19 @@ Cliquez sur n'importe quel article dans la liste pour voir :
 
 ### Comment ca fonctionne
 
-Le corpus initial contient 5808 articles provenant de 3 sources, deja stockes dans PostgreSQL :
-- **arXiv** (4809 articles) — ingere une fois depuis un dump Kaggle
-- **NewsData.io** (779 articles) — collecte via API
-- **TechCrunch** (220 articles) — collecte via scraping
+Le corpus contient ~5 730 articles provenant de 4 sources actives, stockes dans PostgreSQL :
+- **arXiv** (~5 000 articles) — ingere depuis un dump Kaggle (dataset Cornell University)
+- **The Guardian** (~500 articles) — collecte via API REST/JSON (section environment + technology)
+- **Dev.to** (~120 articles) — collecte via API REST/JSON (tags greenit, sustainability, etc.)
+- **TechCrunch Climate** (~100 articles) — collecte via scraping hybride RSS + Playwright
 
-Le pipeline de re-entrainement sert a **ajouter de nouveaux articles** depuis les sources en ligne, puis a re-entrainer le modele sur le corpus elargi (anciens + nouveaux). Les articles deja en base ne sont jamais perdus ni re-ingeres (deduplication par URL).
+> **Historique** : la source API initiale etait NewsData.io, desactivee en avril 2026 car son free tier tronquait le contenu au placeholder "ONLY AVAILABLE IN PAID PLANS". Remplacee par The Guardian + Dev.to qui fournissent le contenu integral.
 
-Le modele est toujours re-entraine **depuis le modele de base** Qwen3-4B (pas depuis la version precedemment fine-tunee). Les poids LoRA sont recalcules entierement a chaque entrainement sur le dataset complet.
+Le pipeline de re-entrainement sert a **ajouter de nouveaux articles** depuis les sources en ligne, puis a re-entrainer le modele sur le corpus elargi (anciens + nouveaux). Les articles deja en base ne sont jamais perdus ni re-ingeres (deduplication par URL). Une etape `clean` supprime les articles inexploitables (contenu < 50 chars, placeholder NewsData) avant la generation des resumes.
 
-La promotion en production est **conditionnelle** : le nouveau modele ne remplace l'ancien que s'il a un F1 superieur ou egal. L'application utilise donc toujours la meilleure version jamais entrainee.
+Le modele est toujours re-entraine **depuis le modele de base** Qwen3-4B (pas depuis la version precedemment fine-tunee). Les poids LoRA sont recalcules entierement a chaque entrainement sur le dataset complet. La feature d'entrainement est `titre + resume_classification` (resume LLM style abstract scientifique) et non le contenu brut tronque.
+
+La promotion en production est **conditionnelle** : le nouveau modele ne remplace l'ancien que s'il satisfait 4 criteres composites (MCC >= seuil, Recall Green IT >= 0.5, F1 non-regression, stabilite CV). L'application utilise donc toujours la meilleure version jamais entrainee.
 
 ### Pipeline complet (une seule commande)
 
@@ -429,25 +431,29 @@ La promotion en production est **conditionnelle** : le nouveau modele ne remplac
 uv run python scripts/retrain_pipeline.py
 ```
 
-Cette commande execute 7 etapes dans l'ordre (pipeline complet avec classification hybride et K-fold robuste) :
+Cette commande execute **9 etapes dans l'ordre** (pipeline complet : collecte, nettoyage, resume, classification hybride, Golden Dataset et K-fold robuste) :
 
 | Etape | Ce qui se passe |
 |-------|----------------|
-| **1. collect** | Interroge l'API NewsData.io (rate-limite a 1 req/2s avec retry exponentiel sur 429) et scrape TechCrunch Climate via architecture hybride : le flux RSS officiel donne la liste d'URLs, puis Scrapy + Playwright telecharge et parse le HTML de chaque article. Nettoie via Spark et ingere dans PostgreSQL. Les doublons sont ignores automatiquement. |
-| **2. annotate** (etage 1) | **Pre-filtre mots-cles permissif** : scoring multi-criteres sur les nouveaux articles (`modele_classification IS NULL`). Chaque article est classe `NON_GREEN` (rejet direct, `est_green_it=false`) ou `CANDIDATE` (`est_green_it=NULL`, en attente de verification LLM). Marque la colonne `modele_classification='keyword_filter'`. |
-| **3. classify** (etage 2) | **LLM judge** : envoie les articles `CANDIDATE` a `Qwen/Qwen2.5-7B-Instruct` via l'API HF Serverless (fallback automatique sur GPU local ROCm si quota HF epuise). Le LLM tranche avec un prompt zero-shot specialise et ecrit le verdict final (`est_green_it=true/false`, `score_confiance`, `modele_classification='keyword_filter+qwen_llm_judge'`). |
-| **4. summarize** | Genere les **deux resumes** (general + ecologique) uniquement pour les articles confirmes Green IT (`est_green_it=true` + `resume IS NULL OR resume_ecologique IS NULL`). Appels paralleles via `asyncio.gather`. Utilise le meme dispatcher avec fallback local. |
-| **5. export-golden** | Regenere `data/golden_dataset.csv` a partir de l'etat final de la DB (post-etage 2). Ce CSV sert de source de verite pour l'entrainement du classifieur. |
-| **6. train-cv** | Re-entraine **Qwen3-4B + LoRA** en **K-fold stratifie (K=5)**, puis entraine un modele final sur l'integralite des donnees. Les metriques par fold et agregees sont trackees dans MLflow + `models/cv_report.json`. L'empreinte CO2 est mesuree par CodeCarbon. |
-| **7. auto-promote** | Benchmark le nouveau modele vs le meilleur historique vs la baseline. Evalue 4 criteres composites : MCC >= seuil, Recall Green IT >= 0.5, F1 non-regression, stabilite CV. Si tous OK : archive l'ancien, copie le nouveau en production, enregistre ses metriques. Sinon : rien ne change, l'ancien reste en production. |
+| **1. collect** | Interroge les 3 sources actives : **The Guardian** (API REST/JSON, 15 mots-cles Green IT, 5000 req/jour), **Dev.to** (tags `greenit`, `sustainability`, `climatechange`..., pas de cle), **TechCrunch Climate** (scraping hybride RSS pagine + Playwright headless, 100 articles max par session avec blacklist promos et fallback selecteurs + trafilatura). Nettoie via Spark et ingere dans PostgreSQL. Les doublons sont ignores (`ON CONFLICT (url) DO NOTHING`). |
+| **2. clean** | **Supprime les articles inexploitables** de la base : contenu NULL, contenu < 50 caracteres (abstracts arXiv corrompus/tronques), et articles avec le placeholder NewsData `"ONLY AVAILABLE IN PAID PLANS"`. Idempotent et rapide (~1 s). Evite que ces articles polluent le dataset et fassent gonfler le compteur d'echecs du resume. |
+| **3. summarize-classif** | Genere un **resume de classification** (style abstract scientifique, 150-220 mots, prompt centralise dans `classification_summarizer.py`) pour **chaque article** ayant `resume IS NULL`. Ce resume est la feature d'entree canonique du classifieur Qwen3-4B + LoRA et sert aussi d'affichage UI. Utilise le dispatcher HF Serverless avec fallback automatique sur Qwen2.5-3B local (GPU AMD ROCm) si le quota HF est epuise. |
+| **4. annotate** (etage 1) | **Pre-filtre mots-cles permissif** : scoring multi-criteres sur les articles non encore classifies (`modele_classification IS NULL`). Chaque article est classe `NON_GREEN` (rejet direct, `est_green_it=false`) ou `CANDIDATE` (`est_green_it=NULL`, en attente du LLM judge). Marque `modele_classification='keyword_filter'`. |
+| **5. classify** (etage 2) | **LLM judge** : envoie les articles `CANDIDATE` a `Qwen/Qwen3-4B-Instruct-2507` via l'API HF Serverless (fallback automatique sur Qwen2.5-3B local si quota HF epuise). Le LLM tranche avec un prompt zero-shot sur le **contenu brut de l'article** (pas le resume) pour maximiser la qualite du ground truth. Ecrit le verdict final (`est_green_it=true/false`, `score_confiance`, `modele_classification='keyword_filter+qwen_llm_judge'`). |
+| **6. summarize-green** | Genere un **resume ecologique** specifique uniquement pour les articles confirmes Green IT (`est_green_it=true` + `resume_ecologique IS NULL`). Ce resume specialise est distinct du resume de classification et alimente la section "aspects ecologiques" dans la page detail de l'UI. |
+| **7. export-golden** | Regenere `data/golden_dataset.csv` a partir de l'etat final de la DB. Exporte la colonne `articles.resume` comme `resume_classification` (feature d'entrainement). Les articles sans resume ou sans label sont exclus. |
+| **8. train-cv** | Re-entraine **Qwen3-4B + LoRA** en **K-fold stratifie (K=5)** sur la feature `titre + resume_classification`, puis entraine un modele final sur l'integralite des donnees. Les metriques par fold et agregees sont trackees dans MLflow + `models/cv_report.json`. L'empreinte CO2 est mesuree par CodeCarbon. |
+| **9. auto-promote** | Benchmark le nouveau modele vs le meilleur historique vs la baseline. Evalue 4 criteres composites : MCC >= seuil, Recall Green IT >= 0.5, F1 non-regression, stabilite CV. Si tous OK : archive l'ancien, copie le nouveau en production, enregistre ses metriques. Sinon : rien ne change, l'ancien reste en production. |
+
+> **Note technique** : les etapes 2 a 6 (summarize-classif, annotate, classify, summarize-green, export-golden) s'executent en **appel Python direct** (async/await dans le meme process) plutot qu'en subprocess. Cette architecture evite la saturation du buffer PIPE stdout sous Windows qui causait des freezes systematiques avec les logs SQLAlchemy verbose. L'etape `collect` reste en subprocess car Spark necessite un process Python dedie pour sa JVM.
 
 ### Ajouter des fichiers manuellement
 
 Si vous avez un fichier de donnees supplementaire (export JSON Lines, nouveau dump arXiv, etc.), deposez-le dans le dossier `data/` puis lancez :
 
 ```bash
-# Ingere le fichier, classifie (etages 1+2), resume les Green IT, exporte le golden, re-entraine, promote
-uv run python scripts/retrain_pipeline.py ingest-file data/mon_fichier.json annotate classify summarize export-golden train-cv auto-promote
+# Ingere le fichier, resume, classifie (etages 1+2), resume eco, exporte le golden, re-entraine, promote
+uv run python scripts/retrain_pipeline.py ingest-file data/mon_fichier.json summarize-classif annotate classify summarize-green export-golden train-cv auto-promote
 ```
 
 Le fichier doit etre au format JSON Lines (une entree JSON par ligne, avec au minimum les champs `title` et `abstract` ou `content`). L'ingestion est idempotente : relancer sur le meme fichier ne cree pas de doublons.
@@ -457,56 +463,64 @@ Le fichier doit etre au format JSON Lines (une entree JSON par ligne, avec au mi
 Chaque etape peut etre lancee separement :
 
 ```bash
-# Collecte seule (nouveaux articles depuis API + scraping)
+# Collecte seule (Guardian + Dev.to + TechCrunch + Spark cleaner + SQL ingester)
 uv run python scripts/retrain_pipeline.py collect
 
-# Pre-filtre mots-cles seul (etage 1 : marque les articles NON_GREEN ou CANDIDATE)
+# Nettoyage des articles inexploitables (contenu NULL, < 50 chars, placeholder NewsData)
+uv run python scripts/retrain_pipeline.py clean
+
+# Resume de classification pour tous les articles sans resume
+uv run python scripts/retrain_pipeline.py summarize-classif
+
+# Pre-filtre mots-cles seul (etage 1 : NON_GREEN ou CANDIDATE)
 uv run python scripts/retrain_pipeline.py annotate
 
-# LLM judge seul (etage 2 : classifie definitivement les CANDIDATE via Qwen HF + fallback local)
+# LLM judge seul (etage 2 : classifie les CANDIDATE via Qwen + fallback local)
 uv run python scripts/retrain_pipeline.py classify
 
-# Resumes des Green IT confirmes (general + ecologique, via Qwen HF + fallback local)
+# Resume ecologique pour les Green IT confirmes
+uv run python scripts/retrain_pipeline.py summarize-green
+
+# Alias : enchaine summarize-classif puis summarize-green
 uv run python scripts/retrain_pipeline.py summarize
 
 # Regenere golden_dataset.csv depuis l'etat final de la DB
 uv run python scripts/retrain_pipeline.py export-golden
 
-# Re-entrainement rapide (split 80/20 stratifie, ~10 min)
+# Re-entrainement rapide (split 80/20 stratifie)
 uv run python scripts/retrain_pipeline.py train
 
-# Re-entrainement robuste (K-fold K=5 + modele final, ~50 min)
-# Recommande pour figer une version de production avec des metriques moyennees sur 5 folds
+# Re-entrainement robuste (K-fold K=5 + modele final, ~9-10h)
+# Recommande pour figer une version de production
 uv run python scripts/retrain_pipeline.py train-cv
 
 # Benchmark seul (nouveau vs meilleur historique vs baseline)
 uv run python scripts/retrain_pipeline.py benchmark
 
-# Benchmark + promotion conditionnelle (le coeur du systeme)
+# Benchmark + promotion conditionnelle
 uv run python scripts/retrain_pipeline.py auto-promote
 
 # Promotion forcee (sans benchmark, a eviter sauf premier entrainement)
 uv run python scripts/retrain_pipeline.py promote
 
-# Calculer la baseline du modele brut (evaluation sur les 5808 articles complets)
-# Automatiquement recalculee si l'ancien format ou des metriques manquent
+# Baseline du modele brut (evaluation sans fine-tuning)
 uv run python scripts/retrain_pipeline.py baseline
 ```
 
 ### Combiner des etapes
 
 ```bash
-# Collecter + classifier (2 etages) + resumer + exporter le golden, sans re-entrainer
-uv run python scripts/retrain_pipeline.py collect annotate classify summarize export-golden
+# Alimenter le dataset sans re-entrainer
+uv run python scripts/retrain_pipeline.py collect clean summarize-classif annotate classify summarize-green export-golden
 
-# Reprendre uniquement les articles laisses en attente par le LLM (apres reset quota HF)
+# Reprendre les articles en attente de LLM judge (apres reset quota HF)
 uv run python scripts/retrain_pipeline.py classify
 
-# Re-entrainer + benchmarker sans promouvoir (pour evaluer avant de decider)
+# Re-entrainer + benchmarker sans promouvoir
 uv run python scripts/retrain_pipeline.py train benchmark
 
 # Ingerer un fichier + pipeline complet
-uv run python scripts/retrain_pipeline.py ingest-file data/export.json annotate classify summarize export-golden train-cv auto-promote
+uv run python scripts/retrain_pipeline.py ingest-file data/export.json clean summarize-classif annotate classify summarize-green export-golden train-cv auto-promote
 ```
 
 ### Systeme de selection du meilleur modele
@@ -516,7 +530,7 @@ Le pipeline maintient 4 fichiers de reference :
 | Fichier | Contenu | Quand il est mis a jour |
 |---------|---------|------------------------|
 | `models/best_metrics.json` | Metriques completes (MCC, F1, accuracy, balanced_accuracy, precision, recall, specificite, matrice de confusion, distribution des predictions) de la **meilleure version jamais entrainee**. | Uniquement quand un nouveau modele satisfait tous les criteres de promotion |
-| `models/baseline_metrics.json` | Metriques du modele brut **sans fine-tuning**, evalue sur l'integralite du dataset (5808+ articles). Sert de reference permanente pour mesurer le gain du fine-tuning. | Une seule fois, via `baseline` (ou automatiquement si legacy format detecte) |
+| `models/baseline_metrics.json` | Metriques du modele brut **sans fine-tuning**, evalue sur l'integralite du dataset (5730+ articles). Sert de reference permanente pour mesurer le gain du fine-tuning. | Une seule fois, via `baseline` (ou automatiquement si legacy format detecte) |
 | `models/cv_report.json` | Rapport du dernier K-fold : metriques par fold (MCC, F1, recall, etc.), agregees (moyenne + ecart-type + min/max), et globales (sur concatenation des predictions). | A chaque execution de `train-cv` |
 | `data/benchmark_versions.json` | Rapport du dernier benchmark (nouveau vs meilleur vs baseline + verdict + detail des 4 criteres). | A chaque benchmark |
 
@@ -545,7 +559,7 @@ models/
   challenger-llama/        # Ancienne version legacy (Llama 3.2 3B + LoRA, archive)
   cv_fold_1/ ... cv_fold_5/  # Adapters LoRA de chaque fold (train-cv)
   best_metrics.json        # Metriques completes du meilleur modele promu
-  baseline_metrics.json    # Metriques du modele brut (eval sur 5808+ articles)
+  baseline_metrics.json    # Metriques du modele brut (eval sur 5730+ articles)
   cv_report.json           # Rapport K-fold (folds + moyennes + metriques globales)
   versions/
     v20260411_143022/      # Archive avec metadata.json + poids

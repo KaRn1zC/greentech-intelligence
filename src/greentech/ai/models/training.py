@@ -702,7 +702,7 @@ def load_full_dataset(
         raise ValueError(msg)
 
     df = df[df["label_green_it"].isin([0, 1])].copy()
-    df["text"] = df["titre"].fillna("") + "\n\n" + df["contenu_extrait"].fillna("")
+    df["text"] = _build_text_column(df)
 
     n_green = int(df["label_green_it"].sum())
     logger.info(
@@ -710,6 +710,51 @@ def load_full_dataset(
     )
 
     return df["text"].tolist(), df["label_green_it"].tolist()
+
+
+def _build_text_column(df: pd.DataFrame) -> pd.Series:
+    """Construit la colonne de feature d'entrainement ``titre + resume``.
+
+    Accepte deux formats de golden dataset pour une transition en douceur :
+
+    - **Nouveau** (recommande) : colonne ``resume_classification`` produite
+      par le LLM (Qwen3-4B-Instruct-2507 ou fallback local). Format uniforme
+      et aligne train/inference.
+    - **Legacy** : colonne ``contenu_extrait`` (500 premiers chars du
+      contenu brut). Un warning est emis pour inciter a regenerer le CSV
+      via ``scripts/generate_classification_summaries.py`` puis
+      ``scripts/export_golden_dataset.py``.
+
+    Args:
+        df: DataFrame charge depuis le CSV golden.
+
+    Returns:
+        Serie pandas contenant la concatenation ``titre\\n\\nfeature``.
+
+    Raises:
+        ValueError: Si aucune des deux colonnes de feature n'est presente.
+    """
+    titre = df["titre"].fillna("") if "titre" in df.columns else pd.Series([""] * len(df))
+
+    if "resume_classification" in df.columns:
+        return titre + "\n\n" + df["resume_classification"].fillna("")
+
+    if "contenu_extrait" in df.columns:
+        logger.warning(
+            "Golden dataset au format legacy (colonne 'contenu_extrait') : le modele "
+            "sera entraine sur les 500 premiers caracteres du contenu brut au lieu "
+            "du resume LLM uniforme. Regenerer via "
+            "'uv run python scripts/generate_classification_summaries.py' puis "
+            "'uv run python scripts/export_golden_dataset.py' pour beneficier du "
+            "nouveau format aligne train/inference."
+        )
+        return titre + "\n\n" + df["contenu_extrait"].fillna("")
+
+    msg = (
+        "Golden dataset incomplet : ni 'resume_classification' ni 'contenu_extrait' "
+        "ne sont presents. Regenerer le CSV via 'scripts/export_golden_dataset.py'."
+    )
+    raise ValueError(msg)
 
 
 def load_golden_dataset(
@@ -751,8 +796,10 @@ def load_golden_dataset(
     # Filtrer les entrees non annotees
     df = df[df["label_green_it"].isin([0, 1])].copy()
 
-    # Combiner titre + contenu pour des features plus riches
-    df["text"] = df["titre"].fillna("") + "\n\n" + df["contenu_extrait"].fillna("")
+    # Combiner titre + resume de classification pour construire la feature
+    # d'entrainement. Voir `_build_text_column` pour la gestion du fallback
+    # legacy sur `contenu_extrait`.
+    df["text"] = _build_text_column(df)
 
     n_green = int(df["label_green_it"].sum())
     n_non_green = len(df) - n_green

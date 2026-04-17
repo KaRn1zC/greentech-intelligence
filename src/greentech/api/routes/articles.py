@@ -242,6 +242,7 @@ async def get_article(
         url=article.url,
         contenu=article.contenu,
         resume=article.resume,
+        resume_ecologique=article.resume_ecologique,
         auteur=article.auteur,
         date_publication=article.date_publication,
         langue=article.langue,
