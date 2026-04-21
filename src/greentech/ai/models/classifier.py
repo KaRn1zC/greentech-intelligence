@@ -29,23 +29,30 @@ class LabelGreenIT(int, Enum):
 
 @dataclass(frozen=True)
 class PredictionResult:
-    """Résultat d'une prédiction de classification.
+    """Resultat d'une prediction de classification.
 
     Attributes:
-        label: Label prédit (GREEN ou NON_GREEN).
-        score_confiance: Probabilité associée à la prédiction (0.0-1.0).
-        temps_ms: Temps d'inférence en millisecondes.
-        modele: Nom du modèle utilisé.
+        label: Label predit (GREEN ou NON_GREEN).
+        score_confiance: Probabilite associee a la prediction (0.0-1.0) -
+            c'est la proba de la classe effectivement retenue (celle du
+            label predit). Utile pour l'UI.
+        temps_ms: Temps d'inference en millisecondes.
+        modele: Nom du modele utilise.
+        proba_positive: Probabilite de la classe positive (Green IT),
+            independante du label predit. Utile pour calibration
+            (temperature scaling) et threshold tuning en K-fold.
+            None si le modele n'a pas calcule cette information.
     """
 
     label: LabelGreenIT
     score_confiance: float
     temps_ms: int
     modele: str
+    proba_positive: float | None = None
 
     @property
     def est_green_it(self) -> bool:
-        """Retourne True si l'article est classifié Green IT."""
+        """Retourne True si l'article est classifie Green IT."""
         return self.label == LabelGreenIT.GREEN
 
 

@@ -170,7 +170,7 @@ def update_model_info(
     Args:
         nom: Nom du modele (ex: "microsoft/deberta-v3-base").
         version: Version ou identifiant du run MLflow.
-        type_modele: Type (champion, challenger).
+        type_modele: Type (production, baseline, benchmark).
     """
     MODEL_INFO.info(
         {

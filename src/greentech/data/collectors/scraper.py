@@ -70,6 +70,7 @@ from scrapy_playwright.page import PageMethod
 
 from greentech.config import get_settings
 from greentech.data.collectors.base import BaseCollector, CollectResult, get_config_from_db
+from greentech.data.collectors.url_precheck import load_known_urls, url_is_known
 from greentech.data.storage.database import async_session_factory
 from greentech.data.storage.minio_client import (
     generate_raw_path,
@@ -256,9 +257,7 @@ def _extract_content(response: Response) -> str:
         paragraphs = response.css(selector).getall()
         text = "\n\n".join(p.strip() for p in paragraphs if p.strip())
         if len(text) >= MIN_CONTENT_LENGTH:
-            logger.debug(
-                f"Contenu extrait via selecteur '{selector}' ({len(text)} chars)"
-            )
+            logger.debug(f"Contenu extrait via selecteur '{selector}' ({len(text)} chars)")
             return text
 
     # Dernier recours : trafilatura sur le HTML rendu par Playwright.
@@ -274,9 +273,7 @@ def _extract_content(response: Response) -> str:
             favor_precision=True,
         )
         if extracted and len(extracted.strip()) >= MIN_CONTENT_LENGTH:
-            logger.info(
-                f"Fallback trafilatura applique ({len(extracted)} chars) : {response.url}"
-            )
+            logger.info(f"Fallback trafilatura applique ({len(extracted)} chars) : {response.url}")
             return extracted.strip()
     except Exception as exc:
         logger.debug(f"Fallback trafilatura echec sur {response.url} : {exc}")
@@ -426,9 +423,7 @@ class TechCrunchArticleSpider(Spider):
         # (header, footer, related posts) : on deduplique en preservant l'ordre
         # d'apparition pour eviter "Tim De Chant, Tim De Chant, Tim De Chant, ...".
         auteurs = response.css('a[href*="/author/"]::text').getall()
-        auteurs_uniques = list(
-            dict.fromkeys(a.strip() for a in auteurs if a.strip())
-        )
+        auteurs_uniques = list(dict.fromkeys(a.strip() for a in auteurs if a.strip()))
         auteur = ", ".join(auteurs_uniques) or None
 
         # Contenu : chaine de selecteurs + fallback trafilatura
@@ -508,6 +503,8 @@ class ScrapingCollector(BaseCollector):
     async def collect(
         self,
         keywords: list[str],
+        *,
+        skip_existing: bool = True,
         **kwargs: Any,
     ) -> CollectResult:
         """Orchestre la collecte : RSS -> filtrage -> scraping HTML Scrapy.
@@ -516,6 +513,9 @@ class ScrapingCollector(BaseCollector):
             keywords: Mots-cles (de ``search_config`` ``type_source='scraping'``)
                 pour filtrer les URLs RSS avant scraping. Si vide, aucun
                 filtre mots-cles n'est applique (blacklist promos conservee).
+            skip_existing: Si True, pre-charge les URLs deja en BDD et
+                saute les articles connus avant le fetch Playwright
+                (economie enorme : Playwright = 5-10s par page).
             **kwargs: Parametres additionnels (non utilises).
 
         Returns:
@@ -528,6 +528,23 @@ class ScrapingCollector(BaseCollector):
             if not urls:
                 logger.warning("Aucune URL decouverte via le flux RSS TechCrunch")
                 return result
+
+            # Pre-check BDD : filtre avant le fetch Playwright (5-10s/page).
+            # Sur les re-runs, saute la quasi-totalite des URLs deja en BDD
+            # et ne lance Playwright que sur les nouveaux articles du RSS.
+            if skip_existing:
+                known_urls = await load_known_urls(self.source_name)
+                # Comparaison normalisee via url_is_known (http/https, trailing slash).
+                skipped = [u for u in urls if url_is_known(u, known_urls)]
+                urls = [u for u in urls if not url_is_known(u, known_urls)]
+                if skipped:
+                    logger.info(
+                        f"TechCrunch : {len(skipped)} URLs deja en BDD (skip), "
+                        f"{len(urls)} nouveaux a scraper via Playwright"
+                    )
+                if not urls:
+                    logger.info("TechCrunch : toutes les URLs RSS sont deja en BDD")
+                    return result
 
             logger.info(f"Lancement du scraping HTML sur {len(urls)} articles...")
             articles, error_stats = await self._scrape_html_pages(urls)
@@ -590,9 +607,7 @@ class ScrapingCollector(BaseCollector):
             scraping HTML.
         """
         all_entries = await self._fetch_all_rss_pages()
-        logger.info(
-            f"Flux RSS pagine : {len(all_entries)} entrees uniques collectees"
-        )
+        logger.info(f"Flux RSS pagine : {len(all_entries)} entrees uniques collectees")
 
         needles = [k.lower() for k in keywords] if keywords else []
 
@@ -665,9 +680,7 @@ class ScrapingCollector(BaseCollector):
         all_entries: list[dict[str, Any]] = []
         seen_urls: set[str] = set()
 
-        async with httpx.AsyncClient(
-            timeout=REQUEST_TIMEOUT, follow_redirects=True
-        ) as client:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
             for page in range(1, MAX_RSS_PAGES + 1):
                 page_url = (
                     TECHCRUNCH_CLIMATE_RSS
@@ -679,14 +692,11 @@ class ScrapingCollector(BaseCollector):
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:
                     logger.warning(
-                        f"RSS page {page} : HTTP {exc.response.status_code}, "
-                        "arret pagination"
+                        f"RSS page {page} : HTTP {exc.response.status_code}, arret pagination"
                     )
                     break
                 except httpx.HTTPError as exc:
-                    logger.warning(
-                        f"RSS page {page} : erreur reseau {exc}, arret pagination"
-                    )
+                    logger.warning(f"RSS page {page} : erreur reseau {exc}, arret pagination")
                     break
 
                 feed = feedparser.parse(response.text)
@@ -711,9 +721,7 @@ class ScrapingCollector(BaseCollector):
                 # Si aucune nouvelle URL n'est ramenee, les pages suivantes
                 # seraient identiques -> on evite les appels inutiles.
                 if new_count == 0:
-                    logger.info(
-                        f"RSS page {page} : aucune URL nouvelle, pagination epuisee"
-                    )
+                    logger.info(f"RSS page {page} : aucune URL nouvelle, pagination epuisee")
                     break
 
                 # Pause courte entre pages RSS (courtoisie serveur).
@@ -756,9 +764,7 @@ class ScrapingCollector(BaseCollector):
                     "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
                     "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
                 },
-                "TWISTED_REACTOR": (
-                    "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
-                ),
+                "TWISTED_REACTOR": ("twisted.internet.asyncioreactor.AsyncioSelectorReactor"),
                 # --- Configuration Playwright : robustesse ---
                 "PLAYWRIGHT_BROWSER_TYPE": "chromium",
                 "PLAYWRIGHT_LAUNCH_OPTIONS": {
@@ -776,9 +782,7 @@ class ScrapingCollector(BaseCollector):
                 },
                 # Timeout de navigation releve (les articles long format /
                 # live blogs TechCrunch depassent les 30s par defaut).
-                "PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT": (
-                    PLAYWRIGHT_NAVIGATION_TIMEOUT
-                ),
+                "PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT": (PLAYWRIGHT_NAVIGATION_TIMEOUT),
                 # Recyclage du contexte Playwright pour eviter l'accumulation
                 # de state qui fait crasher Chromium apres ~7 pages.
                 "PLAYWRIGHT_MAX_PAGES_PER_CONTEXT": PLAYWRIGHT_MAX_PAGES_PER_CONTEXT,
@@ -865,9 +869,7 @@ async def run_scraping_collection() -> CollectResult:
         keywords = [cfg.mot_cle for cfg in configs]
 
     if keywords:
-        logger.info(
-            f"Filtrage RSS par {len(keywords)} mots-cles : {', '.join(keywords)}"
-        )
+        logger.info(f"Filtrage RSS par {len(keywords)} mots-cles : {', '.join(keywords)}")
     else:
         logger.info(
             "Aucun mot-cle 'scraping' en DB : le scraping n'applique que "

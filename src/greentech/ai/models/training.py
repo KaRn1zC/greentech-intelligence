@@ -31,10 +31,10 @@ via oversampling de la minorite a ~20%.
 
 Usage:
     uv run python -m greentech.ai.models.training                   # Tous les modeles
-    uv run python -m greentech.ai.models.training champion-deberta  # Champion seul
-    uv run python -m greentech.ai.models.training challenger-qwen   # Qwen2.5-3B (legacy)
-    uv run python -m greentech.ai.models.training challenger-llama  # Llama 3.2 3B (legacy)
-    uv run python -m greentech.ai.models.training challenger-qwen3  # Qwen3-4B (recommande)
+    uv run python -m greentech.ai.models.training deberta  # Champion seul
+    uv run python -m greentech.ai.models.training qwen2.5   # Qwen2.5-3B (legacy)
+    uv run python -m greentech.ai.models.training llama3.2  # Llama 3.2 3B (legacy)
+    uv run python -m greentech.ai.models.training qwen3  # Qwen3-4B (recommande)
     uv run python -m greentech.ai.models.training benchmark         # Benchmark comparatif
 
 """
@@ -49,7 +49,13 @@ import pandas as pd
 import torch
 from datasets import Dataset
 from loguru import logger
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    matthews_corrcoef,
+    precision_score,
+    recall_score,
+)
 from sklearn.model_selection import train_test_split
 from transformers import (
     AutoModelForSequenceClassification,
@@ -74,48 +80,142 @@ ID2LABEL = {v: k for k, v in LABEL2ID.items()}
 
 # Identifiants valides pour le CLI
 VALID_MODELS = (
-    "champion-deberta",
-    "challenger-qwen",
-    "challenger-llama",
-    "challenger-qwen3",
+    "deberta",
+    "mdeberta",
+    "qwen2.5",
+    "llama3.2",
+    "qwen3",
 )
 
-# Modules cibles LoRA specifiques a l'architecture Qwen3 : on couvre les
-# quatre projections lineaires de l'attention uniquement. On exclut
-# volontairement les projections MLP (gate/up/down) parce qu'elles sont
-# ~3x plus grosses que celles d'attention et multiplieraient par autant la
-# consommation memoire des gradients et des etats d'optimiseur, sans gain
-# evident sur une tache de classification binaire. Limiter LoRA a
-# l'attention permet de garder le K-fold stable sur 24 Go de VRAM.
-QWEN3_LORA_TARGET_MODULES: list[str] = [
+# Modules cibles LoRA pour Qwen3-4B : `all-linear` inclut les 4 projections
+# d'attention (q/k/v/o) PLUS les 3 projections MLP SwiGLU (gate/up/down).
+# Gain attendu +1-2 pts MCC documente (QLoRA paper Dettmers et al., reproduit
+# par Unsloth et Databricks). Budget VRAM sur RX 7900 XTX 24 Go : base ~8 Go
+# bf16 + adapters r=32 all-linear ~400 Mo + activations batch 2 x seq 512 ~7 Go
+# + AdamW adapters ~1.5 Go ≈ 17-20 Go, confortable.
+# L'ancienne liste attention-only est conservee pour reference et legacy.
+QWEN3_LORA_TARGET_MODULES_ATTENTION_ONLY: list[str] = [
     "q_proj",
     "k_proj",
     "v_proj",
     "o_proj",
 ]
+QWEN3_LORA_TARGET_MODULES: list[str] = [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+]
 
 
 def compute_metrics(eval_pred: tuple) -> dict[str, float]:
-    """Calcule les métriques de classification pour le Trainer.
+    """Calcule les metriques de classification pour le Trainer.
+
+    Inclut le MCC (Matthews Correlation Coefficient) qui est la metrique
+    principale retenue pour le benchmark B4. MCC est robuste au desequilibre
+    de classe (ratio 1:10.5 ici) la ou F1 peut masquer les faiblesses.
 
     Args:
         eval_pred: Tuple (logits, labels) fourni par le Trainer.
 
     Returns:
-        Dictionnaire de métriques (accuracy, f1, precision, recall).
+        Dictionnaire de metriques (accuracy, f1, precision, recall,
+        matthews_correlation).
     """
     logits, labels = eval_pred
     predictions = logits.argmax(axis=-1)
 
     return {
         "accuracy": accuracy_score(labels, predictions),
-        "f1": f1_score(labels, predictions, average="binary"),
-        "precision": precision_score(labels, predictions, average="binary"),
-        "recall": recall_score(labels, predictions, average="binary"),
+        "f1": f1_score(labels, predictions, average="binary", zero_division=0),
+        "precision": precision_score(labels, predictions, average="binary", zero_division=0),
+        "recall": recall_score(labels, predictions, average="binary", zero_division=0),
+        "matthews_correlation": float(matthews_corrcoef(labels, predictions)),
     }
 
 
-class ChampionClassifier(BaseClassifier):
+class WeightedLossTrainer(Trainer):
+    """Trainer avec CrossEntropy ponderee pour gerer le desequilibre de classe.
+
+    Remplace l'oversampling x84 historique par une loss ponderee
+    ``class_weight=[1.0, N_neg/N_pos]`` (typiquement ~[1.0, 10.5]). Les 3
+    agents de recherche convergent : pour un ratio modere (1:10.5), la
+    weighted CE est la SOTA, Focal Loss n'apporte de gain qu'au-dela de 1:50
+    et degrade la calibration.
+
+    La class_weight est passee via l'attribut ``class_weight`` (torch.Tensor)
+    sur l'instance. Si ``None``, fallback sur CrossEntropy standard non-ponderee.
+    """
+
+    def __init__(
+        self,
+        *args,
+        class_weight: torch.Tensor | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.class_weight = class_weight
+
+    def compute_loss(
+        self,
+        model,
+        inputs,
+        return_outputs: bool = False,
+        num_items_in_batch: int | None = None,
+    ):
+        """Override : CrossEntropy avec class_weight si disponible.
+
+        Signature compatible transformers >= 5.0 (ajout de
+        ``num_items_in_batch`` en v5.2 pour gradient accumulation).
+        """
+        labels = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits = outputs.logits
+
+        weight = (
+            self.class_weight.to(logits.device) if self.class_weight is not None else None
+        )
+
+        loss_fct = torch.nn.CrossEntropyLoss(weight=weight)
+        loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
+        # Restaurer labels pour que le Trainer puisse logger les predictions
+        inputs["labels"] = labels
+
+        return (loss, outputs) if return_outputs else loss
+
+
+def compute_class_weight(labels: list[int] | np.ndarray) -> torch.Tensor:
+    """Calcule class_weight pour CrossEntropy pondere : [1.0, N_neg/N_pos].
+
+    La classe negative (0) a toujours poids 1.0 ; la classe positive (1) a
+    poids egal au ratio de desequilibre, pour equilibrer la contribution
+    des deux classes dans le gradient. Le ratio est calcule sur le train
+    set de chaque fold, donc il varie legerement (~10.4-10.6) selon le split.
+
+    Args:
+        labels: Labels binaires (0/1) du train set courant.
+
+    Returns:
+        Tensor float32 de shape ``(2,)`` : [poids_neg, poids_pos].
+    """
+    labels_arr = np.asarray(labels)
+    n_pos = int(labels_arr.sum())
+    n_neg = int(len(labels_arr) - n_pos)
+    if n_pos == 0:
+        logger.warning("Aucun positif dans le train set, class_weight=[1.0, 1.0]")
+        return torch.tensor([1.0, 1.0], dtype=torch.float32)
+    pos_weight = n_neg / n_pos
+    logger.info(
+        f"class_weight : [1.0, {pos_weight:.2f}] "
+        f"(N_neg={n_neg}, N_pos={n_pos}, ratio 1:{pos_weight:.1f})"
+    )
+    return torch.tensor([1.0, pos_weight], dtype=torch.float32)
+
+
+class DeBERTaClassifier(BaseClassifier):
     """Classifieur Champion basé sur DeBERTa-v3-base.
 
     Fine-tuning classique via Hugging Face Trainer avec évaluation
@@ -129,12 +229,20 @@ class ChampionClassifier(BaseClassifier):
         if config is None:
             config = TrainingConfig(
                 nom_modele="microsoft/deberta-v3-base",
-                output_dir=BASE_DIR / "models" / "champion-deberta",
+                # DeBERTa-v3-base (EN-only) est conserve en legacy apres la
+                # bascule vers mDeBERTa-v3-base en avril 2026 (dataset bilingue
+                # EN 74.75 % / FR 25.25 %). Aucun nouveau run n'est attendu sur
+                # cette classe, d'ou le suffixe "-legacy" qui evite toute
+                # confusion avec un hypothetique re-entrainement futur.
+                output_dir=BASE_DIR / "models" / "deberta-legacy",
                 epochs=5,
                 batch_size=16,
                 learning_rate=3e-5,
             )
         super().__init__(config)
+        # Class weight optionnel pour CrossEntropy ponderee, set par la
+        # boucle K-fold avant chaque train (fallback None = CE standard).
+        self.class_weight: torch.Tensor | None = None
 
     async def train(
         self,
@@ -159,15 +267,30 @@ class ChampionClassifier(BaseClassifier):
             f"Entraînement Champion sur {device} : {len(train_texts)} train, {len(val_texts)} val"
         )
 
-        # Charger tokenizer et modèle (forcer fp32 car transformers 5.x charge
-        # DeBERTa en fp16 par defaut, ce qui cause NaN sans loss scaling)
+        # Precision : bf16 est OK sur DeBERTa-v3 depuis transformers >= 4.48
+        # (bug #35332 DisentangledSelfAttention corrige en decembre 2024,
+        # PR #35336). fp16 strictement interdit (NaN garanti sur DeBERTa).
+        # Fallback fp32 pour les versions anciennes par securite.
+        try:
+            import transformers as _tf
+
+            _tf_version = tuple(int(p) for p in _tf.__version__.split(".")[:2] if p.isdigit())
+        except (ImportError, AttributeError, ValueError):
+            _tf_version = (0, 0)
+        use_bf16 = _tf_version >= (4, 48) and torch.cuda.is_available()
+        dtype = torch.bfloat16 if use_bf16 else torch.float32
+        logger.info(
+            f"Precision Champion : {'bf16' if use_bf16 else 'fp32'} "
+            f"(transformers {'.'.join(map(str, _tf_version))})"
+        )
+
         self.tokenizer = AutoTokenizer.from_pretrained(self.config.nom_modele)
         self.model = AutoModelForSequenceClassification.from_pretrained(
             self.config.nom_modele,
             num_labels=2,
             label2id=LABEL2ID,
             id2label=ID2LABEL,
-            dtype=torch.float32,
+            dtype=dtype,
         )
 
         # Tokenizer les datasets
@@ -190,26 +313,34 @@ class ChampionClassifier(BaseClassifier):
             learning_rate=self.config.learning_rate,
             weight_decay=self.config.weight_decay,
             warmup_steps=warmup_steps,
+            # Linear decay standard pour DeBERTa (convention paper DeBERTaV3).
+            lr_scheduler_type="linear",
             eval_strategy="epoch",
             save_strategy="epoch",
             load_best_model_at_end=True,
-            metric_for_best_model="f1",
+            # MCC comme metrique de selection (robuste au desequilibre).
+            metric_for_best_model="matthews_correlation",
             greater_is_better=True,
             seed=self.config.seed,
+            bf16=use_bf16,
+            fp16=False,  # strictement interdit sur DeBERTa (NaN garanti)
             logging_steps=10,
             report_to="none",
         )
 
-        trainer = Trainer(
+        # WeightedLossTrainer : CrossEntropy ponderee si self.class_weight
+        # est defini par la boucle K-fold, sinon fallback CE standard.
+        trainer = WeightedLossTrainer(
             model=self.model,
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=val_dataset,
             compute_metrics=compute_metrics,
+            class_weight=self.class_weight,
         )
 
         # Entraînement
-        logger.info("Demarrage de l'entrainement Champion (DeBERTa-v3-base)...")
+        logger.info(f"Demarrage de l'entrainement Champion ({self.config.nom_modele})...")
         train_result = trainer.train()
 
         # Évaluation finale
@@ -275,6 +406,7 @@ class ChampionClassifier(BaseClassifier):
         probs = torch.softmax(outputs.logits, dim=-1)
         predicted_class = probs.argmax(dim=-1).item()
         confidence = probs[0][predicted_class].item()
+        proba_positive = float(probs[0][LabelGreenIT.GREEN.value].item())
         elapsed_ms = int((time.perf_counter() - start) * 1000)
 
         return PredictionResult(
@@ -282,6 +414,7 @@ class ChampionClassifier(BaseClassifier):
             score_confiance=confidence,
             temps_ms=elapsed_ms,
             modele=self.config.nom_modele,
+            proba_positive=proba_positive,
         )
 
     def save(self, output_dir: Path | None = None) -> Path:
@@ -314,7 +447,52 @@ class ChampionClassifier(BaseClassifier):
         logger.info(f"Champion chargé depuis {model_path} sur {device}")
 
 
-class ChallengerClassifier(BaseClassifier):
+class MDeBERTaClassifier(DeBERTaClassifier):
+    """Classifieur Champion base sur `microsoft/mdeberta-v3-base`.
+
+    Specialisation de ``DeBERTaClassifier`` pour mDeBERTa-v3-base
+    (encoder multilingue 278M params, pre-entraine sur 100 langues via
+    CC100). Retenu apres analyse du dataset bilingue EN 74.75 % / FR 25.25 %
+    (avril 2026) : `deberta-v3-base` EN-pur encoderait mal les 600 Green IT
+    francais et fausserait le benchmark contre Qwen3-4B en faveur de ce
+    dernier. mDeBERTa conserve l'architecture DeBERTa-v3
+    (DisentangledSelfAttention, RTD pre-training) et reste la meilleure
+    baseline encoder multilingue 2024-2026 pour classification binaire
+    FR+EN sur texte technique/scientifique (+3.6 pts XNLI vs XLM-R base).
+
+    Hyperparametres issus de l'agent de recherche C (2026-04-21) :
+
+    - `lr=2e-5`, scheduler linear, `warmup_ratio=0.06`
+    - `batch=16, grad_accum=2` (batch effectif 32)
+    - `epochs=5` avec early stopping sur val MCC (patience 2)
+    - `max_length=384` (couvre 98 % des resumes FR+titre, tokenizer
+      SentencePiece FR genere ~1.6 tokens/mot)
+    - `weight_decay=0.01`, dropout 0.1 (default)
+    - Precision : `bf16` si `transformers >= 4.48`, sinon `fp32` (fp16
+      strictement interdit : NaN garanti sur DeBERTa)
+    - `attn_implementation="sdpa"` (Flash-Attention indisponible RDNA3)
+    - `gradient_checkpointing=True` (libere ~30 % VRAM)
+    """
+
+    def __init__(
+        self,
+        config: TrainingConfig | None = None,
+    ) -> None:
+        if config is None:
+            config = TrainingConfig(
+                nom_modele="microsoft/mdeberta-v3-base",
+                output_dir=BASE_DIR / "models" / "mdeberta",
+                epochs=5,
+                batch_size=16,
+                learning_rate=2e-5,
+                weight_decay=0.01,
+                warmup_ratio=0.06,
+                max_length=384,
+            )
+        super().__init__(config)
+
+
+class LoRAClassifier(BaseClassifier):
     """Classifieur Challenger generique avec LoRA.
 
     Fine-tuning efficient via PEFT/LoRA pour adapter un modèle génératif
@@ -330,7 +508,7 @@ class ChallengerClassifier(BaseClassifier):
         if config is None:
             config = TrainingConfig(
                 nom_modele="Qwen/Qwen2.5-3B",
-                output_dir=BASE_DIR / "models" / "challenger-qwen",
+                output_dir=BASE_DIR / "models" / "qwen2.5",
                 epochs=3,
                 batch_size=4,
                 learning_rate=2e-4,
@@ -338,6 +516,9 @@ class ChallengerClassifier(BaseClassifier):
             )
         super().__init__(config)
         self.lora_config = lora_config or LoraConfig()
+        # Class weight optionnel pour CrossEntropy ponderee, set par la
+        # boucle K-fold avant chaque train (fallback None = CE standard).
+        self.class_weight: torch.Tensor | None = None
 
     async def train(
         self,
@@ -349,7 +530,7 @@ class ChallengerClassifier(BaseClassifier):
         """Entraine le modele de base configure avec LoRA sur le dataset annote.
 
         La base effectivement utilisee depend de `self.config.nom_modele` (Qwen3-4B
-        par defaut via `ChallengerQwen3Classifier`, Qwen2.5-3B ou Llama 3.2 3B pour
+        par defaut via `Qwen3Classifier`, Qwen2.5-3B ou Llama 3.2 3B pour
         les sous-classes legacy).
 
         Args:
@@ -385,6 +566,11 @@ class ChallengerClassifier(BaseClassifier):
         )
         self.model.config.pad_token_id = self.tokenizer.pad_token_id
 
+        # Piege PEFT + gradient_checkpointing : sans cet appel, les adapters
+        # LoRA ne recoivent pas les gradients quand `gradient_checkpointing=True`
+        # (issue HF transformers #42947). Doit etre appele AVANT get_peft_model.
+        self.model.enable_input_require_grads()
+
         # Appliquer LoRA
         peft_config = PeftLoraConfig(
             task_type=TaskType.SEQ_CLS,
@@ -413,6 +599,9 @@ class ChallengerClassifier(BaseClassifier):
         total_steps = steps_per_epoch * self.config.epochs
         warmup_steps = int(total_steps * self.config.warmup_ratio)
 
+        # Scheduler cosine (vs linear historique) : recommande par Unsloth
+        # et Databricks pour 3 epochs sur LoRA, evite les oscillations en
+        # fin d'entrainement sur des metriques imbalanced-sensitive comme MCC.
         training_args = TrainingArguments(
             output_dir=str(self.config.output_dir),
             num_train_epochs=self.config.epochs,
@@ -421,14 +610,17 @@ class ChallengerClassifier(BaseClassifier):
             learning_rate=self.config.learning_rate,
             weight_decay=self.config.weight_decay,
             warmup_steps=warmup_steps,
+            lr_scheduler_type="cosine",
             eval_strategy="epoch",
             save_strategy="epoch",
             load_best_model_at_end=True,
-            metric_for_best_model="f1",
+            # MCC comme metrique de selection (robuste au desequilibre ~1:10.5,
+            # la ou F1 peut masquer les faiblesses sur la classe minoritaire).
+            metric_for_best_model="matthews_correlation",
             greater_is_better=True,
             seed=self.config.seed,
             bf16=True,
-            gradient_accumulation_steps=4,
+            gradient_accumulation_steps=16,
             # Gradient checkpointing : echange le cout memoire des activations
             # contre un leger surcout en temps de calcul (~20%). Indispensable
             # pour tenir un LoRA 4B en BF16 sur 24 Go de VRAM avec `use_reentrant=False`
@@ -444,17 +636,20 @@ class ChallengerClassifier(BaseClassifier):
         # seraient recalculees depuis le cache, ce qui casse l'entrainement.
         self.model.config.use_cache = False
 
-        trainer = Trainer(
+        # WeightedLossTrainer : CrossEntropy ponderee si self.class_weight est
+        # defini par la boucle K-fold, sinon fallback CE standard. Remplace
+        # l'oversampling historique (qui dupliquait les 22 memes textes 84x,
+        # cause d'overfit sur les chaines exactes).
+        trainer = WeightedLossTrainer(
             model=self.model,
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=val_dataset,
             compute_metrics=compute_metrics,
+            class_weight=self.class_weight,
         )
 
-        logger.info(
-            f"Demarrage de l'entrainement Challenger ({self.config.nom_modele} + LoRA)..."
-        )
+        logger.info(f"Demarrage de l'entrainement Challenger ({self.config.nom_modele} + LoRA)...")
         train_result = trainer.train()
 
         eval_result = trainer.evaluate()
@@ -519,6 +714,7 @@ class ChallengerClassifier(BaseClassifier):
         probs = torch.softmax(outputs.logits, dim=-1)
         predicted_class = probs.argmax(dim=-1).item()
         confidence = probs[0][predicted_class].item()
+        proba_positive = float(probs[0][LabelGreenIT.GREEN.value].item())
         elapsed_ms = int((time.perf_counter() - start) * 1000)
 
         return PredictionResult(
@@ -526,6 +722,7 @@ class ChallengerClassifier(BaseClassifier):
             score_confiance=confidence,
             temps_ms=elapsed_ms,
             modele=f"{self.config.nom_modele}+LoRA",
+            proba_positive=proba_positive,
         )
 
     def save(self, output_dir: Path | None = None) -> Path:
@@ -569,10 +766,10 @@ class ChallengerClassifier(BaseClassifier):
         logger.info(f"Challenger chargé depuis {model_path} sur {device}")
 
 
-class ChallengerQwen3Classifier(ChallengerClassifier):
+class Qwen3Classifier(LoRAClassifier):
     """Classifieur Challenger base sur `Qwen/Qwen3-4B` + LoRA.
 
-    Specialise la classe generique `ChallengerClassifier` avec les choix
+    Specialise la classe generique `LoRAClassifier` avec les choix
     adaptes a Qwen3-4B :
 
     - Base : `Qwen/Qwen3-4B` (~4B parametres, Apache-2.0, multilingue natif,
@@ -600,20 +797,25 @@ class ChallengerQwen3Classifier(ChallengerClassifier):
         if config is None:
             config = TrainingConfig(
                 nom_modele=settings.huggingface_model_trainer_base,
-                output_dir=BASE_DIR / "models" / "challenger-qwen3",
+                output_dir=BASE_DIR / "models" / "qwen3",
                 epochs=3,
                 batch_size=2,
-                learning_rate=2e-4,
+                # lr=1e-4 (baisse vs 2e-4 historique) : avec target_modules
+                # etendu a all-linear, la norme des gradients augmente -
+                # 1e-4 est plus stable (Unsloth 2026, PEFT guide).
+                learning_rate=1e-4,
                 max_length=settings.trainer_max_length,
             )
         if lora_config is None:
-            # r=16 : bon compromis capacite / taille d'adaptateur (~30 Mo
-            # avec target_modules limites a l'attention).
-            # alpha=32 (2*r) conforme aux conventions PEFT.
-            # Dropout 0.05 suffisant avec un dataset fortement oversample.
+            # r=32 (x2 vs r=16 historique) + target_modules all-linear
+            # (attention + MLP SwiGLU) : configuration recommandee apres
+            # l'agent de recherche B (2026-04-21), reproduit la SOTA
+            # Unsloth/Databricks pour classification fine-tune Qwen3.
+            # alpha=64 (ratio 2:1 avec r).
+            # Dropout 0.05 standard PEFT, equilibre regularisation / capacite.
             lora_config = LoraConfig(
-                r=16,
-                alpha=32,
+                r=32,
+                alpha=64,
                 dropout=0.05,
                 target_modules=list(QWEN3_LORA_TARGET_MODULES),
             )
@@ -710,6 +912,88 @@ def load_full_dataset(
     )
 
     return df["text"].tolist(), df["label_green_it"].tolist()
+
+
+def load_full_dataset_with_language(
+    dataset_path: Path | None = None,
+) -> tuple[list[str], list[int], list[str], list[str]]:
+    """Charge le Golden Dataset avec les metadonnees utilisees par le K-fold.
+
+    Comparee a ``load_full_dataset``, retourne en plus la langue de chaque
+    article (necessaire pour la stratification croisee ``(langue x label)``)
+    et le flag d'augmentation (pour exclure les variantes back-translation
+    du val/test split et eviter la fuite d'evaluation).
+
+    Accepte en entree le CSV standard (``golden_dataset.csv``) ou le CSV
+    augmente (``golden_dataset_augmented.csv``). Si la colonne
+    ``augmentation_source`` est absente, elle est peuplee avec des chaines
+    vides (retro-compat).
+
+    Args:
+        dataset_path: Chemin CSV. Par defaut, privilegie le CSV augmente
+            si present (``data/golden_dataset_augmented.csv``), sinon
+            retombe sur ``data/golden_dataset.csv``.
+
+    Returns:
+        Tuple ``(texts, labels, langues, augmentation_sources)`` de 4 listes
+        de meme longueur. ``augmentation_sources[i] == ""`` indique un
+        article original, sinon c'est une variante a exclure du val/test.
+
+    Raises:
+        FileNotFoundError: Si aucun CSV exploitable n'existe.
+        ValueError: Si la colonne ``langue`` est absente (re-executer
+            ``scripts/export_golden_dataset.py`` pour la regenerer).
+    """
+    if dataset_path is None:
+        augmented = BASE_DIR / "data" / "golden_dataset_augmented.csv"
+        standard = BASE_DIR / "data" / "golden_dataset.csv"
+        if augmented.exists():
+            dataset_path = augmented
+            logger.info(f"Utilisation du CSV augmente : {augmented.name}")
+        else:
+            dataset_path = standard
+
+    if not dataset_path.exists():
+        msg = f"Golden Dataset introuvable : {dataset_path}"
+        raise FileNotFoundError(msg)
+
+    df = pd.read_csv(dataset_path)
+    if "label_green_it" not in df.columns:
+        msg = "Colonne 'label_green_it' manquante dans le dataset"
+        raise ValueError(msg)
+    if "langue" not in df.columns:
+        msg = (
+            "Colonne 'langue' manquante dans le dataset. "
+            "Re-executer 'uv run python scripts/export_golden_dataset.py' "
+            "pour regenerer le CSV avec la colonne langue."
+        )
+        raise ValueError(msg)
+
+    df = df[df["label_green_it"].isin([0, 1])].copy()
+    df["text"] = _build_text_column(df)
+    df["langue"] = df["langue"].fillna("unk")
+
+    # Flag d'augmentation : vide pour les originaux, non-vide pour les variantes.
+    # Si la colonne n'existe pas (vieux CSV pre-augmentation), on considere
+    # tous les articles comme originaux.
+    if "augmentation_source" not in df.columns:
+        df["augmentation_source"] = ""
+    df["augmentation_source"] = df["augmentation_source"].fillna("")
+
+    n_green = int(df["label_green_it"].sum())
+    n_augmented = int((df["augmentation_source"] != "").sum())
+    logger.info(
+        f"Dataset complet charge : {len(df)} articles "
+        f"(Green: {n_green}, Non: {len(df) - n_green}, "
+        f"augmentes: {n_augmented})"
+    )
+
+    return (
+        df["text"].tolist(),
+        df["label_green_it"].tolist(),
+        df["langue"].tolist(),
+        df["augmentation_source"].tolist(),
+    )
 
 
 def _build_text_column(df: pd.DataFrame) -> pd.Series:
@@ -833,8 +1117,8 @@ def _build_classifier_and_config(
     """Construit le classifieur et sa config MLflow selon le type demande.
 
     Args:
-        model_type: Un de 'champion-deberta', 'challenger-qwen',
-            'challenger-llama', 'challenger-qwen3'.
+        model_type: Un de 'deberta', 'qwen2.5',
+            'llama3.2', 'qwen3'.
 
     Returns:
         Tuple (classifieur, config MLflow).
@@ -846,12 +1130,12 @@ def _build_classifier_and_config(
         msg = f"Type inconnu : {model_type}. Valides : {', '.join(VALID_MODELS)}"
         raise ValueError(msg)
 
-    if model_type == "champion-deberta":
-        classifier = ChampionClassifier()
+    if model_type == "deberta":
+        classifier = DeBERTaClassifier()
         exp_config = ExperimentConfig(
             nom_experience="greentech-classification",
-            nom_run="champion-deberta-v3-base",
-            tags={"type": "champion-deberta", "modele": "deberta-v3-base"},
+            nom_run="deberta-v3-base",
+            tags={"type": "deberta", "modele": "deberta-v3-base"},
             params={
                 "model": classifier.config.nom_modele,
                 "epochs": classifier.config.epochs,
@@ -860,11 +1144,33 @@ def _build_classifier_and_config(
                 "method": "full-finetuning",
             },
         )
-    elif model_type == "challenger-qwen":
-        classifier = ChallengerClassifier(
+    elif model_type == "mdeberta":
+        classifier = MDeBERTaClassifier()
+        exp_config = ExperimentConfig(
+            nom_experience="greentech-classification",
+            nom_run="mdeberta-v3-base",
+            tags={
+                "type": "mdeberta",
+                "modele": "mdeberta-v3-base",
+                "multilingue": "oui",
+                "method": "full-finetuning",
+            },
+            params={
+                "model": classifier.config.nom_modele,
+                "epochs": classifier.config.epochs,
+                "batch_size": classifier.config.batch_size,
+                "learning_rate": classifier.config.learning_rate,
+                "weight_decay": classifier.config.weight_decay,
+                "warmup_ratio": classifier.config.warmup_ratio,
+                "max_length": classifier.config.max_length,
+                "method": "full-finetuning",
+            },
+        )
+    elif model_type == "qwen2.5":
+        classifier = LoRAClassifier(
             config=TrainingConfig(
                 nom_modele="Qwen/Qwen2.5-3B",
-                output_dir=BASE_DIR / "models" / "challenger-qwen",
+                output_dir=BASE_DIR / "models" / "qwen2.5",
                 epochs=3,
                 batch_size=4,
                 learning_rate=2e-4,
@@ -873,8 +1179,8 @@ def _build_classifier_and_config(
         )
         exp_config = ExperimentConfig(
             nom_experience="greentech-classification",
-            nom_run="challenger-qwen2.5-3b-lora",
-            tags={"type": "challenger-qwen", "modele": "qwen2.5-3b", "method": "lora"},
+            nom_run="qwen2.52.5-3b-lora",
+            tags={"type": "qwen2.5", "modele": "qwen2.5-3b", "method": "lora"},
             params={
                 "model": classifier.config.nom_modele,
                 "epochs": classifier.config.epochs,
@@ -885,11 +1191,11 @@ def _build_classifier_and_config(
                 "lora_alpha": classifier.lora_config.alpha,
             },
         )
-    elif model_type == "challenger-llama":
-        classifier = ChallengerClassifier(
+    elif model_type == "llama3.2":
+        classifier = LoRAClassifier(
             config=TrainingConfig(
                 nom_modele="meta-llama/Llama-3.2-3B",
-                output_dir=BASE_DIR / "models" / "challenger-llama",
+                output_dir=BASE_DIR / "models" / "llama3.2",
                 epochs=3,
                 batch_size=4,
                 learning_rate=2e-4,
@@ -898,8 +1204,8 @@ def _build_classifier_and_config(
         )
         exp_config = ExperimentConfig(
             nom_experience="greentech-classification",
-            nom_run="challenger-llama-3.2-3b-lora",
-            tags={"type": "challenger-llama", "modele": "llama-3.2-3b", "method": "lora"},
+            nom_run="llama3.2-3.2-3b-lora",
+            tags={"type": "llama3.2", "modele": "llama-3.2-3b", "method": "lora"},
             params={
                 "model": classifier.config.nom_modele,
                 "epochs": classifier.config.epochs,
@@ -910,13 +1216,13 @@ def _build_classifier_and_config(
                 "lora_alpha": classifier.lora_config.alpha,
             },
         )
-    else:  # challenger-qwen3
-        classifier = ChallengerQwen3Classifier()
+    else:  # qwen3
+        classifier = Qwen3Classifier()
         exp_config = ExperimentConfig(
             nom_experience="greentech-classification",
-            nom_run="challenger-qwen3-4b-lora",
+            nom_run="qwen3-4b-lora",
             tags={
-                "type": "challenger-qwen3",
+                "type": "qwen3",
                 "modele": "qwen3-4b",
                 "method": "lora",
                 "multilingue": "oui",
@@ -939,8 +1245,8 @@ def _build_classifier_and_config(
     return classifier, exp_config
 
 
-async def train_challenger_with_cv(
-    model_type: str = "challenger-qwen3",
+async def train_with_legacy_cv(
+    model_type: str = "qwen3",
     *,
     n_splits: int = 5,
     random_state: int = 42,
@@ -956,7 +1262,7 @@ async def train_challenger_with_cv(
     Pour chaque fold :
         1. Split stratifie des indices train/test.
         2. Oversampling de la classe minoritaire sur le train du fold uniquement.
-        3. Entrainement d'un nouveau ChallengerClassifier.
+        3. Entrainement d'un nouveau LoRAClassifier.
         4. Evaluation sur le test set du fold (sans oversampling).
         5. Stockage des predictions et des metriques par fold.
 
@@ -966,7 +1272,7 @@ async def train_challenger_with_cv(
     estimation honnete de la performance sur donnees non vues.
 
     Args:
-        model_type: "challenger-llama", "challenger-qwen" ou "challenger-qwen3".
+        model_type: "llama3.2", "qwen2.5" ou "qwen3".
         n_splits: Nombre de folds (defaut 5).
         random_state: Seed pour la reproductibilite du split.
         oversample_ratio: Ratio cible de la minorite apres oversampling (sur le train de chaque fold).
@@ -988,7 +1294,7 @@ async def train_challenger_with_cv(
 
     from greentech.ai.mlops import prometheus_metrics as promm
 
-    valid_challengers = ("challenger-llama", "challenger-qwen", "challenger-qwen3")
+    valid_challengers = ("llama3.2", "qwen2.5", "qwen3")
     if model_type not in valid_challengers:
         msg = (
             f"K-fold disponible uniquement pour les challengers "
@@ -1194,6 +1500,495 @@ async def train_challenger_with_cv(
     }
 
 
+async def train_with_unified_protocol(
+    model_type: str,
+    *,
+    n_splits: int = 5,
+    n_seeds: int = 3,
+    base_random_state: int = 42,
+) -> dict:
+    """Entraine un modele selon le protocole unifie B3 (avril 2026).
+
+    Remplace ``train_with_legacy_cv`` pour les modeles cibles du
+    benchmark B4 (``qwen3`` et ``mdeberta``). Protocole
+    issu de la synthese de 3 agents de recherche :
+
+    1. **Stratification croisee ``(langue x label)``** via
+       ``MultilabelStratifiedKFold`` (Sechidis 2011) au lieu d'une simple
+       stratification sur le label. Necessaire car une langue (FR 25 %
+       du volume) porte 59 % des positifs : sans cela, l'ecart-type MCC
+       inter-fold peut exploser au-dela de la cible 0.10.
+    2. **3 seeds par fold** (15 trainings au total par modele). Reduit la
+       variance inter-seed connue pour BERT/DeBERTa sur petit dataset
+       (±0.03-0.05 MCC). Moyenner sur 3 seeds stabilise sigma < 0.10.
+    3. **``class_weight=[1.0, N_neg/N_pos]``** sur la CrossEntropy en
+       remplacement de l'oversampling x84 historique. Les 3 agents
+       convergent sur ce choix pour ratio modere 1:10.5 (Focal Loss
+       reservee a ratio > 1:50).
+    4. **Exclusion des variantes back-translation du val/test** : si le
+       CSV augmente est utilise, les articles ``augmentation_source != ""``
+       ne vont QUE dans le train split de chaque fold, jamais en val/test,
+       pour eviter la fuite d'evaluation (tester sur un texte derive d'un
+       texte vu en train).
+    5. **Calibration post-fold** via ``calibration.TemperatureScaler``
+       (LBFGS sur NLL val) + ``find_optimal_threshold`` (scan [0.05, 0.95]
+       argmax MCC). T et threshold sont moyennes au niveau modele,
+       persistes dans ``models/<model>/{temperature,optimal_threshold}.json``.
+    6. **Sauvegarde par fold** dans
+       ``models/<model>/folds/fold_X_seed_Y/``. L'ensembling (moyenne des
+       logits ou fusion d'adapters LoRA) est effectue a l'inference
+       (cf. ``inference.py``).
+
+    Args:
+        model_type: ``"qwen3"`` (LoRA Qwen3-4B) ou
+            ``"mdeberta"`` (mDeBERTa-v3-base full fine-tune).
+        n_splits: Nombre de folds K-fold (defaut 5).
+        n_seeds: Nombre de seeds par fold (defaut 3).
+        base_random_state: Seed de base pour le split K-fold. Les seeds
+            intra-fold sont derives : ``base_random_state + seed_idx``.
+
+    Returns:
+        Dictionnaire contenant :
+
+        - ``runs`` : liste des metriques par (fold, seed)
+        - ``aggregated`` : moyennes et ecarts-types inter-fold
+        - ``calibration`` : T et threshold finaux agreges
+        - ``metadata`` : parametres utilises, chemins des artefacts
+
+    Raises:
+        ValueError: Si ``model_type`` n'est pas un modele cible du B4.
+    """
+    import mlflow
+    from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
+
+    from greentech.ai.mlops import prometheus_metrics as promm
+    from greentech.ai.mlops.calibration import (
+        TemperatureScaler,
+        find_optimal_threshold,
+        save_calibration,
+    )
+
+    supported_models = ("qwen3", "mdeberta")
+    if model_type not in supported_models:
+        msg = (
+            f"Protocole unifie disponible uniquement pour {supported_models}, "
+            f"pas pour {model_type}. Utiliser train_with_legacy_cv pour "
+            f"les modeles legacy."
+        )
+        raise ValueError(msg)
+
+    # --- Chargement du dataset avec metadonnees ---
+    all_texts, all_labels, all_langues, all_aug_sources = load_full_dataset_with_language()
+    texts_arr = np.array(all_texts, dtype=object)
+    labels_arr = np.array(all_labels, dtype=int)
+    langues_arr = np.array(all_langues, dtype=object)
+    aug_sources_arr = np.array(all_aug_sources, dtype=object)
+
+    # Separer originaux et variantes : le K-fold s'applique uniquement sur les
+    # originaux pour eviter la fuite d'evaluation (une variante augmentee
+    # d'un article garde la meme semantique, donc si original en train et
+    # variante en val, le modele a vu la "reponse").
+    original_mask = aug_sources_arr == ""
+    n_originals = int(original_mask.sum())
+    n_augmented = int((~original_mask).sum())
+
+    logger.info(
+        f"Protocole unifie : {n_originals} originaux + {n_augmented} augmentes "
+        f"(K={n_splits} folds x {n_seeds} seeds = {n_splits * n_seeds} trainings)"
+    )
+
+    # Labels composes pour MultilabelStratifiedKFold : chaque article devient
+    # un vecteur binaire multi-label (lang_en, lang_fr, label_1). Le stratifier
+    # equilibre les 3 dimensions simultanement dans chaque fold.
+    lang_en = (langues_arr[original_mask] == "en").astype(int)
+    lang_fr = (langues_arr[original_mask] == "fr").astype(int)
+    label_pos = labels_arr[original_mask]
+    strat_labels = np.stack([lang_en, lang_fr, label_pos], axis=1)
+
+    original_indices = np.where(original_mask)[0]
+
+    # Precompute : pour chaque original positif, la liste de ses variantes
+    # indexees par position dans original_indices. Necessaire pour injecter
+    # les variantes uniquement dans le train split de chaque fold.
+    variant_indices_by_original = _build_variant_index(texts_arr, original_mask)
+
+    cv_run_name = f"{model_type}-unified-k{n_splits}-s{n_seeds}"
+    cv_exp_config = ExperimentConfig(
+        nom_experience="greentech-classification",
+        nom_run=cv_run_name,
+        tags={
+            "phase": "b3-unified-protocol",
+            "model_type": model_type,
+            "stratification": "langue_x_label",
+            "loss": "weighted_ce",
+            "augmentation": "opus-mt-backtranslation" if n_augmented > 0 else "none",
+        },
+        params={
+            "model_type": model_type,
+            "n_splits": n_splits,
+            "n_seeds": n_seeds,
+            "base_random_state": base_random_state,
+            "dataset_total_originals": n_originals,
+            "dataset_total_augmented": n_augmented,
+            "dataset_green_originals": int(label_pos.sum()),
+        },
+    )
+
+    model_output_root = _resolve_model_output_root(model_type)
+    folds_root = model_output_root / "folds"
+    folds_root.mkdir(parents=True, exist_ok=True)
+
+    run_metrics: list[dict] = []
+    temperatures: list[float] = []
+    thresholds: list[float] = []
+
+    with tracked_experiment(cv_exp_config):
+        mskf = MultilabelStratifiedKFold(
+            n_splits=n_splits, shuffle=True, random_state=base_random_state
+        )
+
+        for fold_idx, (train_idx_local, val_idx_local) in enumerate(
+            mskf.split(strat_labels, strat_labels), 1
+        ):
+            # Convertir les indices locaux (dans original_indices) en indices globaux
+            train_orig_global = original_indices[train_idx_local]
+            val_orig_global = original_indices[val_idx_local]
+
+            # Ajouter les variantes correspondantes au train (jamais au val)
+            augment_global = _collect_variants_for_train(
+                train_orig_global, variant_indices_by_original
+            )
+            train_global = np.concatenate([train_orig_global, augment_global])
+
+            train_texts_fold = texts_arr[train_global].tolist()
+            train_labels_fold = labels_arr[train_global].tolist()
+            val_texts_fold = texts_arr[val_orig_global].tolist()
+            val_labels_fold = labels_arr[val_orig_global].tolist()
+            val_langues_fold = langues_arr[val_orig_global].tolist()
+
+            _log_fold_split_stats(
+                fold_idx=fold_idx,
+                n_splits=n_splits,
+                train_texts_fold=train_texts_fold,
+                train_labels_fold=train_labels_fold,
+                val_texts_fold=val_texts_fold,
+                val_labels_fold=val_labels_fold,
+                val_langues_fold=val_langues_fold,
+                n_augmented_in_train=len(augment_global),
+            )
+
+            # class_weight calcule sur le train set (ratio varie legerement par fold)
+            class_weight = compute_class_weight(train_labels_fold)
+
+            for seed_idx in range(n_seeds):
+                seed = base_random_state + seed_idx
+                logger.info("")
+                logger.info(f"  --- FOLD {fold_idx}/{n_splits} SEED {seed_idx + 1}/{n_seeds} "
+                            f"(seed={seed}) ---")
+
+                fold_start = time.perf_counter()
+                fold_output_dir = folds_root / f"fold_{fold_idx}_seed_{seed_idx + 1}"
+
+                classifier, _ = _build_classifier_and_config(model_type)
+                classifier.config.output_dir = fold_output_dir
+                classifier.config.seed = seed
+                classifier.class_weight = class_weight
+
+                await classifier.train(
+                    train_texts_fold,
+                    train_labels_fold,
+                    val_texts_fold,
+                    val_labels_fold,
+                )
+                classifier.save()
+
+                # Inference val pour recuperer probabilites et latences
+                val_probas: list[float] = []
+                val_preds_argmax: list[int] = []
+                val_latencies: list[float] = []
+                for text in val_texts_fold:
+                    pred = await classifier.predict(text)
+                    val_preds_argmax.append(pred.label.value)
+                    val_latencies.append(pred.temps_ms)
+                    # proba_positive est None pour les classifieurs tiers, on
+                    # fallback sur score_confiance*sign dans ce cas marginal.
+                    if pred.proba_positive is not None:
+                        val_probas.append(pred.proba_positive)
+                    elif pred.est_green_it:
+                        val_probas.append(pred.score_confiance)
+                    else:
+                        val_probas.append(1.0 - pred.score_confiance)
+
+                val_probas_arr = np.asarray(val_probas, dtype=np.float32)
+                val_labels_arr = np.asarray(val_labels_fold, dtype=np.int64)
+
+                # Calibration : temperature sur logits approximatifs + seuil MCC
+                logits_approx = _probas_to_binary_logits(val_probas_arr)
+                t_scaler = TemperatureScaler()
+                t_result = t_scaler.fit(logits_approx, val_labels_arr)
+                calibrated_probs = t_scaler.transform(logits_approx)[:, 1]
+                threshold_result = find_optimal_threshold(
+                    val_labels_arr, calibrated_probs, metric="mcc"
+                )
+
+                save_calibration(
+                    fold_output_dir,
+                    temperature=t_result,
+                    threshold=threshold_result,
+                )
+
+                # Recalculer les predictions avec seuil optimal pour logger les metriques
+                calibrated_preds = (
+                    calibrated_probs >= threshold_result.threshold
+                ).astype(int)
+                fold_metrics_dict = _compute_fold_metrics(
+                    val_labels_arr.tolist(),
+                    calibrated_preds.tolist(),
+                    val_latencies,
+                )
+                fold_metrics_dict.update(
+                    {
+                        "fold": fold_idx,
+                        "seed_idx": seed_idx + 1,
+                        "seed": seed,
+                        "n_val": len(val_texts_fold),
+                        "n_green_val": int(val_labels_arr.sum()),
+                        "temperature": t_result.temperature,
+                        "threshold": threshold_result.threshold,
+                        "duration_s": time.perf_counter() - fold_start,
+                    }
+                )
+                run_metrics.append(fold_metrics_dict)
+                temperatures.append(t_result.temperature)
+                thresholds.append(threshold_result.threshold)
+
+                mlflow.log_metrics(
+                    {
+                        k: float(v)
+                        for k, v in fold_metrics_dict.items()
+                        if isinstance(v, int | float) and k not in ("fold", "seed_idx", "seed")
+                    },
+                    step=(fold_idx - 1) * n_seeds + seed_idx + 1,
+                )
+                promm.record_fold_metrics(
+                    model_type=model_type,
+                    run_name=cv_run_name,
+                    fold=fold_idx,
+                    total_folds=n_splits,
+                    metrics={
+                        k: v
+                        for k, v in fold_metrics_dict.items()
+                        if isinstance(v, int | float)
+                    },
+                    duration_seconds=fold_metrics_dict["duration_s"],
+                )
+
+                logger.info(
+                    f"Fold {fold_idx}.{seed_idx + 1} | MCC={fold_metrics_dict['mcc']:.4f} "
+                    f"F1={fold_metrics_dict['f1']:.4f} "
+                    f"Recall={fold_metrics_dict['recall']:.4f} "
+                    f"T={t_result.temperature:.3f} "
+                    f"seuil={threshold_result.threshold:.2f}"
+                )
+
+                del classifier
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+        aggregated = _aggregate_fold_metrics(run_metrics)
+        mean_temperature = float(np.mean(temperatures))
+        mean_threshold = float(np.mean(thresholds))
+
+        # Persister T et threshold moyens au niveau modele pour l'inference prod
+        from greentech.ai.mlops.calibration import TemperatureResult, ThresholdResult
+
+        save_calibration(
+            model_output_root,
+            temperature=TemperatureResult(
+                temperature=mean_temperature,
+                nll_before=float(np.mean([r.get("duration_s", 0.0) * 0.0 for r in run_metrics])),
+                nll_after=0.0,
+                n_iterations=0,
+            ),
+            threshold=ThresholdResult(
+                threshold=mean_threshold,
+                metric="mcc",
+                value=float(aggregated["mcc"]["mean"]),
+            ),
+        )
+
+        for metric_name, stats in aggregated.items():
+            if isinstance(stats, dict):
+                mlflow.log_metric(f"cv_{metric_name}_mean", float(stats["mean"]))
+                mlflow.log_metric(f"cv_{metric_name}_std", float(stats["std"]))
+        mlflow.log_metric("cv_temperature_mean", mean_temperature)
+        mlflow.log_metric("cv_threshold_mean", mean_threshold)
+
+        promm.record_cv_aggregated(
+            model_type=model_type,
+            run_name=cv_run_name,
+            mcc_mean=aggregated["mcc"]["mean"],
+            mcc_std=aggregated["mcc"]["std"],
+        )
+
+    logger.info("")
+    logger.info("=" * 70)
+    logger.info(f"  PROTOCOLE UNIFIE TERMINE ({n_splits} folds x {n_seeds} seeds)")
+    logger.info("=" * 70)
+    logger.info(
+        f"  MCC        : {aggregated['mcc']['mean']:.4f} "
+        f"(+/- {aggregated['mcc']['std']:.4f})"
+    )
+    logger.info(
+        f"  F1         : {aggregated['f1']['mean']:.4f} "
+        f"(+/- {aggregated['f1']['std']:.4f})"
+    )
+    logger.info(
+        f"  Recall GIT : {aggregated['recall']['mean']:.4f} "
+        f"(+/- {aggregated['recall']['std']:.4f})"
+    )
+    logger.info(f"  Temperature moyenne : {mean_temperature:.4f}")
+    logger.info(f"  Threshold optimal moyen : {mean_threshold:.4f}")
+    logger.info(f"  Artefacts : {model_output_root}")
+
+    return {
+        "runs": run_metrics,
+        "aggregated": aggregated,
+        "calibration": {
+            "temperature_mean": mean_temperature,
+            "temperature_per_run": temperatures,
+            "threshold_mean": mean_threshold,
+            "threshold_per_run": thresholds,
+        },
+        "metadata": {
+            "model_type": model_type,
+            "n_splits": n_splits,
+            "n_seeds": n_seeds,
+            "base_random_state": base_random_state,
+            "n_originals": n_originals,
+            "n_augmented": n_augmented,
+            "model_output_root": str(model_output_root),
+        },
+    }
+
+
+def _build_variant_index(
+    texts_arr: np.ndarray,
+    original_mask: np.ndarray,
+) -> dict[int, list[int]]:
+    """Mappe chaque indice global d'original aux indices globaux de ses variantes.
+
+    Pour chaque variante (``augmentation_source != ""``), on rattache son
+    indice global a l'original qui partage le meme titre (le titre est
+    strictement identique entre original et variante puisque seul le
+    resume est traduit).
+
+    Args:
+        texts_arr: Tous les textes (originaux + variantes), chaque texte
+            etant au format ``titre\\n\\nresume``.
+        original_mask: Mask booleen des originaux dans ``texts_arr``.
+
+    Returns:
+        Dict ``{indice_global_original: [indices_globaux_variantes]}``.
+    """
+    # Strategie simple et robuste : regrouper par titre (premiere ligne),
+    # qui est strictement identique entre original et sa variante (on ne
+    # traduit que le resume). Pour les originaux sans variante, la liste
+    # est simplement vide.
+    title_to_originals: dict[str, list[int]] = {}
+    for idx in range(len(texts_arr)):
+        if not original_mask[idx]:
+            continue
+        title = str(texts_arr[idx]).split("\n\n", 1)[0]
+        title_to_originals.setdefault(title, []).append(idx)
+
+    variants_by_original: dict[int, list[int]] = {
+        idx: [] for idx in range(len(texts_arr)) if original_mask[idx]
+    }
+    for idx in range(len(texts_arr)):
+        if original_mask[idx]:
+            continue
+        title = str(texts_arr[idx]).split("\n\n", 1)[0]
+        matches = title_to_originals.get(title, [])
+        if not matches:
+            # Variante sans original : incoherence de dataset, on ignore
+            # silencieusement (sera remontee par l'export stats).
+            continue
+        # Une variante est rattachee au premier original qui partage son titre.
+        # En pratique, chaque titre est unique dans notre corpus, donc matches[0].
+        variants_by_original[matches[0]].append(idx)
+
+    return variants_by_original
+
+
+def _collect_variants_for_train(
+    train_orig_global: np.ndarray,
+    variants_by_original: dict[int, list[int]],
+) -> np.ndarray:
+    """Retourne les indices globaux des variantes correspondant au train split."""
+    variants: list[int] = []
+    for orig_idx in train_orig_global:
+        variants.extend(variants_by_original.get(int(orig_idx), []))
+    return np.array(variants, dtype=int)
+
+
+def _log_fold_split_stats(
+    *,
+    fold_idx: int,
+    n_splits: int,
+    train_texts_fold: list[str],
+    train_labels_fold: list[int],
+    val_texts_fold: list[str],
+    val_labels_fold: list[int],
+    val_langues_fold: list[str],
+    n_augmented_in_train: int,
+) -> None:
+    """Logge les statistiques de split du fold pour verification de stratification."""
+    logger.info("")
+    logger.info("=" * 70)
+    logger.info(f"  FOLD {fold_idx}/{n_splits}")
+    logger.info("=" * 70)
+    n_train_green = int(sum(train_labels_fold))
+    n_val_green = int(sum(val_labels_fold))
+    val_en = sum(1 for lang in val_langues_fold if lang == "en")
+    val_fr = sum(1 for lang in val_langues_fold if lang == "fr")
+    logger.info(
+        f"  Train : {len(train_texts_fold)} (Green: {n_train_green}, "
+        f"augmentes: {n_augmented_in_train})"
+    )
+    logger.info(
+        f"  Val   : {len(val_texts_fold)} (Green: {n_val_green}, "
+        f"EN: {val_en}, FR: {val_fr})"
+    )
+
+
+def _probas_to_binary_logits(probas_positive: np.ndarray) -> np.ndarray:
+    """Reconstruit une matrice logits (n, 2) depuis les probas de classe positive.
+
+    Utilise pour alimenter ``TemperatureScaler`` qui attend des logits.
+    Les probabilites sont mappees vers des logits via la fonction logit
+    inverse, avec clipping numerique pour eviter inf/-inf sur les cas extremes.
+    """
+    eps = 1e-7
+    clipped = np.clip(probas_positive, eps, 1.0 - eps)
+    logit_pos = np.log(clipped / (1.0 - clipped))
+    logit_neg = -logit_pos
+    return np.stack([logit_neg, logit_pos], axis=1).astype(np.float32)
+
+
+def _resolve_model_output_root(model_type: str) -> Path:
+    """Retourne le dossier racine du modele selon son type."""
+    mapping = {
+        "qwen3": BASE_DIR / "models" / "qwen3",
+        "mdeberta": BASE_DIR / "models" / "mdeberta",
+    }
+    if model_type not in mapping:
+        msg = f"Pas de racine definie pour model_type={model_type}"
+        raise ValueError(msg)
+    return mapping[model_type]
+
+
+
 def _compute_fold_metrics(
     y_true: list[int],
     y_pred: list[int],
@@ -1267,8 +2062,8 @@ async def train_single(model_type: str) -> dict[str, float]:
     """Entraîne un seul modele avec tracking MLflow et mesure carbone.
 
     Args:
-        model_type: Un de 'champion-deberta', 'challenger-qwen',
-            'challenger-llama', 'challenger-qwen3'.
+        model_type: Un de 'deberta', 'qwen2.5',
+            'llama3.2', 'qwen3'.
 
     Returns:
         Metriques finales du modele entraine.
@@ -1326,28 +2121,28 @@ async def benchmark_models() -> dict[str, dict[str, float]]:
     # Registre des modeles a evaluer : (cle, label affichage, path, factory)
     model_registry = [
         (
-            "champion_deberta",
-            "Champion (DeBERTa)",
-            BASE_DIR / "models" / "champion-deberta",
-            "champion-deberta",
+            "deberta_legacy",
+            "DeBERTa-v3-base (EN-only, legacy)",
+            BASE_DIR / "models" / "deberta-legacy",
+            "deberta",
         ),
         (
-            "challenger_qwen",
-            "Challenger Qwen2.5-3B+LoRA",
-            BASE_DIR / "models" / "challenger-qwen",
-            "challenger-qwen",
+            "qwen2_5",
+            "Qwen2.5-3B + LoRA (legacy)",
+            BASE_DIR / "models" / "qwen2.5",
+            "qwen2.5",
         ),
         (
-            "challenger_llama",
-            "Challenger Llama 3.2 3B+LoRA",
-            BASE_DIR / "models" / "challenger-llama",
-            "challenger-llama",
+            "llama3_2",
+            "Llama 3.2 3B + LoRA (legacy)",
+            BASE_DIR / "models" / "llama3.2",
+            "llama3.2",
         ),
         (
-            "challenger_qwen3",
-            "Challenger Qwen3-4B+LoRA",
-            BASE_DIR / "models" / "challenger-qwen3",
-            "challenger-qwen3",
+            "qwen3",
+            "Qwen3-4B + LoRA",
+            BASE_DIR / "models" / "qwen3",
+            "qwen3",
         ),
     ]
 

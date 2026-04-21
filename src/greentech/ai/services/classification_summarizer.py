@@ -103,6 +103,29 @@ CLASSIFICATION_TEMPERATURE = 0.2
 CLASSIFICATION_MAX_INPUT_CHARS = 15_000
 CLASSIFICATION_MIN_INPUT_CHARS = 50
 
+# Entropie minimale sur le contenu : on rejette les textes qui n'ont pas
+# au moins 10 caracteres uniques distincts. Cela filtre les contenus
+# manifestement invalides (ex: "AAAAAAAA..." repete, placeholder de test,
+# garbage issu d'un upload casse). Observee en production le 2026-04-19 :
+# certains articles de test utilisateur contenaient 100 fois le meme
+# caractere et le LLM repondait "Desole, aucun article fourni" ce qui
+# polluait le dataset d'entrainement avec un faux resume.
+CLASSIFICATION_MIN_UNIQUE_CHARS = 10
+
+# Motifs de contenu degrades connus a filtrer avant appel LLM. Concerne
+# principalement les preprints arXiv retires / retractes qui ne gardent
+# qu'une note laconique ("This paper has been withdrawn by the author")
+# insuffisante pour un resume informatif. Le LLM produirait un resume
+# vide ou une hallucination, inutile pour l'entrainement.
+_DEGENERATE_CONTENT_PATTERNS = (
+    "this paper has been withdrawn",
+    "this preprint has been withdrawn",
+    "this draft is withdrawn",
+    "this paper has been retracted",
+    "this paper has been temporarily removed",
+    "this paper has been removed",
+)
+
 
 @dataclass(frozen=True)
 class SummaryResult:
@@ -200,10 +223,46 @@ async def summarize_for_classification(text: str) -> SummaryResult:
             temps_ms=0,
             modele=model_hf,
             succes=False,
-            erreur=(
-                f"Contenu insuffisant (minimum {CLASSIFICATION_MIN_INPUT_CHARS} caracteres)"
-            ),
+            erreur=(f"Contenu insuffisant (minimum {CLASSIFICATION_MIN_INPUT_CHARS} caracteres)"),
         )
+
+    stripped = text.strip()
+
+    # Detection d'entropie trop faible : "AAAAAAA..." repete, placeholder
+    # de test, garbage. Les textes naturels ont au moins 10-15 caracteres
+    # uniques meme sur 50 chars (alphabet + espaces + ponctuation).
+    unique_chars = set(stripped.lower())
+    if len(unique_chars) < CLASSIFICATION_MIN_UNIQUE_CHARS:
+        logger.warning(
+            f"Contenu rejete (entropie insuffisante : {len(unique_chars)} chars "
+            f"distincts, minimum {CLASSIFICATION_MIN_UNIQUE_CHARS}) : "
+            f"{stripped[:60]!r}..."
+        )
+        return SummaryResult(
+            resume=None,
+            temps_ms=0,
+            modele=model_hf,
+            succes=False,
+            erreur=f"Entropie du contenu trop faible ({len(unique_chars)} chars distincts)",
+        )
+
+    # Rejet des preprints retires / retractes : leur texte se reduit a
+    # "This paper has been withdrawn..." et ne peut pas produire un
+    # resume utile. Detection par sous-chaine (casse insensible).
+    lower = stripped.lower()
+    for pattern in _DEGENERATE_CONTENT_PATTERNS:
+        if pattern in lower[:300]:  # on cherche dans les 300 premiers chars
+            logger.warning(
+                f"Contenu rejete (preprint retire/retracte detecte) : "
+                f"{stripped[:80]!r}..."
+            )
+            return SummaryResult(
+                resume=None,
+                temps_ms=0,
+                modele=model_hf,
+                succes=False,
+                erreur="Preprint retire/retracte sans abstract exploitable",
+            )
 
     texte_tronque = _truncate_input(text.strip())
     messages = [
@@ -229,9 +288,7 @@ async def summarize_for_classification(text: str) -> SummaryResult:
         backend = _backend_tag(model_hf)
 
         if not resume:
-            logger.warning(
-                f"Le LLM a retourne un resume vide ({temps_ms}ms, backend={backend})"
-            )
+            logger.warning(f"Le LLM a retourne un resume vide ({temps_ms}ms, backend={backend})")
             return SummaryResult(
                 resume=None,
                 temps_ms=temps_ms,

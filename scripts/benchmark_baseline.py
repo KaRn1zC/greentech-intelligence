@@ -120,9 +120,17 @@ async def run_baseline(model_name: str | None = None) -> int:
         f"Baseline : {result.model_name} (zero-shot, {result.n_articles} articles)",
     )
 
-    from greentech.ai.mlops.baseline_tracking import track_baseline
+    from greentech.ai.mlops.baseline_tracking import (
+        compute_dataset_signature,
+        track_baseline,
+    )
 
-    track_baseline(result, BASE_DIR / "models" / "baseline_metrics.json")
+    signature = compute_dataset_signature(BASE_DIR / "data" / "golden_dataset.csv")
+    track_baseline(
+        result,
+        BASE_DIR / "models" / "baseline_metrics.json",
+        dataset_signature=signature,
+    )
 
     return 0
 

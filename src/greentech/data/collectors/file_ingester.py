@@ -17,6 +17,7 @@ from loguru import logger
 
 from greentech.config import get_settings
 from greentech.data.collectors.base import BaseCollector, CollectResult
+from greentech.data.collectors.url_precheck import load_known_urls, url_is_known
 from greentech.data.storage.minio_client import (
     generate_raw_path,
     upload_json_to_minio,
@@ -49,6 +50,7 @@ class FileIngester(BaseCollector):
         *,
         file_path: str | Path | None = None,
         max_articles: int = MAX_ARTICLES,
+        skip_existing: bool = True,
         **kwargs: Any,
     ) -> CollectResult:
         """Ingère les articles depuis le fichier JSON local.
@@ -82,8 +84,14 @@ class FileIngester(BaseCollector):
 
         logger.info(f"Lecture du fichier : {path} (max {max_articles} articles)")
 
+        # Pre-check BDD pour sauter les articles deja ingeres (evite
+        # pollution MinIO sur re-import). Le set est passe a _read_and_filter.
+        known_urls: set[str] = set()
+        if skip_existing:
+            known_urls = await load_known_urls(self.source_name)
+
         try:
-            articles = self._read_and_filter(path, keywords, max_articles)
+            articles = self._read_and_filter(path, keywords, max_articles, known_urls)
 
             if not articles:
                 logger.warning("Aucun article pertinent trouvé dans le fichier")
@@ -127,6 +135,7 @@ class FileIngester(BaseCollector):
         file_path: Path,
         keywords: list[str],
         max_articles: int,
+        known_urls: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Lit le fichier JSON Lines et filtre les articles pertinents.
 
@@ -137,6 +146,8 @@ class FileIngester(BaseCollector):
             file_path: Chemin du fichier.
             keywords: Mots-clés pour filtrer les abstracts.
             max_articles: Limite du nombre d'articles.
+            known_urls: Set optionnel d'URLs deja en BDD ; les articles
+                dont l'URL reconstruite est dans ce set sont sautes.
 
         Returns:
             Articles filtrés et normalisés.
@@ -144,6 +155,8 @@ class FileIngester(BaseCollector):
         articles: list[dict[str, Any]] = []
         total_read = 0
         total_filtered = 0
+        skipped_existing = 0
+        known_urls = known_urls or set()
 
         keywords_lower = [kw.lower() for kw in keywords] if keywords else []
 
@@ -178,11 +191,50 @@ class FileIngester(BaseCollector):
                         total_filtered += 1
                         continue
 
+                # Reconstitution de l'URL canonique
+                article_url = f"https://arxiv.org/abs/{entry.get('id', '')}"
+
+                # Pre-check BDD (normalise) : saute les articles deja ingeres
+                if url_is_known(article_url, known_urls):
+                    skipped_existing += 1
+                    continue
+
+                # Filtre qualite : rejet des abstracts trop courts ou degrades.
+                # Ces filtres sont dupliques dans spark_cleaner (defense en
+                # profondeur), mais les appliquer ici evite de polluer MinIO
+                # avec des payloads qu'on va ensuite filtrer de toute facon.
+                #
+                # Le dump Kaggle arXiv contient environ 0.5 % de preprints
+                # retires / retractes dont l'abstract a ete remplace par une
+                # note laconique ("This paper has been withdrawn by the
+                # author") impossible a resumer utilement.
+                abstract = (entry.get("abstract") or "").strip()
+                if len(abstract) < 150:
+                    total_filtered += 1
+                    continue
+                # Detection withdrawn / retracted dans les premiers chars.
+                # Pattern case-insensitive couvrant les formulations
+                # standards arXiv ("withdrawn by the author", "retracted").
+                lower_start = abstract[:300].lower()
+                if any(
+                    marker in lower_start
+                    for marker in (
+                        "this paper has been withdrawn",
+                        "this preprint has been withdrawn",
+                        "this draft is withdrawn",
+                        "this paper has been retracted",
+                        "this paper has been temporarily removed",
+                        "this paper has been removed",
+                    )
+                ):
+                    total_filtered += 1
+                    continue
+
                 # Normalisation
                 articles.append(
                     {
                         "titre": entry.get("title", "").strip().replace("\n", " "),
-                        "url": f"https://arxiv.org/abs/{entry.get('id', '')}",
+                        "url": article_url,
                         "contenu": entry.get("abstract", "").strip().replace("\n", " "),
                         "auteur": entry.get("authors", ""),
                         "date_publication": entry.get("update_date"),
@@ -193,7 +245,10 @@ class FileIngester(BaseCollector):
                 )
 
         logger.info(
-            f"Fichier lu : {total_read} lignes, {total_filtered} filtrées, {len(articles)} retenues"
+            f"Fichier lu : {total_read} lignes, "
+            f"{total_filtered} filtrées (categorie/keyword), "
+            f"{skipped_existing} deja en BDD, "
+            f"{len(articles)} retenues"
         )
         return articles
 

@@ -29,10 +29,11 @@ Architecture a 4 modeles en competition :
 
 | Modele | Type | Params | Methode | Statut | F1 | Accuracy | CO2 |
 |--------|------|--------|---------|--------|-----|----------|-----|
-| **Champion** DeBERTa-v3-base | Encoder | 86M | Full fine-tuning | ENTRAINE | 0.44 | 99.6% | 97.8g |
-| **Challenger 1** Qwen2.5-3B | Causal LM | 3085M | LoRA (r=16) | ENTRAINE | 0.40 | 99.74% | 108.8g |
-| **Challenger 2** Llama 3.2 3B | Causal LM | 3213M | LoRA (r=16) | ENTRAINE | 0.667 | 99.83% | 112.0g |
-| **Challenger 3** Qwen3-4B | Causal LM (multilingue) | ~4000M | LoRA (r=16, attention only) | PRET A ENTRAINER | - | - | - |
+| **DeBERTa-v3-base** | Encoder | 86M | Full fine-tuning | ENTRAINE (legacy EN-only) | 0.44 | 99.6% | 97.8g |
+| **Qwen2.5-3B** | Causal LM | 3085M | LoRA (r=16) | ENTRAINE (legacy) | 0.40 | 99.74% | 108.8g |
+| **Llama 3.2 3B** | Causal LM | 3213M | LoRA (r=16) | ENTRAINE (legacy) | 0.667 | 99.83% | 112.0g |
+| **Qwen3-4B** | Causal LM (multilingue) | ~4000M | LoRA all-linear (r=32) | EN PRODUCTION | - | - | - |
+| **mDeBERTa-v3-base** | Encoder (multilingue) | 278M | Full fine-tuning | A ENTRAINER (B4) | - | - | - |
 
 - Oversampling de la classe minoritaire (22 → 1152, ratio 20%)
 - Benchmark final initial execute sur 1162 articles de test

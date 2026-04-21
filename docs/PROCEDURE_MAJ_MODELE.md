@@ -10,12 +10,12 @@
 - **Modele en production** : Qwen3-4B + LoRA (adapter_model.safetensors, ~30 Mo)
 - **Base model** : `Qwen/Qwen3-4B` (Apache-2.0, 26 juillet 2025), dense transformer
   standard, multilingue natif (FR/EN/DE/ES/ZH).
-- **Dossier d'entrainement** : `models/challenger-qwen3/`
+- **Dossier d'entrainement** : `models/qwen3/`
 - **Emplacement production** : `models/production/`
 - **Versioning** : DVC (remote MinIO s3://models/dvc)
 - **Chargement** : Lazy-loading au premier appel d'inference via `get_classifier()`.
   La detection du type de modele est automatique via `adapter_config.json` :
-  `qwen3-4b` => `ChallengerQwen3Classifier`, Llama/Qwen2.5 => `ChallengerClassifier`.
+  `qwen3-4b` => `Qwen3Classifier`, Llama/Qwen2.5 => `LoRAClassifier`.
 
 > **Migration** : le modele de production est passe de `meta-llama/Llama-3.2-3B`
 > a `Qwen/Qwen3-4B` le 15 avril 2026. Motifs : licence Apache-2.0 (contre
@@ -74,7 +74,7 @@ uv run python scripts/retrain_pipeline.py baseline
 ```
 
 Chaque run produit :
-- `models/challenger-qwen3/` : adapter LoRA entraine (Qwen3-4B)
+- `models/qwen3/` : adapter LoRA entraine (Qwen3-4B)
 - `models/cv_report.json` (uniquement en mode train-cv) : metriques par fold + agregees
 - `models/baseline_metrics.json` : reference permanente du modele brut (Qwen3-4B zero-shot)
 - MLflow : tracking des runs (http://localhost:5000)
@@ -258,7 +258,7 @@ sacrifier les vrais positifs), et le LoRA le releve sans ambiguite.
 | 4 | Stabilite CV : std MCC <= 0.25 (seuil dataset <50 Green) | 0.2476 | 0.25    | OK (limite) |
 
 Tous les criteres sont satisfaits => **promotion automatique en production**.
-Adaptateur LoRA (47 Mo) copie depuis `models/challenger-qwen3/` vers
+Adaptateur LoRA (47 Mo) copie depuis `models/qwen3/` vers
 `models/production/`, version taggee `v20260415_204408`, ancien modele
 archive dans `models/versions/v20260415_204408/`.
 
@@ -295,7 +295,7 @@ archive dans `models/versions/v20260415_204408/`.
 - `models/cv_report.json` — rapport K-fold detaille (5 folds + agreges + global)
 - `data/benchmark_versions.json` — comparaison vs baseline + verdict promotion
 - `models/versions/v20260415_204408/` — archive complete pour rollback
-- MLflow run `challenger-qwen3-cv-k5` (experience `greentech-classification`)
+- MLflow run `qwen3-cv-k5` (experience `greentech-classification`)
 
 ---
 

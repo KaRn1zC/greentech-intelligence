@@ -239,8 +239,7 @@ async def _summarize_article_impl(article_id: int, session: AsyncSession) -> Sum
         await session.execute(stmt_update)
         await session.commit()
         logger.info(
-            f"Article id={article_id} : resume stocke en base "
-            f"({len(summary_result.resume)} chars)"
+            f"Article id={article_id} : resume stocke en base ({len(summary_result.resume)} chars)"
         )
 
     return summary_result

@@ -332,7 +332,7 @@
 
 - [x] Source de Veille IA : Inoreader + Task deep search auto en mode weekly avec Perplexity Pro (abonnement)
 - [x] Service IA Pre-existant (SaaS/PaaS) : HuggingFace Serverless Inference API
-- [x] Modele IA (Code Custom) : Scikit-learn, PyTorch, Hugging Face + AMD ROCm 7.1 et 7.2 (version native Windows)
+- [x] Modele IA (Code Custom) : Scikit-learn, PyTorch, Hugging Face + AMD ROCm 7.2.1 stable (wheels-only, migration 7.1 MSI + 7.2 pre-release -> 7.2.1 le 2026-04-18)
 - [x] Librairie de test IA : Deepchecks
 - [x] Outil de MLOps / Monitoring IA : MLFlow + Loguru (suivi experiences et logs) + Prometheus + Grafana + Loki (monitoring et logs avances pour production/modeles IA)
 - [x] Outil de versionning de donnees : DVC (Data Version Control)
@@ -357,3 +357,611 @@
 - [x] Solution de Conteneurisation : Docker, Docker-compose (multi-stage builds)
 - [x] Outil de Monitoring Applicatif : Prometheus + Grafana + Loki (alertes configurees)
 - [x] Hebergement / Deploiement (Pre-prod) : Render (Blueprint render.yaml)
+
+---
+
+## BONUS : Optimisation Demonstration & Refonte Modele (Avril-Mai 2026)
+
+> **Objectif** : Ameliorer la precision du classifieur Green IT pour une demonstration credible au jury de soutenance.
+>
+> **Contexte** : Toutes les competences C1-C21 sont deja validees. Cette section bonus est une amelioration qualitative qui RENFORCE les competences existantes (C1, C3, C7, C11, C12) sans en invalider ni en ajouter aucune.
+>
+> **Ordre d'execution obligatoire** : B1 -> B2 -> B3 -> B4 -> B5 (B5 optionnel selon temps).
+>
+> **Cible chiffree** : passer de 17 articles Green IT (0.3% du dataset) a 200-500 (3-8% du dataset), et atteindre un MCC > 0.75 stable (ecart-type < 0.05) sur le K-fold.
+
+---
+
+### B1. Mise a Jour Infrastructure ROCm
+
+#### B1.1 Verification de la version disponible
+
+- [x] Verifier la version actuelle installee : HIP SDK 7.1.51803-d3a86bd04 + wheels torch 7.2 pre-release (rocmsdk20260116)
+- [x] Consulter la page officielle AMD pour la derniere version stable Windows :
+  - https://rocm.docs.amd.com/projects/install-on-windows/en/latest/install/quick-start.html
+  - https://www.amd.com/en/developer/resources/rocm-hub.html
+- [x] Consulter la matrice de compatibilite PyTorch + ROCm : wheels 2.9.1+rocm7.2.1 disponibles sur repo.radeon.com/rocm/windows/rocm-rel-7.2.1/
+- [x] Version 7.2.1 stable confirmee -> passage a B1.2. Release notes examinees : fixes de stabilite HIP positifs, known issue hipBLASLt potentielle (mesuree non impactante en B1.6).
+
+#### B1.2 Sauvegarde de l'environnement actuel
+
+- [x] Creer un snapshot des versions actuelles : `uv pip list > requirements.snapshot.20260418.txt` (357 packages)
+- [x] Sauvegarder `pyproject.toml` : `cp pyproject.toml pyproject.toml.20260418.backup`
+- [x] Sauvegarder `uv.lock` : `cp uv.lock uv.lock.20260418.backup`
+- [x] Noter le nom exact des wheels torch+torchvision+torchaudio actuellement installes (pour rollback eventuel) : torch=2.9.1+rocmsdk20260116, torchvision=0.24.1+rocmsdk20260116, torchaudio=2.9.1+rocmsdk20260116
+
+#### B1.3 Desinstallation propre de ROCm 7.1/7.2
+
+- [x] Fermer tous les programmes utilisant le GPU (MLflow UI, scripts Python, etc.)
+- [x] Lancer le AMD HIP SDK Uninstaller pour ROCm 7.1 (via script PowerShell Admin msiexec /x)
+- [x] Lancer le AMD HIP SDK Uninstaller pour ROCm 7.2 (n/a : 7.2 n'etait pas installe en systeme)
+- [x] Verifier la suppression : registre HKLM et dossier `C:/Program Files/AMD/ROCm/7.1/` vides
+- [x] Reboot du PC apres desinstallation (effectue)
+- [x] Validation post-reboot : variables HIP_PATH et HIP_PATH_71 supprimees au niveau Machine, PATH propre
+
+#### B1.4 Installation de la nouvelle version [OBSOLETE - ROCm 7.2.1 wheels-only]
+
+- [x] Decouverte 2026-04-18 : AMD a pivote ROCm 7.2.1 Windows vers une distribution **wheels-only** sur `repo.radeon.com/rocm/windows/rocm-rel-7.2.1/`. Aucun installeur MSI n'est publie, uniquement les wheels `rocm_sdk_core/devel/libraries_custom` qui contiennent le runtime HIP self-contained.
+- [x] Test de validation post-desinstallation MSI : `torch.cuda.is_available() == True` avec les anciens wheels -> confirme que les wheels sont self-contained et rendent le MSI inutile.
+- [x] **Conclusion : B1.4 rendu obsolete par la distribution wheels-only.** Toute la migration se joue desormais dans `pyproject.toml` (B1.5). Pas de reboot supplementaire.
+
+#### B1.5 Mise a jour des dependances PyTorch
+
+- [x] Identifier les wheels compatibles via la doc officielle AMD : torch-2.9.1+rocm7.2.1, torchvision-0.24.1+rocm7.2.1, torchaudio-2.9.1+rocm7.2.1 sur `rocm-rel-7.2.1/`
+- [x] Mettre a jour `pyproject.toml` :
+  - [x] Section `[tool.uv.sources]` : 3 URLs modifiees (rocm-rel-7.2/ -> rocm-rel-7.2.1/, rocmsdk20260116 -> rocm7.2.1)
+  - [x] `find-links` idem + commentaire migration date
+- [x] Reinstaller : `uv sync --reinstall-package torch torchvision torchaudio rocm-sdk-core rocm-sdk-devel rocm-sdk-libraries-custom` (~1,9 Go telecharge, 7 packages migres)
+- [x] Verification de base : `torch.__version__ == '2.9.1+rocm7.2.1'`, `torch.cuda.is_available() == True`, `torch.cuda.get_device_name(0) == 'AMD Radeon RX 7900 XTX'`
+
+#### B1.6 Tests de validation
+
+- [x] Test 1 : PyTorch + matmul 1024x1024 GPU OK (44 MB VRAM, device capability (11,0) gfx1100)
+- [x] Test 2 : Inference Qwen2.5-1.5B-Instruct fallback lightweight - 23,8 tok/s en bf16 sur GPU
+- [x] Test 3 : Inference Qwen3-4B (base du modele de production) - charge 8,1 s, 7,49 GB VRAM, 28,7 tok/s en bf16
+- [x] Test 4 : LocalQwenClient dispatcher + Qwen2.5-3B fallback n1 - charge + generation asyncio en 14,5 s (5,96 GB VRAM)
+- [x] Aucun crash, aucun freeze, aucun warning hipBLASLt : pas de regression vs ROCm 7.1
+- [x] Test entrainement sustained load : reporte au re-entrainement effectif du modele de production (K-fold CV servira de validation finale)
+
+#### B1.7 Documentation
+
+- [x] Creer `docs/PROCEDURE_MAJ_ROCM.md` documentant la procedure complete (wheels-only, pas de MSI)
+- [x] Mettre a jour `documentation interne` section "Tech Stack" : ROCm 7.2.1 stable
+- [x] Mettre a jour `docs/PLAN_ETAPES.md` section 1.1 + section 7.1 : nouvelle version + migration terminee
+
+---
+
+### B2. Enrichissement Dataset Green IT
+
+> **Contrainte format absolue** : tout article ingere doit fournir soit `(titre + abstract)` soit `(titre + resume genere via classification_summarizer)`.
+> Le resume de classification reste plafonne a `CLASSIFICATION_MAX_TOKENS=450` (cf. `documentation interne`).
+> Toutes les sources doivent rester dans les 5 categories C1 deja validees (REST/JSON, scraping, fichiers, BDD, Big Data).
+
+#### B2.1 Phase de recherche & validation prealable des sources (TERMINEE 2026-04-19)
+
+> **Note 2026-04-19** : le dataset Hugging Face a ete ecarte apres validation prealable. `climatebert/climate_detection` n'a ni titre ni URL, utilise des paragraphes corporate hors scope tech, et ses labels "climat general" corrompraient notre ground truth Green IT. Les 6 autres sources fournissent largement le volume cible (5 000-8 000 articles attendus).
+
+##### Source 1 : arXiv API (REST/JSON) - GO
+
+- [x] Identifier les categories arXiv pertinentes : `cs.*`, `eess.*`, `stat.ML` (filtrage post-fetch pour souplesse)
+- [x] Construire la liste de queries Green IT (9 queries ciblees < 200 resultats chacune) :
+  - "green computing", "sustainable AI", "green AI", "carbon-aware computing"
+  - "energy-efficient ML", "green software engineering", "low-power neural network"
+  - "data center sustainability", "sustainable computing"
+  - *(Ecartees : "efficient inference" 1499 resultats et "model compression" 1585, trop larges et dilueraient le signal)*
+- [x] Test pilote (carbon-aware computing) : 13 articles, Atom XML parse OK via feedparser
+- [x] Verifier presence systematique du champ `<summary>` : OK, 150-300 mots par article
+- [x] Volume estime : 300-1 500 articles uniques (apres dedup par arxiv_id sans version)
+
+##### Source 2 : Crossref API (REST/JSON) - GO
+
+- [x] URL de base : `https://api.crossref.org/works`
+- [x] Queries via `query.title` (meilleure precision que `query.bibliographic` qui explose a 300k+ resultats)
+- [x] Filtre `has-abstract:true,from-pub-date:2020,type:journal-article` : necessaire car ~40% des entrees Crossref n'ont pas d'abstract
+- [x] Test pilote (green computing) : 198 articles, JATS stripping OK, abstracts 500-2000 chars
+- [x] Polite Pool via `mailto=karn1zc@gmail.com` dans le User-Agent (setting `CROSSREF_MAILTO`)
+
+##### Source 3 : The Guardian (extension) - GO
+
+- [x] Sections validees :
+  - `environment` (5 932 articles 2024+, thematiques climat/biodiversite/ecologie)
+  - `technology` (2 674 articles 2024+, innovations tech incl. Green IT)
+- [x] Sub-sections `technology/green-computing`, `business/green-business`, `sustainable-business` : **n'existent pas** cote API Guardian (verifie via endpoint `/sections`). Utilisation du filtre `section=` direct.
+- [x] Champs `fields=bodyText,trailText,byline,...` complets (8000+ chars)
+- [x] Volume additionnel estime : +2 000-5 000 articles Guardian (environment + technology)
+
+##### Sources 4-7 : Scraping (4 sites) - GO
+
+- [x] **GreenIT.fr** : pas de robots.txt (convention = allow all), sitemap Yoast avec 1 001 posts, WordPress, URL `/YYYY/MM/DD/slug/`, HTML statique, 5 000+ chars/article, **100% Green IT**
+- [x] **Greensoftware.foundation** : robots.txt permissif (content-signal explicatif Cloudflare sans regle bloquante), 170 articles (17 pages × 10), HTML statique, 8 500 chars/article, **100% Green IT**
+- [x] **Sustainablewebdesign.org** : robots.txt `User-agent: * / Disallow:` (= all allowed), sitemap Yoast, 131 items (50 posts + 81 guidelines), HTML statique, 8 500+ chars
+- [x] **Climateaction.tech** : robots.txt `Disallow: /wp-admin/` seul, sitemap_index.xml OK, 71 posts, WordPress, HTML statique, 4 500 chars/article, 100% tech+climat
+
+##### Source 8 : Dataset Hugging Face (ECARTEE)
+
+- [x] Candidats identifies : `climatebert/climate_detection` (1 700 paragraphes), `climatebert/environmental_claims` (2 647 phrases), `tdiggelm/climate_fever` (1 535 claims)
+- [x] **DECISION : Ecarte du plan B2**. Format incompatible (ni titre ni URL), labels "climat general" hors scope Green IT specifique, domaine corporate/fact-checking different des articles tech. Utilisable eventuellement comme corpus d'evaluation robustesse dans une phase ulterieure.
+
+##### Validation globale prealable
+
+- [x] Volume total apres collecte (6 sources) : 5 000-8 000 nouveaux articles attendus (avant filtrage LLM judge)
+- [x] Proportion Green IT attendue : 800-1 500+ confirmes (largement au-dessus de la cible 200-500)
+- [x] Format titre + abstract/resume respecte sur toutes les sources retenues
+
+#### B2.2 Implementation des collecteurs REST/JSON (TERMINEE 2026-04-19)
+
+##### arXiv Collector - GO
+
+- [x] `src/greentech/data/collectors/arxiv_collector.py` (411 lignes, ruff-clean)
+- [x] Herite de `BaseCollector`, async via httpx, parsing Atom XML via feedparser
+- [x] Pagination `start/max_results` avec `MAX_RESULTS_PER_KEYWORD=500` et `PAGE_SIZE=100`
+- [x] Delai `MIN_DELAY_BETWEEN_REQUESTS=3.0` conforme aux bonnes pratiques arXiv
+- [x] Filtrage post-fetch : categories `cs.*`, `eess.*`, `stat.ML` + abstract >= 100 chars
+- [x] URL canonique sans version (`arxiv.org/abs/ID` sans v1/v2) pour dedup naturelle
+- [x] Sauvegarde brute dans MinIO `raw-data/api/arxiv_api/<date>/<timestamp>.json`
+- [x] Source BDD `source_name='arxiv_api'` distincte de `arXiv Dataset` (type=file historique)
+- [x] Tests unitaires : `tests/unit/data/collectors/test_arxiv_collector.py` (9 tests)
+- [x] Smoke test manuel : `carbon-aware computing` -> 13 articles pertinents
+- [x] Commande CLI : `uv run python -m greentech.data.collectors.arxiv_collector`
+
+##### Crossref Collector - GO
+
+- [x] `src/greentech/data/collectors/crossref_collector.py` (pattern identique a arxiv)
+- [x] Polite Pool via setting `CROSSREF_MAILTO` injecte dans le User-Agent (`base (mailto:...)`)
+- [x] Filtre serveur `has-abstract:true,from-pub-date:2020,type:journal-article` + tri `relevance:desc`
+- [x] Top 200 par query (MAX_RESULTS_PER_KEYWORD=200, PAGE_SIZE=200)
+- [x] Strip JATS (`<jats:p>`, `<jats:sec>`, etc.) via regex + normalisation espaces
+- [x] Extraction date multi-fallback : `published-print -> published-online -> issued -> created`
+- [x] Types acceptes : `journal-article`, `proceedings-article` (livres, chapitres rejetes)
+- [x] URL canonique via resolveur DOI : `https://doi.org/<DOI>`
+- [x] Tests unitaires : `tests/unit/data/collectors/test_crossref_collector.py` (16 tests)
+- [x] Smoke test manuel : `green computing` -> 198 articles (top 200 Crossref), JATS propre
+- [x] Commande CLI : `uv run python -m greentech.data.collectors.crossref_collector`
+
+##### Extension Guardian Collector - GO
+
+- [x] Parametre `sections: list[str] | None` ajoute a `GuardianCollector.collect()`
+- [x] `DEFAULT_GREEN_IT_SECTIONS = ('environment', 'technology')` utilise par defaut dans `run_guardian_collection()`
+- [x] Mode 2 passes : 1 requete plein-texte + N requetes par section, avec dedup URL au niveau collecteur
+- [x] Signatures `_fetch_articles_with_retry` et `_fetch_articles` etendues avec `section: str | None = None`
+- [x] Backward compatible : sections vides = mode historique (plein-texte uniquement)
+- [x] Tests unitaires : `tests/unit/data/collectors/test_guardian_collector.py` (5 tests)
+- [x] Smoke test manuel : `sustainable AI` + section `environment` -> 98 articles uniques (50 + 48 dedoublonnes)
+
+##### Migration BDD (search_config + sources)
+
+- [x] Script SQL idempotent : `scripts/sql/migration_002_b2_sources_config.sql` applique
+- [x] `search_config_type_source_check` etendu pour accepter `arxiv_api` et `crossref`
+- [x] 2 nouvelles sources inserees : `arXiv API` (type=api), `Crossref` (type=api), `est_active=true`
+- [x] 9 mots-cles `arxiv_api` inseres (voir B2.1)
+- [x] 8 mots-cles `crossref` inseres (selection top-pertinence)
+- [x] `scripts/sql/init.sql` aligne pour les nouveaux deploiements (schema CHECK + INSERT sources + INSERT search_config)
+
+#### B2.3 Implementation des spiders Scrapy (4 sites) (TERMINEE 2026-04-19)
+
+> Architecture : Scrapy + HTTP standard (sans Playwright). Les 4 sites sont en HTML statique, verifie en B2.1. Le choix evite l'overhead Chromium (~5x plus rapide, ~5x moins de RAM, conforme au positionnement Green IT du projet). Les hooks Playwright restent accessibles via la base class si un site ajoute du JS critique plus tard.
+
+- [x] **Base class commune** : `src/greentech/data/collectors/spiders/base.py`
+  - [x] `StaticArticleSpider` : discovery par sitemap XML OU pagination HTML
+  - [x] Parsing des sitemaps (urlset + sitemapindex), filtre URL par regex (`article_url_pattern`)
+  - [x] Extraction title/contenu/date/auteur via chaine de selecteurs CSS + fallback og:title + fallback trafilatura
+  - [x] Extraction contenu inclut `<p>, <h2-5>, <li>, <blockquote>` avec texte des enfants `<a>/<em>/<strong>` (XPath `.//text()`)
+  - [x] Filtrage `MIN_CONTENT_LENGTH=300`, `MIN_TITLE_LENGTH=5`, troncature `MAX_TITLE_LENGTH=480` (contrainte BDD 500 chars)
+  - [x] Telemetrie par categorie d'erreur (missing_title, empty_content, http_error, parsing_error)
+  - [x] Dedup global par URL via `_seen_urls` set
+- [x] **Spider GreenIT.fr** : `src/greentech/data/collectors/spiders/greenit_fr_spider.py`
+  - [x] 3 sitemaps WordPress (post-sitemap + post-sitemap2 + post-sitemap3), 1 001 posts total
+  - [x] URL pattern `/YYYY/MM/DD/slug/`, langue FR
+  - [x] `DOWNLOAD_DELAY = 2s`, `ROBOTSTXT_OBEY = True`
+  - [x] Sauvegarde MinIO `raw-data/scraping/greenit_fr/<date>/`
+- [x] **Spider Greensoftware.foundation** : `greensoftware_spider.py`
+  - [x] Pagination HTML `/articles/` + `/articles/2` ... `/articles/17`
+  - [x] Article link selector `a[href^="/articles/"]` + filtre regex (exclut pages paginated)
+  - [x] 170 articles EN
+- [x] **Spider Sustainablewebdesign.org** : `sustainable_web_spider.py`
+  - [x] 2 sitemaps : `post-sitemap.xml` (50 posts) + `guidelines-sitemap.xml` (81 guidelines)
+  - [x] 131 items EN, pas de filtre URL
+- [x] **Spider Climateaction.tech** : `climate_action_tech_spider.py`
+  - [x] `sitemap_index.xml` -> `post-sitemap.xml` (71 posts)
+  - [x] URL pattern `/blog/slug/`, langue EN, theme Neve
+- [x] **Optimisation re-run : pre-check BDD par pre-fetch (2026-04-19)**
+  - [x] Module partage `src/greentech/data/collectors/url_precheck.py` : `load_known_urls(source_name)` via asyncpg direct (< 500 ms pour 50 k URLs), fallback silencieux sur set vide si BDD indispo
+  - [x] Flag `skip_existing: bool = True` ajoute dans `StaticArticleSpider` (override par defaut actif via `-a skip_existing=false`)
+  - [x] Filtrage applique dans `_parse_sitemap()` et `_parse_listing()` : URL deja en BDD -> skip avant scheduling Request (evite fetch HTTP + parsing)
+  - [x] Compteur `_skipped_existing` pour telemetrie par spider
+  - [x] Tests unitaires : 3 nouveaux tests pytest (filtrage effectif, default True, override kwarg). 23 tests verts total pour les spiders statiques.
+- [x] **Extension du pre-check BDD a TOUS les collecteurs (2026-04-19)**
+  - [x] **Dev.to** (gain ENORME) : check apres la liste, evite le fetch detail par article
+  - [x] **TechCrunch scraping** (gain ENORME) : check apres le RSS, evite le fetch Playwright (5-10s/page)
+  - [x] **arXiv API** (gain modeste) : check pendant le parsing, evite pollution MinIO
+  - [x] **Crossref** (gain modeste) : check pendant le parsing, evite pollution MinIO
+  - [x] **Guardian** (gain modeste) : check dans `_parse_articles`, evite ingestion de doublons
+  - [x] **File ingester** (gain faible) : check pendant la lecture JSON Lines, evite pousse de doublons vers MinIO
+  - [x] Tous les collecteurs exposent `skip_existing: bool = True` par defaut, desactivable explicitement
+- [x] **Correctness du pre-check : normalisation URL + tests (2026-04-19)**
+  - [x] `normalize_url()` applique : http -> https, host lowercase, trailing slash retire, whitespace trim
+  - [x] `url_is_known(url, known_set)` : helper centralise utilise par tous les collecteurs, compare les formes normalisees des deux cotes
+  - [x] `load_known_urls()` stocke les URLs deja normalisees pour une comparaison O(1) consistante
+  - [x] **PROUVE : pas de faux positif** (URL reellement absente ne declenche jamais un skip, le set ne contient que des URLs issues de la BDD)
+  - [x] **Faux negatifs elimines** pour les cas reels observes : arXiv Kaggle https vs API http (incoherence pre-existante non detectee par l'ancien pre-check exact), trailing slash, casse host
+  - [x] Tests unitaires : 42 tests pytest dans `test_url_precheck.py` couvrant (a) idempotence de `normalize_url`, (b) absence de faux positifs (5 cas : empty set, host different, path different, casse path, query diff), (c) equivalences critiques detectees (5 cas), (d) conversion de flags CLI par `coerce_bool`. Total projet : 134 tests verts.
+- [x] **Orchestrator** : `src/greentech/data/collectors/static_scraping_collector.py`
+  - [x] Lance les 4 spiders en un unique `CrawlerProcess` Scrapy (partage Twisted reactor)
+  - [x] Agrege les articles par spider, upload MinIO separe par site (tracabilite)
+  - [x] Bilan global (articles par site + erreurs par categorie)
+  - [x] Compatible interface `BaseCollector` + commande CLI `uv run python -m greentech.data.collectors.static_scraping_collector`
+- [x] **Tests unitaires** : `tests/unit/data/collectors/test_static_spiders.py`
+  - [x] 20 tests pytest (normalize_whitespace, config par site, sitemap parsing, extraction titre/contenu/date/auteur, parse_article valide/rejete, meta-test heritage)
+  - [x] Tous verts, aucune regression sur le reste du projet (89 tests total)
+- [x] **Migration BDD** : `scripts/sql/migration_003_b2_3_spiders.sql` appliquee
+  - [x] 4 nouvelles sources inserees (`GreenIT.fr`, `Green Software Foundation`, `Sustainable Web Design`, `Climate Action Tech`)
+  - [x] `scripts/sql/init.sql` aligne pour les deploiements futurs
+- [x] **Smoke tests live** : 3 articles par site verifies (contenus 3 000-9 000 chars, langue FR/EN correcte, dedup URL OK)
+
+#### B2.4 Ingestion Hugging Face dataset (ECARTE)
+
+> Supprime du plan apres validation prealable (B2.1). Le dataset `climatebert/climate_detection` a un format incompatible (ni titre ni URL, paragraphes corporate hors scope tech) et des labels "climat general" qui corrompraient le ground truth Green IT. Les 7 autres sources fournissent largement le volume cible. Cette source pourrait eventuellement servir de corpus d'evaluation robustesse dans une phase ulterieure.
+- [ ] Documentation
+
+#### B2.5 Mise a jour des metadata BDD
+
+- [ ] Mettre a jour `scripts/sql/init.sql` ou creer une migration :
+  - [ ] Ajouter les 8 nouvelles sources dans la table `sources` (nom, type, URL, active=true)
+  - [ ] Ajouter les nouveaux mots-cles dans la table `search_config`
+- [ ] Executer la migration sur la base existante
+- [ ] Verifier via `uv run python -c "..."` ou requete SQL directe
+
+#### B2.6 Lancement collecte massive
+
+- [ ] Creer `scripts/collect_all_sources.py` qui orchestre :
+  - [ ] arxiv_collector
+  - [ ] crossref_collector
+  - [ ] guardian_collector (avec nouvelles sections)
+  - [ ] devto_collector (existant)
+  - [ ] api_collector legacy (NewsData, garder desactive)
+  - [ ] Les 4 nouveaux spiders Scrapy (via subprocess scrapy crawl)
+  - [ ] file_ingester avec dataset HF
+- [ ] Executer la collecte (idempotente : skip articles deja en BDD via URL unique)
+- [ ] Mesurer le volume reellement collecte (logs + requete SQL `SELECT source, COUNT(*) FROM articles GROUP BY source`)
+
+#### B2.7 Nettoyage Spark sur le nouveau volume
+
+- [ ] Verifier que `src/greentech/data/processors/spark_cleaner.py` tient le nouveau volume
+- [ ] Adapter la conf memoire si besoin (driver memory, executor memory)
+- [ ] Lancer le nettoyage : `uv run python -m greentech.data.processors.spark_cleaner`
+- [ ] Verifier que les articles trop courts (< seuil deja existant) sont bien filtres
+- [ ] Verifier la deduplication
+
+#### B2.8 Generation des resumes de classification
+
+- [ ] Pour les articles complets sans abstract (issus du scraping principalement) : generer le resume via `classification_summarizer`
+- [ ] Lancer : `uv run python scripts/generate_classification_summaries.py`
+- [ ] Verifier que tous les articles ont desormais soit `abstract` soit `resume` <= 450 tokens
+- [ ] Requete SQL de validation : compter les articles sans `(abstract OR resume)`
+
+#### B2.9 Re-classification du corpus etendu (TERMINE 2026-04-21 00:32)
+
+> **Etat final** : pipeline complet `classify summarize-green export-golden` execute d'une traite en 4h38 (278 min). classify 3h10, summarize-green 1h28, export-golden 2 sec. Zero echec sur l'ensemble. Le refactor kill-safe (commit par batch de 50) n'a pas eu a etre sollicite — aucune interruption n'est survenue.
+
+- [x] **Etage 1 - Pre-filtre keywords** : `uv run python scripts/auto_annotate_dataset.py` (sur tout le corpus, ancien + nouveau) — **TERMINE 2026-04-19 22:38**
+  - [x] 11 667 articles annotes (100 %)
+  - [x] 6 091 marques `NON_GREEN` (filtrage permissif par mots-cles)
+  - [x] 4 531 marques `CANDIDATE` en attente du LLM judge (etage 2)
+  - [x] Dispatcher HF -> Qwen local verifie : fallback sur quota epuise (HTTP 402)
+- [x] **Etage 2 - LLM judge Qwen** : `uv run python scripts/classify_candidates.py` — **TERMINE 2026-04-20 23:04** en 3h10 sur les 4 528 candidats restants (91 batches de 50, kill-safe)
+  - [x] Dispatcher HF -> local verifie (fallback Qwen2.5-3B sur RX 7900 XTX 24 Go VRAM, bf16)
+  - [x] **Refactor kill-safe 2026-04-20** : commit par batch de 50 articles via `classify_all_candidates(batch_size=50)`. Perte max sur interruption = 50 verdicts (~10 min au rythme local ~5/min). Idempotent : `fetch_candidates` ne renvoie que les articles encore `est_green_it IS NULL`. La run precedente (non-batch) du 2026-04-19 22:38 tournait depuis 3h sans commit et a perdu ~1 045 verdicts au kill — c'est ce qui a motive le refactor.
+  - [x] **Run 2026-04-20 19:54 -> 23:04** : 4 528 candidats traites d'une traite, 91/91 batches commites, 0 echec. Verdicts : 1 001 Green IT + 3 527 Non Green IT.
+- [x] **Generation resumes Green IT** : `uv run python scripts/generate_green_summaries.py` (sur les confirmes uniquement) — **TERMINE 2026-04-21 00:32** en 1h28 sur 1 002 articles (1 001 nouveaux + 1 restant du 2026-04-20 01:50). 0 echec, ~8-9 sec/article via Qwen2.5-3B local.
+- [x] **Export golden dataset** : `uv run python scripts/export_golden_dataset.py` — **TERMINE 2026-04-21 00:32** en 2 sec. `data/golden_dataset.csv` : 11 667 articles, 1 018 Green IT (8.73 %), 10 649 Non Green IT, 0 exclu.
+- [x] Verifier les chiffres finaux :
+  - [x] Total articles : **11 664 articles** (dans la fourchette 8 000-15 000) apres nettoyage linguistique
+  - [x] Articles Green IT confirmes : **1 018 (8.73 %)** — cible initiale 200-500 pulverisee, ratio en haut de la fourchette 3-8 % (point de depart : 17 Green IT soit 0.3 %).
+  - [x] Repartition linguistique (FR/EN/autre) loguee — dataset **bilingue EN/FR** apres nettoyage : EN 8 719 (74.75 %, 418 Green IT), FR 2 945 (25.25 %, 600 Green IT). Nettoyage 2026-04-21 01:46 : 10 articles `ng` (faux positif langdetect, contenu 100 % EN) normalises en `en`, 3 articles `de`/`ru` supprimes (volume trop faible pour exploitation, 2 de + 1 ru, tous Non Green IT). Asymetrie forte : le FR est 4.2x plus dense en Green IT que l'EN (lie a greenit.fr, 1 000 posts 100 % Green IT en FR). Implication B4 : `mdeberta-v3-base` (multilingue) requis, pas `deberta-v3-base` EN-only.
+
+#### B2.10 Annotation manuelle (procedure detaillee)
+
+- [ ] **Etape 1 - Identifier les borderline** :
+  - [ ] Modifier `classify_candidates.py` pour logger le score brut du LLM judge (probabilite/confiance)
+  - [ ] Identifier les articles avec score entre 0.3 et 0.7 (zone d'incertitude)
+- [ ] **Etape 2 - Decision sur le volume** :
+  - [ ] Compter les borderline. Si < 50 : tout annoter manuellement. Si 50-200 : echantillon stratifie. Si > 200 : echantillon de 100 max.
+  - [ ] Communiquer le volume a l'utilisateur pour validation avant lancement
+- [ ] **Etape 3 - Outil d'annotation** :
+  - [ ] Creer `scripts/manual_annotation_helper.py` :
+    - [ ] CLI interactif (Rich/Textual ou simple input())
+    - [ ] Pour chaque article : affiche titre + resume + URL
+    - [ ] Demande input : `g` (Green IT) / `n` (Non Green IT) / `s` (skip) / `q` (quit)
+    - [ ] Sauvegarde decision en BDD avec flag `annotation_source='manual'`, `annotated_at=now()`, `annotated_by='KaRn1zC'`
+    - [ ] Possibilite de reprendre une session interrompue
+- [ ] **Etape 4 - Documentation** :
+  - [ ] Creer `docs/ANNOTATION_MANUELLE.md` avec :
+    - [ ] Procedure step-by-step illustree
+    - [ ] Criteres de decision Green IT (rappel des definitions)
+    - [ ] Exemples de cas limites avec leur classification correcte
+    - [ ] Commandes CLI exactes
+- [ ] **Etape 5 - Versioning** :
+  - [ ] Re-export du golden dataset apres annotation manuelle
+  - [ ] Tag DVC du nouveau dataset versionne (`golden_dataset.csv.dvc`)
+  - [ ] Push vers MinIO via `uv run dvc push`
+
+#### B2.11 Mise a jour documentation
+
+- [ ] Mettre a jour `docs/SPECIFICATIONS_DATA.md` :
+  - [ ] Ajouter les 8 nouvelles sources avec leur description, format, frequence
+  - [ ] Mettre a jour la liste des contraintes techniques
+- [ ] Mettre a jour `docs/REGISTRE_RGPD.md` :
+  - [ ] Verifier si nouvelles sources contiennent des donnees personnelles (auteurs, emails)
+  - [ ] Documenter les nouvelles regles d'anonymisation si necessaire
+- [ ] Mettre a jour `documentation interne` section "Data" et "Commandes" avec les nouveaux collecteurs
+- [ ] Mettre a jour `docs/PLAN_ETAPES.md` section 2.3 (Programmation Collecte) avec les nouveaux modules
+- [ ] Documentation Sphinx complete : `cd docs && uv run sphinx-build -b html . _build/html`
+
+---
+
+### B3. Optimisation Pipeline d'Entrainement (PROTOCOLE UNIFIE 2026-04-21)
+
+> **Protocole fige apres synthese de 3 agents de recherche** (imbalanced text classification 2024-2026 + LoRA Qwen3-4B + mDeBERTa fine-tuning bilingue). Les 4 decisions structurantes sont actees : stratification croisee `(langue x label)`, class_weight sur CrossEntropy, back-translation EN<->FR, calibration (temperature scaling + threshold tuning), ensemble K-fold K=5, 3 seeds par fold.
+
+#### B3.1 Stratification croisee (langue x label)
+
+> Priorite 1. Gain principal sur l'ecart-type MCC (cible sigma < 0.10).
+
+- [ ] Installer `iterative-stratification` via `uv add iterative-stratification`
+- [ ] Remplacer `StratifiedKFold(K=5, stratify=y)` par `MultilabelStratifiedKFold(K=5)` sur le vecteur compose `(langue, label)` (une seule colonne multi-label encodee one-hot)
+- [ ] Verifier que chaque fold contient la distribution correcte :
+  - [ ] ~75 % EN / ~25 % FR
+  - [ ] ~8.73 % positifs globaux, avec ~4.80 % positifs parmi les EN et ~20.37 % parmi les FR
+  - [ ] Assert automatique avec tolerance 2 pts de pourcentage
+- [ ] Tests unitaires dans `tests/unit/test_stratification.py`
+- [ ] Logger les stats de chaque fold dans MLflow (params : `fold_X_n_en`, `fold_X_n_fr`, `fold_X_ratio_green_fr`, etc.)
+
+#### B3.2 Loss ponderee (class_weight)
+
+- [ ] Remplacer `_oversample_minority` dans `src/greentech/ai/models/training.py` par passage du `class_weight` a la CrossEntropy :
+  - Calcul au demarrage de chaque fold : `class_weight = torch.tensor([1.0, N_neg_train / N_pos_train])` (~[1.0, 10.46] sur le full train, varie legerement par fold)
+  - Passer via `compute_loss_func` custom ou en sub-classant `Trainer.compute_loss`
+- [ ] Supprimer l'oversampling x84 (overfits les 22 memes textes, inflate le train set)
+- [ ] Tests unitaires : verifier que la loss converge sur un mini-dataset desequilibre synthetique
+- [ ] Run MLflow : tag explicite `loss_strategy=weighted_ce` pour tracabilite
+- [ ] **Focal Loss NON retenue** : les 3 agents convergent — Focal Loss degrade la calibration et n'apporte de gain qu'au-dela de 1:50 (notre ratio 1:10.5 est "modere"). Elle pourra etre testee en phase 2 si le MCC plafonne sous 0.75.
+
+#### B3.3 Back-translation EN<->FR (opus-mt)
+
+> Double le nombre de positifs (1 018 -> ~2 036), ratio effectif 1:10.5 -> ~1:5.25. Gain attendu +0.05 a +0.08 MCC.
+
+- [ ] Installer `sentence-transformers` (filtre qualite) via `uv add sentence-transformers`
+- [ ] Telecharger modeles : `Helsinki-NLP/opus-mt-en-fr` et `Helsinki-NLP/opus-mt-fr-en` (2x ~75M params, ~150 Mo chacun)
+- [ ] Creer `src/greentech/data/processors/back_translator.py` :
+  - [ ] Classe `BackTranslator` avec methode `augment_positives(articles, target_similarity_range=(0.85, 0.99))`
+  - [ ] Pipeline : EN positif -> FR (opus-mt-en-fr) -> EN (opus-mt-fr-en) ; idem sens inverse
+  - [ ] Filtre qualite : similarite cosine `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (original, retraduit) hors [0.85, 0.99] = rejet
+  - [ ] N'appliquer que sur `resume` (150-220 mots). Titre inchange, reutilise tel quel.
+  - [ ] Variantes ont meme `id_source`, meme label, mais `uuid` different + flag `augmentation_source='opus-mt-backtranslation'`
+- [ ] Creer `scripts/augment_positives.py` (CLI) :
+  - [ ] Lit `data/golden_dataset.csv`, filtre positifs
+  - [ ] Genere les variantes via `BackTranslator`
+  - [ ] Output : `data/golden_dataset_augmented.csv` (union des originaux + variantes acceptees)
+  - [ ] Logs MLflow : nombre genere, nombre accepte, nombre rejete (similarite hors bornes), temps total
+- [ ] **Regle d'or** : les variantes vont UNIQUEMENT dans le train split de chaque fold. Le val/test split n'est construit qu'a partir des articles originaux (jamais augmentes), sinon on biaise l'evaluation. Cette regle est implementee dans la logique K-fold : stratifier sur les originaux, puis augmenter chaque train split apres splitting.
+- [ ] Tests unitaires : verifier que val/test ne contient jamais de `augmentation_source` non-null
+- [ ] Temps estime sur RX 7900 XTX : ~20-30 min pour 1 018 positifs (batch 32, MarianMT)
+
+#### B3.4 Calibration post-training (temperature scaling + threshold tuning)
+
+> Integre automatiquement apres chaque fold training. Gain ~+0.02-0.05 MCC indirect via seuil optimal.
+
+- [ ] Creer `src/greentech/ai/mlops/calibration.py` :
+  - [ ] Classe `TemperatureScaler` : 1 parametre T (scalaire), optimise sur val set par LBFGS pour minimiser la NLL. Reference : Guo et al. 2017 (arXiv:1706.04599), validee 2024-2025 pour BERT/DeBERTa fine-tunes.
+  - [ ] Fonction `find_optimal_threshold(y_true, y_proba, metric='mcc') -> tuple[float, float]` : grille 0.05-0.95 pas 0.01, retourne `(threshold_optimal, mcc_optimal)`
+  - [ ] Persistence : `temperature.json` (`{"T": 1.87, "optimized_on": "fold_3_val", "nll_before": ..., "nll_after": ...}`) et `optimal_threshold.json` (`{"threshold": 0.42, "metric": "mcc", "value": 0.78}`) dans le dossier du modele
+- [ ] **Platt scaling et isotonic regression NON retenus** : overfittent avec <1 000 positifs par fold (agent A).
+- [ ] Integration dans le training loop :
+  - [ ] Apres chaque fold training, sur le val set du fold : optimiser T puis threshold
+  - [ ] Moyenner les 5 T et 5 thresholds -> un seul `temperature.json` / `optimal_threshold.json` au niveau modele
+  - [ ] Logger dans MLflow : `T_fold_X`, `threshold_fold_X`, `T_final`, `threshold_final`
+- [ ] Tests unitaires avec dataset synthetique calibre/decalibre
+
+#### B3.5 Ensemble K-fold (K=5 seeds x 3)
+
+> Gain MCC +0.03 a +0.07 documente. Moyenne des logits pre-sigmoid.
+
+- [ ] Apres K=5 folds x 3 seeds = 15 trainings par modele, deux strategies selon l'architecture :
+  - [ ] **Qwen3-4B LoRA** : fusionner les 5 adapters (un par fold, seeds moyennes par fold) via `PeftModel.merge_and_unload()` puis conserver les poids fusionnes -> 1 seul modele prod, cout inference 1x
+  - [ ] **mDeBERTa** : charger les 5 modeles en parallele a l'inference, moyenner les logits. Cout ~5x latence, ~5.5 Go VRAM (5x 1.1 Go) sur RX 7900 XTX
+- [ ] Alternative si mDeBERTa trop lent : garder les 3 meilleurs folds (best val MCC) au lieu des 5
+- [ ] Enregistrer tous les modeles folds dans `models/<model>/folds/fold_X/` + un `ensemble_config.json` listant les folds selectionnes
+
+#### B3.6 Validation Deepchecks renforcee
+
+- [ ] Verifier que les tests Deepchecks existants (`tests/ai/`) couvrent :
+  - [ ] Data leakage (train/test overlap, aucun article original ET son augmentation ne coexistent entre splits)
+  - [ ] Distribution drift entre folds (langue, label, longueur texte)
+  - [ ] Robustesse au bruit (typos, casing, ponctuation aleatoire via AEDA)
+- [ ] Ajouter si manquants
+
+#### B3.7 Decision finale
+
+- [ ] **Critere** : conserver le modele (Qwen3-4B ou mDeBERTa) qui maximise `MCC_moyen_K-fold` avec `ecart-type_K-fold < 0.10`. Critere secondaire : latence < 200 ms, CO2 CodeCarbon documente.
+
+---
+
+### B4. Benchmark Final & Selection du modele
+
+> **Plan defini par l'utilisateur** :
+> 1. Benchmark BRUT (zero-shot, avant entrainement) de DeBERTa adapte + Qwen3-4B sur le nouveau dataset
+> 2. Entrainement des 2 modeles avec la methode optimale (issue de B3)
+> 3. Benchmark des 2 modeles entraines
+> 4. Selection du modele final pour la production
+
+#### B4.1 Selection de la version DeBERTa adaptee (TERMINE 2026-04-21)
+
+- [x] Etudier la repartition linguistique du dataset enrichi (FR/EN/autre) — dataset final EN 74.75 % / FR 25.25 % (cf. B2.9), 1 018 Green IT dont 600 en FR.
+- [x] Decision : **`microsoft/mdeberta-v3-base`** (multilingue) retenu. Les 25 % FR sont trop significatifs pour `deberta-v3-base` EN-pur (qui encoderait mal les 600 Green IT FR et fausserait le benchmark). mDeBERTa conserve l'architecture DeBERTa-v3 (278M params, encoder-only, DisentangledSelfAttention) mais pre-entraine sur 100 langues — benchmark equitable encoder-vs-decoder contre Qwen3-4B.
+- [ ] Documenter la decision dans `docs/CHOIX_DEBERTA.md` (redaction finale apres benchmark B4.2-B4.3 pour inclure les metriques comparatives)
+- [ ] Mettre a jour `settings.huggingface_model_encoder_base` (creer le setting si besoin) — a faire lors de l'implementation du benchmark B4.2
+
+#### B4.2 Benchmark BRUT (zero-shot)
+
+- [ ] Etendre `scripts/benchmark_baseline.py` :
+  - [ ] Ajouter un benchmark zero-shot DeBERTa via `pipeline("zero-shot-classification")`
+  - [ ] Conserver le benchmark zero-shot Qwen3-4B existant
+  - [ ] Run MLflow : un par modele, experiment dedie `baseline-comparison-2026-04`
+  - [ ] Metriques : MCC, F1, Recall, Precision, latence moyenne, CO2eq
+- [ ] Lancer sur le nouveau dataset complet
+- [ ] Generer un tableau comparatif (markdown) dans `docs/BENCHMARK_BRUT_2026-04.md`
+
+#### B4.3 Entrainement des 2 modeles avec le protocole unifie B3
+
+> Hyperparams ci-dessous issus des agents de recherche B (LoRA Qwen3-4B) et C (mDeBERTa). Les deux modeles suivent strictement le meme protocole B3 (stratification langue x label, class_weight, back-translation, calibration, ensemble K=5, 3 seeds par fold) pour un benchmark equitable.
+
+- [ ] **Pour Qwen3-4B + LoRA** (`Qwen3Classifier` actualise dans `src/greentech/ai/models/training.py`) :
+  - [ ] `target_modules="all-linear"` (`q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`)
+  - [ ] `r=32, lora_alpha=64, lora_dropout=0.05`
+  - [ ] Head : `AutoModelForSequenceClassification` num_labels=2 (pas prompt + generation : latence / 5-10)
+  - [ ] `lr=1e-4`, scheduler `cosine`, `warmup_ratio=0.06`
+  - [ ] 3 epochs, early stopping sur val MCC (patience 1), `metric_for_best_model="eval_matthews_correlation"`
+  - [ ] `per_device_train_batch_size=2, gradient_accumulation_steps=16` (batch effectif 32)
+  - [ ] `max_length=512`, `bf16=True`
+  - [ ] **Piege critique** : appeler `model.enable_input_require_grads()` AVANT `get_peft_model()` (sinon gradient_checkpointing n'est pas propage aux adapters, issue HF #42947)
+  - [ ] `gradient_checkpointing=True, use_reentrant=False`
+  - [ ] Mode : forcer **non-thinking** (Qwen3 a un mode thinking par defaut, desactiver via template ou utiliser `Qwen3-4B-Base`)
+  - [ ] K-fold K=5 x 3 seeds stratifie `(langue x label)` + calibration T/threshold post-fold
+  - [ ] Run MLflow `qwen3-final-2026-04` (modele de production actuel)
+  - [ ] Sauvegarder dans `models/qwen3/folds/fold_X_seed_Y/` + fusion finale dans `models/qwen3/merged/` via `PeftModel.merge_and_unload()`
+- [ ] **Pour mDeBERTa-v3-base** (nouvelle classe `MDeBERTaClassifier` dans `training.py`) :
+  - [ ] Base : `microsoft/mdeberta-v3-base`, `AutoModelForSequenceClassification` num_labels=2
+  - [ ] **Precision** : `bf16=True` si `transformers >= 4.48` (bug #35332 DisentangledSelfAttention corrige en decembre 2024, PR #35336), sinon `fp32`. **fp16 strictement interdit** (NaN garanti sur DeBERTa, non lie a ROCm).
+  - [ ] `lr=2e-5`, scheduler `linear`, `warmup_ratio=0.06`
+  - [ ] `per_device_train_batch_size=16, gradient_accumulation_steps=2` (batch effectif 32)
+  - [ ] 5 epochs, early stopping sur val MCC (patience 2)
+  - [ ] `max_length=384` (couvre 98 % des resumes FR+titre, tokenizer SentencePiece FR genere ~1.6 tokens/mot, 200 mots FR ≈ 320 tokens + titre)
+  - [ ] `weight_decay=0.01`, dropout 0.1 (default)
+  - [ ] `attn_implementation="sdpa"` (Flash-Attention indisponible RDNA3, reference issue ROCm #4391)
+  - [ ] `gradient_checkpointing=True`
+  - [ ] K-fold K=5 x 3 seeds stratifie `(langue x label)` + calibration T/threshold post-fold
+  - [ ] Run MLflow `mdeberta-final-2026-04` (concurrent encoder vs Qwen3 decoder pour le benchmark)
+  - [ ] Sauvegarder dans `models/mdeberta/folds/fold_X_seed_Y/` + ensemble logit-average a l'inference (pas de fusion de poids possible car architectures full-fine-tune, pas LoRA)
+
+#### B4.4 Benchmark comparatif des modeles entraines
+
+- [ ] Creer `scripts/benchmark_models.py` :
+  - [ ] Charger les 2 modeles entraines
+  - [ ] Evaluer sur le meme test set (split fige, hold-out non vu pendant l'entrainement)
+  - [ ] Metriques completes : MCC, F1, Recall, Precision, balanced_accuracy, specificite, matrice de confusion, latence p50/p95, CO2eq
+  - [ ] Generer un rapport markdown comparatif dans `docs/BENCHMARK_FINAL_2026-04.md`
+- [ ] Run MLflow `model-selection-final-2026-04`
+
+#### B4.5 Selection et promotion du modele
+
+- [ ] **Critere de selection** : MCC moyen K-fold le plus eleve, sous condition que la latence reste < 200ms et l'ecart-type MCC < 0.10
+- [ ] Documenter la decision dans `docs/SELECTION_CHAMPION_2026-04.md`
+- [ ] Promotion du modele vainqueur :
+  - [ ] Copier dans `models/production/`
+  - [ ] Tag DVC : `uv run dvc add models/production && uv run dvc push`
+  - [ ] Mettre a jour `models/production.dvc`
+- [ ] Mettre a jour la "Model Card" : `docs/MODEL_CARD.md`
+
+#### B4.6 Validation end-to-end
+
+- [ ] Tests Deepchecks complets sur le modele final
+- [ ] Test API : redemarrer FastAPI, lancer 10 analyses via `/analyze`, verifier les resultats
+- [ ] Test Frontend : utiliser l'interface React pour analyser des articles divers (3-5 manuels)
+- [ ] Verifier les dashboards Grafana : metriques d'inference correctes
+
+#### B4.7 Mise a jour documentation finale
+
+- [ ] Mettre a jour `docs/PLAN_ETAPES.md` section 3.3 avec les nouveaux entrainements
+- [ ] Mettre a jour `documentation interne` section "Classifieur fine-tune (Qwen3-4B + LoRA)" avec la nouvelle famille de modele de production
+- [ ] Mettre a jour la documentation Sphinx
+- [ ] Tag Git : `vX.Y.Z-prod-2026-04`
+
+---
+
+### B5. (BONUS) Refonte Agentic avec LangGraph
+
+> **A realiser uniquement si B1 a B4 sont entierement valides ET temps disponible.**
+> **Framework retenu** : LangGraph (decision utilisateur).
+> **Objectif demo** : presenter au jury une architecture moderne et observable, montrant la maturite du projet.
+
+#### B5.1 Conception architecture
+
+- [ ] Creer `docs/ARCHITECTURE_AGENTIC.md` :
+  - [ ] Schema des agents et de leurs responsabilites (Mermaid ou diagramme)
+  - [ ] Definition de l'etat partage (LangGraph State)
+  - [ ] Flux de donnees entre agents (Cleaner -> Summarizer -> Judge -> Classifier)
+  - [ ] Strategie de fallback (HF cloud -> local Qwen 2.5-3B -> Qwen 2.5-1.5B)
+  - [ ] Strategie d'observabilite (Loguru -> Loki, Prometheus metrics par agent)
+- [ ] Validation du design (relecture complete)
+
+#### B5.2 Setup LangGraph
+
+- [ ] Ajouter les dependances : `uv add langgraph langchain-core`
+- [ ] Verifier compatibilite avec Pydantic 2.x
+- [ ] Creer le package : `src/greentech/ai/agents/__init__.py`
+- [ ] Creer le module d'etat partage : `src/greentech/ai/agents/state.py`
+  - [ ] TypedDict ou Pydantic model pour l'etat de l'analyse
+  - [ ] Champs : `article_url`, `article_text`, `cleaned_text`, `summary`, `is_green_it`, `judge_reasoning`, `classifier_proba`, `errors`
+
+#### B5.3 Implementation des agents
+
+- [ ] **Agent Cleaner** : `src/greentech/ai/agents/cleaner_agent.py`
+  - [ ] Tool : nettoyage texte (reuse `spark_cleaner` logic en mode synchrone)
+  - [ ] Tool : detection langue (langid ou langdetect)
+  - [ ] Tool : traduction si necessaire (Qwen via dispatcher)
+- [ ] **Agent Summarizer** : `src/greentech/ai/agents/summarizer_agent.py`
+  - [ ] Tool : generation resume classification (`classification_summarizer`, max 450 tokens)
+  - [ ] Tool : generation resume Green IT si confirme (`summarizer.summarize_green_aspects`)
+- [ ] **Agent Judge Green IT** : `src/greentech/ai/agents/judge_agent.py`
+  - [ ] Tool : pre-filtre keywords (etage 1)
+  - [ ] Tool : LLM judge (etage 2) via dispatcher HF/local
+  - [ ] Sortie structuree : decision booleenne + justification + score de confiance
+- [ ] **Agent Classifier** : `src/greentech/ai/agents/classifier_agent.py`
+  - [ ] Tool : classification via le modele en production (Qwen3-4B ou mDeBERTa)
+  - [ ] Sortie : prediction + probabilite + seuil utilise
+- [ ] **Agent Orchestrator** : `src/greentech/ai/agents/orchestrator.py`
+  - [ ] Workflow LangGraph : noeuds + edges conditionnels
+  - [ ] Gestion erreurs : retry avec backoff sur les agents LLM
+  - [ ] Logs structures Loguru -> Loki
+
+#### B5.4 Tests unitaires & integration
+
+- [ ] Tests unitaires par agent : `tests/ai/agents/test_<agent>.py`
+- [ ] Tests d'integration de l'orchestrator : flux complet sur articles fictifs
+- [ ] Test de fallback : simuler une panne HF, verifier le basculement local
+- [ ] Test de reprise : couper en plein milieu, verifier la coherence d'etat
+
+#### B5.5 Integration dans l'API
+
+- [ ] Refactorer `src/greentech/api/routes/analyze.py` :
+  - [ ] Remplacer la logique lineaire par un appel a l'orchestrator LangGraph
+  - [ ] Garder l'ancienne logique en fallback (feature flag dans settings) ou suppression complete (a discuter)
+- [ ] Tests d'integration API : verifier que les reponses sont identiques en sortie
+
+#### B5.6 Observabilite agentic
+
+- [ ] Ajouter des metriques Prometheus par agent :
+  - [ ] `agent_duration_seconds{agent="cleaner|summarizer|judge|classifier"}`
+  - [ ] `agent_errors_total{agent="..."}`
+  - [ ] `agent_fallback_total{agent="..."}`
+- [ ] Creer un dashboard Grafana dedie : `config/grafana/dashboards/agentic-pipeline.json`
+- [ ] Alertes Prometheus : taux d'erreur agent > 5%, fallback rate > 20%
+
+#### B5.7 Documentation finale
+
+- [ ] Documentation Sphinx complete du package `agents`
+- [ ] Demonstration interactive : notebook `notebooks/demo_agentic.ipynb` ou script `scripts/demo_agentic.py`
+- [ ] Mettre a jour `documentation interne` avec la nouvelle architecture
+- [ ] Mettre a jour `docs/PLAN_ETAPES.md` avec une nouvelle section bonus 7
+- [ ] Tag Git : `vX.Y.Z-agentic`
+
+---
+
+## Suivi de la Section Bonus
+
+A chaque sous-phase Bx.y terminee :
+- [ ] Cocher les cases correspondantes ci-dessus
+- [ ] Si la sous-phase touche a une competence C1-C21 deja validee, mettre a jour la competence concernee (ex: C1 si nouveaux collecteurs, C7 si nouveau benchmark, C11 si nouvelles metriques)
+- [ ] Mettre a jour `docs/PLAN_ETAPES.md` si l'etape impacte le plan general
+- [ ] Commit Git avec message structure (`type(scope): message`) selon les conventions du projet
+- [ ] Pousser les nouveaux datasets via DVC apres chaque enrichissement majeur

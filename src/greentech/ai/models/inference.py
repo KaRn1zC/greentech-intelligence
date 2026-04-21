@@ -1,23 +1,39 @@
 """Module d'inference pour le modele de classification Green IT.
 
-Charge le modele gagnant (selectionne apres le benchmark Champion vs Challengers)
-et fournit une interface simple pour classifier les articles en production.
-Met a jour la base PostgreSQL avec les resultats de classification.
+Charge le modele gagnant (selectionne apres le benchmark Champion vs
+Challengers) et fournit une interface simple pour classifier les articles en
+production. Met a jour la base PostgreSQL avec les resultats de classification.
 
 Le modele de production est une copie du vainqueur du benchmark
-(DeBERTa, Qwen2.5-3B+LoRA, Llama 3.2 3B+LoRA ou Qwen3-4B+LoRA) dans
-`models/production/`. La detection du type de modele (complet vs adaptateur
+(DeBERTa, mDeBERTa, Qwen2.5-3B+LoRA, Llama 3.2 3B+LoRA ou Qwen3-4B+LoRA) dans
+``models/production/``. La detection du type de modele (complet vs adaptateur
 LoRA) est automatique via la presence du fichier ``adapter_config.json`` :
 
 - Si ``adapter_config.json`` est present, on lit ``base_model_name_or_path``
   pour reconstruire le bon classifieur LoRA. Si le base model correspond a
   un Qwen3-4B (presence de ``qwen3-4b`` ou ``qwen3_4b`` dans le nom), on
-  charge ``ChallengerQwen3Classifier`` (avec hyperparametres et
-  target_modules adaptes), sinon on utilise le ``ChallengerClassifier``
+  charge ``Qwen3Classifier`` (avec hyperparametres et
+  target_modules adaptes), sinon on utilise le ``LoRAClassifier``
   generique pour Llama/Qwen2.5.
 - Si le fichier est absent, on traite le dossier comme un modele complet
-  (``ChampionClassifier``, typiquement DeBERTa).
+  (``DeBERTaClassifier`` pour DeBERTa EN-only ou
+  ``MDeBERTaClassifier`` si le dossier s'appelle ``mdeberta``
+  ou que ``config.json`` designe un mdeberta).
 
+Calibration post-training (B3 protocole unifie avril 2026)
+-----------------------------------------------------------
+Si les fichiers ``temperature.json`` et ``optimal_threshold.json`` sont
+presents a cote du modele, ils sont automatiquement appliques :
+
+1. **Temperature scaling** : les logits sont divises par T avant softmax
+   pour corriger la sur-confiance typique des modeles fine-tunes sur
+   dataset desequilibre.
+2. **Threshold tuning** : la decision binaire utilise le seuil optimal
+   (typiquement entre 0.2 et 0.5 selon le modele) au lieu de 0.5 par defaut.
+
+Si les fichiers sont absents, fallback silencieux sur le comportement
+historique (argmax + seuil implicite 0.5) pour preserver la compatibilite
+avec les modeles deja en production.
 """
 
 from __future__ import annotations
@@ -29,24 +45,32 @@ from pathlib import Path
 from loguru import logger
 from sqlalchemy import select, update
 
-from greentech.ai.models.classifier import BaseClassifier, PredictionResult, TrainingConfig
+from greentech.ai.mlops.calibration import apply_calibration, load_calibration
+from greentech.ai.models.classifier import (
+    BaseClassifier,
+    LabelGreenIT,
+    PredictionResult,
+    TrainingConfig,
+)
 from greentech.config import BASE_DIR
 from greentech.data.storage.database import async_session_factory
 from greentech.data.storage.models import Article
 
-# Chemin par défaut du modèle de production
+# Chemin par defaut du modele de production
 DEFAULT_MODEL_PATH = BASE_DIR / "models" / "production"
 
 # Instance globale du classifieur (lazy loading)
 _classifier: BaseClassifier | None = None
+_calibration_temperature: float | None = None
+_calibration_threshold: float | None = None
 
 
 async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
     """Retourne le classifieur de production (singleton lazy-loaded).
 
     Detecte automatiquement le type de modele :
-    - Si adapter_config.json est present → modele LoRA (ChallengerClassifier)
-    - Sinon → modele complet (ChampionClassifier)
+    - Si adapter_config.json est present → modele LoRA (LoRAClassifier)
+    - Sinon → modele complet (DeBERTaClassifier)
 
     Charge le modele au premier appel, puis reutilise l'instance.
 
@@ -60,7 +84,7 @@ async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
         FileNotFoundError: Si le modele n'est pas trouve.
         ValueError: Si la config adapter LoRA est invalide.
     """
-    global _classifier  # noqa: PLW0603
+    global _classifier, _calibration_temperature, _calibration_threshold  # noqa: PLW0603
 
     if _classifier is not None:
         return _classifier
@@ -68,8 +92,8 @@ async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
     path = model_path or DEFAULT_MODEL_PATH
     if not path.exists():
         msg = (
-            f"Modèle de production introuvable : {path}. "
-            "Lancez l'entraînement avec : uv run python -m greentech.ai.models.training"
+            f"Modele de production introuvable : {path}. "
+            "Lancez l'entrainement avec : uv run python -m greentech.ai.models.training"
         )
         raise FileNotFoundError(msg)
 
@@ -81,10 +105,10 @@ async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
     # echoue eternellement avec "Modele non charge".
     if adapter_config_path.exists():
         # Adaptateur LoRA detecte : on dispatche vers la bonne sous-classe
-        # de ChallengerClassifier selon la famille du base model.
+        # de LoRAClassifier selon la famille du base model.
         from greentech.ai.models.training import (
-            ChallengerClassifier,
-            ChallengerQwen3Classifier,
+            LoRAClassifier,
+            Qwen3Classifier,
         )
 
         with open(adapter_config_path) as f:
@@ -95,31 +119,132 @@ async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
             msg = f"adapter_config.json dans {path} ne contient pas 'base_model_name_or_path'"
             raise ValueError(msg)
 
-        # Qwen3-4B a ses propres target_modules LoRA (attention-only) et une
-        # config optimisee (batch/seq length + gradient checkpointing) : on
-        # selectionne la sous-classe dediee pour preserver la coherence entre
-        # entrainement et inference. Le match est volontairement strict sur
-        # `qwen3-4b` / `qwen3_4b` pour ne pas capturer par erreur les anciens
-        # adaptateurs `Qwen3.5-4B` si jamais il en reste.
+        # Qwen3-4B a ses propres target_modules LoRA (all-linear depuis avril
+        # 2026) et une config optimisee (batch/seq length + gradient
+        # checkpointing) : on selectionne la sous-classe dediee pour
+        # preserver la coherence entre entrainement et inference. Le match
+        # est volontairement strict sur `qwen3-4b` / `qwen3_4b` pour ne pas
+        # capturer par erreur les anciens adaptateurs `Qwen3.5-4B`.
         name_lower = base_model_name.lower()
         is_qwen3 = "qwen3-4b" in name_lower or "qwen3_4b" in name_lower
         config = TrainingConfig(nom_modele=base_model_name)
         candidate: BaseClassifier = (
-            ChallengerQwen3Classifier(config) if is_qwen3 else ChallengerClassifier(config)
+            Qwen3Classifier(config) if is_qwen3 else LoRAClassifier(config)
         )
         candidate.load(path)
-        logger.info(f"Modèle LoRA ({base_model_name}) chargé depuis {path}")
+        logger.info(f"Modele LoRA ({base_model_name}) charge depuis {path}")
     else:
-        # Modele complet → ChampionClassifier
-        from greentech.ai.models.training import ChampionClassifier
+        # Modele complet : detecter mDeBERTa vs DeBERTa EN via le dossier et
+        # le config.json. On dispatche vers MDeBERTaClassifier si
+        # le modele est mdeberta pour appliquer les bons hyperparametres
+        # (notamment max_length=384 au lieu de 512) a l'inference.
+        from greentech.ai.models.training import (
+            DeBERTaClassifier,
+            MDeBERTaClassifier,
+        )
 
+        is_mdeberta = _detect_mdeberta(path)
         config = TrainingConfig(nom_modele=str(path))
-        candidate = ChampionClassifier(config)
+        candidate = MDeBERTaClassifier(config) if is_mdeberta else DeBERTaClassifier(config)
         candidate.load(path)
-        logger.info(f"Modèle complet chargé depuis {path}")
+        logger.info(
+            f"Modele complet ({'mDeBERTa' if is_mdeberta else 'DeBERTa/autre'}) "
+            f"charge depuis {path}"
+        )
+
+    # Charger la calibration post-training si disponible (temperature.json
+    # et optimal_threshold.json sauvegardes par train_with_unified_protocol).
+    # Fallback silencieux sur T=1.0 / seuil=0.5 si les fichiers sont absents.
+    _calibration_temperature, _calibration_threshold = load_calibration(path)
+    if _calibration_temperature is not None or _calibration_threshold is not None:
+        logger.info(
+            f"Calibration chargee : T={_calibration_temperature}, "
+            f"seuil={_calibration_threshold}"
+        )
+    else:
+        logger.info(
+            "Aucune calibration trouvee (pas de temperature.json / optimal_threshold.json), "
+            "fallback T=1.0 seuil=0.5"
+        )
 
     _classifier = candidate
     return _classifier
+
+
+def _detect_mdeberta(model_path: Path) -> bool:
+    """Heuristique pour detecter un modele mDeBERTa-v3.
+
+    Trois signaux cumulatifs (un suffit) :
+
+    1. Le nom du dossier contient ``mdeberta``
+    2. ``config.json`` contient un champ ``_name_or_path`` avec ``mdeberta``
+    3. Le model_type interne est ``deberta-v2`` (architecture DeBERTa-v3)
+       avec un vocab_size compatible multilingue (> 200 000)
+    """
+    if "mdeberta" in model_path.name.lower():
+        return True
+    config_json = model_path / "config.json"
+    if not config_json.exists():
+        return False
+    try:
+        data = json.loads(config_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    name = str(data.get("_name_or_path", "")).lower()
+    if "mdeberta" in name:
+        return True
+    vocab_size = data.get("vocab_size", 0)
+    model_type = data.get("model_type", "")
+    return model_type in ("deberta-v2", "deberta") and vocab_size > 200_000
+
+
+def _apply_calibration_to_result(result: PredictionResult) -> PredictionResult:
+    """Reconstruit un ``PredictionResult`` avec T + threshold si disponibles.
+
+    Si aucune calibration n'est chargee (T et threshold tous deux ``None``),
+    retourne l'original inchange. Sinon :
+
+    1. Applique ``T`` sur les logits reconstruits depuis ``proba_positive``
+       via ``apply_calibration`` du module de calibration.
+    2. Decide du label via le seuil optimal au lieu de 0.5.
+    3. Recalcule ``score_confiance`` pour refleter la probabilite calibree
+       de la classe retenue (coherent pour l'UI).
+
+    Si ``proba_positive`` est ``None`` dans le result (classifieur externe),
+    on ne peut pas calibrer et on retourne l'original.
+    """
+    if _calibration_temperature is None and _calibration_threshold is None:
+        return result
+    if result.proba_positive is None:
+        return result
+
+    # Reconstruire un logits (1, 2) depuis la proba positive pour apply_calibration
+    import numpy as np
+
+    proba_pos = float(result.proba_positive)
+    proba_pos_clipped = min(max(proba_pos, 1e-7), 1.0 - 1e-7)
+    logit_pos = float(np.log(proba_pos_clipped / (1.0 - proba_pos_clipped)))
+    logits = np.array([[-logit_pos, logit_pos]], dtype=np.float32)
+
+    calibrated_probs, calibrated_preds = apply_calibration(
+        logits,
+        temperature=_calibration_temperature,
+        threshold=_calibration_threshold,
+    )
+    predicted_label = int(calibrated_preds[0])
+    calibrated_pos_proba = float(calibrated_probs[0])
+    calibrated_confidence = (
+        calibrated_pos_proba if predicted_label == LabelGreenIT.GREEN.value
+        else 1.0 - calibrated_pos_proba
+    )
+
+    return PredictionResult(
+        label=LabelGreenIT(predicted_label),
+        score_confiance=calibrated_confidence,
+        temps_ms=result.temps_ms,
+        modele=result.modele,
+        proba_positive=calibrated_pos_proba,
+    )
 
 
 async def classify_article(article_id: int) -> PredictionResult:
@@ -174,7 +299,12 @@ async def classify_article(article_id: int) -> PredictionResult:
         # Inference : on reproduit strictement la feature d'entrainement
         # titre + "\n\n" + resume pour eviter toute derive de distribution.
         texte_pour_classification = f"{article.titre}\n\n{article.resume}"
-        prediction = await classifier.predict(texte_pour_classification)
+        raw_prediction = await classifier.predict(texte_pour_classification)
+
+        # Applique le temperature scaling et le seuil optimal si charges
+        # (fallback silencieux sur le comportement historique argmax/0.5
+        # si aucune calibration n'est associee au modele de production).
+        prediction = _apply_calibration_to_result(raw_prediction)
 
         # Mise à jour en base
         from datetime import datetime

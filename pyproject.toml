@@ -70,6 +70,8 @@ dependencies = [
     "pypdf>=6.10.0",
     "python-docx>=1.2.0",
     "trafilatura>=2.0.0",
+    "iterative-stratification>=0.1.9",
+    "sentence-transformers>=5.4.1",
 ]
 
 # === Configuration UV pour PyTorch ROCm (AMD GPU RX 7900 XTX) ===
@@ -80,19 +82,21 @@ dependencies = [
 # a la CI de se resoudre sans GPU AMD ni binaire ROCm Windows.
 [tool.uv.sources]
 torch = [
-    { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2/torch-2.9.1%2Brocmsdk20260116-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
+    { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
 ]
 torchvision = [
-    { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2/torchvision-0.24.1%2Brocmsdk20260116-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
+    { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchvision-0.24.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
 ]
 torchaudio = [
-    { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2/torchaudio-2.9.1%2Brocmsdk20260116-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
+    { url = "https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl", marker = "sys_platform == 'win32'" },
 ]
 
 [tool.uv]
 # Le repo AMD contient les wheels ROCm (torch, rocm_sdk_*, etc.)
-find-links = ["https://repo.radeon.com/rocm/windows/rocm-rel-7.2/"]
-# rocm et ses deps sont en pre-release (7.2.0.dev0), necessaire pour torch ROCm
+# Migration ROCm 7.2 pre-release -> 7.2.1 stable : 2026-04-18
+find-links = ["https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/"]
+# Versions 7.2.1 sont stables (plus de .dev0), mais on garde prerelease=allow
+# par securite au cas ou des deps transitives en auraient besoin.
 prerelease = "allow"
 
 [project.optional-dependencies]

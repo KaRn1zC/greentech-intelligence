@@ -406,8 +406,7 @@ async def _run_analysis(
             # leve ValueError si articles.resume est NULL). On preserve le job en
             # statut terminal mais sans prediction, plutot que de propager une erreur.
             logger.warning(
-                f"Classification sautee pour article {id_article} : "
-                "pas de resume disponible"
+                f"Classification sautee pour article {id_article} : pas de resume disponible"
             )
         else:
             try:

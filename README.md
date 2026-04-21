@@ -245,7 +245,7 @@ Cela telecharge les 5 fichiers depuis le bucket MinIO `s3://models/dvc`.
 | **Precision** | bf16 |
 | **Max tokens** | 1024 |
 
-### Benchmark historique (anciens champions)
+### Benchmark historique inter-architectures
 
 Les 3 architectures comparees lors du benchmark initial (septembre 2025 a fevrier 2026) :
 
@@ -257,7 +257,7 @@ Les 3 architectures comparees lors du benchmark initial (septembre 2025 a fevrie
 | **Recall** | 0.50 | 0.25 | 0.50 |
 | **CO2** | 97.8 g | 108.8 g | 112.0 g |
 
-Llama 3.2 3B + LoRA a ete le champion de production jusqu'en avril 2026.
+Llama 3.2 3B + LoRA a ete le modele de production jusqu'en avril 2026.
 Il est remplace par **Qwen3-4B + LoRA** pour trois raisons :
 - **Multilinguisme natif** (FR/EN/DE/ES/ZH) : traitement direct d'articles
   non anglophones, sans etape de traduction.
@@ -265,8 +265,11 @@ Il est remplace par **Qwen3-4B + LoRA** pour trois raisons :
 - **Homogeneite du stack** : meme famille de tokenizer/chat template que le
   LLM judge et les summarizers deja en place (`Qwen/Qwen3-4B-Instruct-2507`).
 
-Les metriques precises du nouveau champion sont mises a jour dans
-`models/production/README.md` apres chaque promotion via
+Un benchmark **B4** est en cours pour comparer Qwen3-4B avec **mDeBERTa-v3-base**
+(encoder multilingue 278M params) selon le **protocole unifie B3** (stratification
+croisee `(langue x label)`, 3 seeds par fold, class_weight, back-translation
+EN<->FR, calibration). Les metriques precises du modele actuellement en production
+sont mises a jour dans `models/production/README.md` apres chaque promotion via
 `scripts/retrain_pipeline.py auto-promote`.
 
 ---
@@ -490,9 +493,15 @@ uv run python scripts/retrain_pipeline.py export-golden
 # Re-entrainement rapide (split 80/20 stratifie)
 uv run python scripts/retrain_pipeline.py train
 
-# Re-entrainement robuste (K-fold K=5 + modele final, ~9-10h)
-# Recommande pour figer une version de production
+# Re-entrainement robuste (protocole unifie B3 : K=5 folds x 3 seeds, stratif (langue x label),
+# class_weight, calibration post-fold, ~4-6h pour Qwen3 sur RX 7900 XTX)
 uv run python scripts/retrain_pipeline.py train-cv
+
+# Cibler un modele specifique
+uv run python scripts/retrain_pipeline.py train-cv --model=mdeberta
+
+# Augmentation par back-translation EN<->FR (opus-mt) sur les positifs (~5 min)
+uv run python scripts/retrain_pipeline.py augment
 
 # Benchmark seul (nouveau vs meilleur historique vs baseline)
 uv run python scripts/retrain_pipeline.py benchmark
@@ -505,6 +514,21 @@ uv run python scripts/retrain_pipeline.py promote
 
 # Baseline du modele brut (evaluation sans fine-tuning)
 uv run python scripts/retrain_pipeline.py baseline
+uv run python scripts/retrain_pipeline.py baseline --model=mdeberta  # Ciblee mDeBERTa
+```
+
+### Commandes B4 (benchmark equitable Qwen3 vs mDeBERTa)
+
+```bash
+# Baseline brute des 2 modeles cibles (~10 min cumulees)
+uv run python scripts/retrain_pipeline.py baseline-both
+
+# K-fold protocole unifie B3 sur Qwen3-4B PUIS mDeBERTa-v3-base (~6-8h cumulees)
+uv run python scripts/retrain_pipeline.py train-cv-both
+
+# Benchmark final B4.4 : compare les 2 modeles entraines, produit
+# docs/BENCHMARK_FINAL_2026-04.md avec MCC/F1/latence p50-p95-p99/VRAM/CO2
+uv run python scripts/retrain_pipeline.py benchmark-models
 ```
 
 ### Combiner des etapes
@@ -555,12 +579,23 @@ Chaque promotion archive automatiquement l'ancien modele :
 ```
 models/
   production/              # Modele actif (utilise par l'API)
-  challenger-qwen3/        # Derniere version entrainee (Qwen3-4B + LoRA, modele final post-CV)
-  challenger-llama/        # Ancienne version legacy (Llama 3.2 3B + LoRA, archive)
-  cv_fold_1/ ... cv_fold_5/  # Adapters LoRA de chaque fold (train-cv)
+  qwen3/                   # Derniere version entrainee (Qwen3-4B + LoRA, modele actif)
+    folds/                 # Adapters LoRA des 5 folds x 3 seeds (protocole unifie B3)
+      fold_1_seed_1/ ...
+    temperature.json       # Calibration : T optimal moyen (post-fold)
+    optimal_threshold.json # Seuil de decision optimal (argmax MCC sur val)
+  mdeberta/                # mDeBERTa-v3-base entraine pour le benchmark B4 (encoder)
+    folds/                 # 5 folds x 3 seeds + temperature.json + optimal_threshold.json
+  qwen2.5/                 # Legacy : Qwen2.5-3B + LoRA (archive)
+  llama3.2/                # Legacy : Llama 3.2 3B + LoRA (archive)
+  deberta-legacy/          # Legacy : DeBERTa-v3-base EN-only (archive)
   best_metrics.json        # Metriques completes du meilleur modele promu
-  baseline_metrics.json    # Metriques du modele brut (eval sur 5730+ articles)
-  cv_report.json           # Rapport K-fold (folds + moyennes + metriques globales)
+  baseline_metrics.json    # Metriques zero-shot Qwen3-4B (defaut)
+  baseline_metrics_mdeberta-v3-base.json  # Metriques zero-shot mDeBERTa
+  cv_report.json           # Rapport K-fold complet (par defaut, dernier run)
+  cv_report_qwen3.json     # Rapport K-fold Qwen3 (apres train-cv-both)
+  cv_report_mdeberta.json  # Rapport K-fold mDeBERTa (apres train-cv-both)
+  benchmark_final_metrics.json  # Comparatif B4.4 (apres benchmark-models)
   versions/
     v20260411_143022/      # Archive avec metadata.json + poids
     v20260415_091500/      # Archive suivante
@@ -577,20 +612,21 @@ uv run uvicorn src.greentech.api.main:app --reload --port 8000
 docker compose restart api
 ```
 
-### Entrainer les 4 modeles (benchmark complet inter-architectures)
+### Entrainer les modeles individuellement (benchmark inter-architectures)
 
-Pour relancer la competition entre les 4 architectures disponibles (DeBERTa,
-Qwen2.5-3B, Llama 3.2 3B, Qwen3-4B) :
+Pour relancer un entrainement isole d'une architecture (sans le pipeline B3
+complet `retrain_pipeline.py`) :
 
 ```bash
-# Entraine les 4 modeles sequentiellement (champion + 3 challengers)
+# Entraine tous les modeles sequentiellement (les 5 du registre historique)
 uv run python -m greentech.ai.models.training
 
-# Ou entraine un modele specifique
-uv run python -m greentech.ai.models.training challenger-qwen3   # Nouveau champion recommande
-uv run python -m greentech.ai.models.training challenger-llama   # Legacy
-uv run python -m greentech.ai.models.training challenger-qwen    # Legacy
-uv run python -m greentech.ai.models.training champion-deberta   # Encoder seq-cls classique
+# Ou entraine un modele specifique (identifiants courts depuis avril 2026)
+uv run python -m greentech.ai.models.training qwen3       # Modele de production actuel (Qwen3-4B + LoRA)
+uv run python -m greentech.ai.models.training mdeberta    # mDeBERTa-v3-base (encoder concurrent du benchmark B4)
+uv run python -m greentech.ai.models.training llama3.2    # Legacy
+uv run python -m greentech.ai.models.training qwen2.5     # Legacy
+uv run python -m greentech.ai.models.training deberta     # DeBERTa-v3-base EN-only (legacy)
 
 # Benchmark comparatif sur le test set commun
 uv run python -m greentech.ai.models.training benchmark

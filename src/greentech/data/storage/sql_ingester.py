@@ -35,7 +35,11 @@ BATCH_SIZE = 50
 #   - Guardian : "theguardian.com" (fixe)
 #   - Dev.to : "dev.to" (fixe)
 #   - TechCrunch : "TechCrunch Climate" (fixe)
-#   - arXiv : "arXiv Dataset" (fixe)
+#   - arXiv Dataset : "arXiv Dataset" (Kaggle, type=file)
+#   - arXiv API : "arxiv.org" (ajout B2.2)
+#   - Crossref : "crossref.org" (ajout B2.2)
+#   - 4 spiders statiques B2.3 : noms explicites configures dans chaque
+#     spider (ex: "GreenIT.fr", "Green Software Foundation", ...)
 #   - NewsData.io (legacy) : le source_id de l'API (ex: "bbc_news", "techradar")
 SOURCE_NAME_MAPPING: dict[str, str] = {
     # Guardian Content API (source REST/JSON principale depuis avril 2026)
@@ -50,10 +54,27 @@ SOURCE_NAME_MAPPING: dict[str, str] = {
     "TechCrunch Climate": "TechCrunch Climate",
     "techcrunch": "TechCrunch Climate",
     "techcrunch.com": "TechCrunch Climate",
-    # arXiv (dataset Kaggle)
+    # arXiv Dataset (file, dump Kaggle historique)
     "arXiv Dataset": "arXiv Dataset",
-    "arxiv": "arXiv Dataset",
     "arxiv_dataset": "arXiv Dataset",
+    # arXiv API (ajout B2.2, preprints live)
+    "arXiv API": "arXiv API",
+    "arxiv.org": "arXiv API",
+    "arxiv_api": "arXiv API",
+    # Crossref API (ajout B2.2, peer-reviewed)
+    "Crossref": "Crossref",
+    "crossref.org": "Crossref",
+    "crossref": "Crossref",
+    "api.crossref.org": "Crossref",
+    # Spiders statiques B2.3 (4 sites Green IT)
+    "GreenIT.fr": "GreenIT.fr",
+    "greenit.fr": "GreenIT.fr",
+    "Green Software Foundation": "Green Software Foundation",
+    "greensoftware.foundation": "Green Software Foundation",
+    "Sustainable Web Design": "Sustainable Web Design",
+    "sustainablewebdesign.org": "Sustainable Web Design",
+    "Climate Action Tech": "Climate Action Tech",
+    "climateaction.tech": "Climate Action Tech",
     # NewsData.io (legacy, desactivee)
     "newsdata": "NewsData.io",
     "newsdata.io": "NewsData.io",
@@ -105,8 +126,24 @@ def _resolve_source_name(raw_name: str | None, url: str | None = None) -> str:
             return "Dev.to"
         if "techcrunch" in raw_lower:
             return "TechCrunch Climate"
-        if "arxiv" in raw_lower:
+        # Important : ordre d'evaluation arxiv - l'API vit a "arxiv.org"
+        # alors que le dataset Kaggle historique porte le nom "arXiv Dataset".
+        # On renvoie "arXiv API" pour tout ce qui vient du live API et
+        # "arXiv Dataset" uniquement pour l'ancien dump file.
+        if "arxiv_dataset" in raw_lower or raw_name == "arXiv Dataset":
             return "arXiv Dataset"
+        if "arxiv" in raw_lower:
+            return "arXiv API"
+        if "crossref" in raw_lower:
+            return "Crossref"
+        if "greenit.fr" in raw_lower or raw_lower == "greenit":
+            return "GreenIT.fr"
+        if "greensoftware" in raw_lower or "green software" in raw_lower:
+            return "Green Software Foundation"
+        if "sustainablewebdesign" in raw_lower or "sustainable web" in raw_lower:
+            return "Sustainable Web Design"
+        if "climateaction" in raw_lower or "climate action" in raw_lower:
+            return "Climate Action Tech"
 
     # 4. Heuristique par URL (filet de securite contre les source_nom
     # incoherents, frequents avec l'ancien pipeline NewsData.io)
@@ -119,7 +156,20 @@ def _resolve_source_name(raw_name: str | None, url: str | None = None) -> str:
         if "techcrunch.com" in url_lower:
             return "TechCrunch Climate"
         if "arxiv.org" in url_lower:
-            return "arXiv Dataset"
+            # Meme distinction que plus haut : on ne sait pas si c'est
+            # un article live API ou un Kaggle dump, mais dans le doute
+            # on renvoie l'API (la plus courante en B2+).
+            return "arXiv API"
+        if "doi.org" in url_lower or "api.crossref.org" in url_lower:
+            return "Crossref"
+        if "greenit.fr" in url_lower:
+            return "GreenIT.fr"
+        if "greensoftware.foundation" in url_lower:
+            return "Green Software Foundation"
+        if "sustainablewebdesign.org" in url_lower:
+            return "Sustainable Web Design"
+        if "climateaction.tech" in url_lower:
+            return "Climate Action Tech"
 
     # 5. Fallback : NewsData.io (source legacy par defaut)
     return "NewsData.io"

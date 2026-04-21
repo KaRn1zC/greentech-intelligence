@@ -41,6 +41,7 @@ from loguru import logger
 
 from greentech.config import get_settings
 from greentech.data.collectors.base import BaseCollector, CollectResult, get_config_from_db
+from greentech.data.collectors.url_precheck import load_known_urls, url_is_known
 from greentech.data.storage.database import async_session_factory
 from greentech.data.storage.minio_client import (
     generate_raw_path,
@@ -100,10 +101,17 @@ class DevtoCollector(BaseCollector):
     def __init__(self) -> None:
         super().__init__(source_name="devto")
         self.settings = get_settings()
+        # URLs deja en BDD, chargees une seule fois au debut de collect().
+        # Evite de fetcher le detail d'articles deja connus (pattern Dev.to
+        # = 1 requete liste + N requetes detail, skip = economie grosse).
+        self._known_urls: set[str] = set()
+        self._skipped_existing: int = 0
 
     async def collect(
         self,
         keywords: list[str],
+        *,
+        skip_existing: bool = True,
         **kwargs: Any,
     ) -> CollectResult:
         """Collecte les articles Dev.to pour les tags donnes.
@@ -115,12 +123,18 @@ class DevtoCollector(BaseCollector):
 
         Args:
             keywords: Liste de tags Dev.to a interroger.
+            skip_existing: Si True, pre-charge les URLs deja en BDD et
+                saute les articles connus avant le fetch detail (grosse
+                economie sur re-run). True par defaut.
             **kwargs: Parametres additionnels (non utilises).
 
         Returns:
             Resultat de la collecte avec chemins MinIO et compteurs.
         """
         result = CollectResult(source_name=self.source_name)
+
+        if skip_existing:
+            self._known_urls = await load_known_urls(self.source_name)
 
         async with httpx.AsyncClient(
             timeout=HTTP_TIMEOUT,
@@ -161,7 +175,8 @@ class DevtoCollector(BaseCollector):
                     result.errors.append(error_msg)
 
         logger.info(
-            f"Collecte Dev.to terminee : {result.articles_count} articles, "
+            f"Collecte Dev.to terminee : {result.articles_count} articles nouveaux, "
+            f"{self._skipped_existing} deja en BDD (skip), "
             f"{len(result.errors)} erreurs"
         )
         return result
@@ -194,20 +209,34 @@ class DevtoCollector(BaseCollector):
         logger.debug(f"Dev.to tag={tag} : {len(listed)} articles listes, fetch des bodies")
 
         articles: list[dict[str, Any]] = []
-        for idx, summary in enumerate(listed):
-            if idx > 0:
-                await asyncio.sleep(MIN_DELAY_BETWEEN_REQUESTS)
-
+        skipped_in_tag = 0
+        for summary in listed:
             article_id = summary.get("id")
             if article_id is None:
                 continue
+
+            # Pre-check BDD avant le fetch detail. La liste Dev.to inclut
+            # deja l'URL canonique dans ``summary["url"]``, donc on peut
+            # skipper sans faire le detail HTTP si l'article est connu.
+            # Comparaison normalisee (scheme http/https, trailing slash).
+            summary_url = summary.get("url")
+            if url_is_known(summary_url, self._known_urls):
+                skipped_in_tag += 1
+                self._skipped_existing += 1
+                continue
+
+            # On applique le delay APRES le skip pour ne pas penaliser les
+            # re-runs qui sautent massivement : pas d'appel HTTP, pas de
+            # delay necessaire. Le delay courtois s'applique uniquement
+            # aux articles pour lesquels on fait un fetch detail reel.
+            if articles:
+                await asyncio.sleep(MIN_DELAY_BETWEEN_REQUESTS)
 
             try:
                 detail = await self._fetch_article_detail(client, int(article_id))
             except httpx.HTTPStatusError as exc:
                 logger.warning(
-                    f"Echec fetch detail Dev.to id={article_id} : "
-                    f"HTTP {exc.response.status_code}"
+                    f"Echec fetch detail Dev.to id={article_id} : HTTP {exc.response.status_code}"
                 )
                 continue
             except Exception as exc:
@@ -218,6 +247,11 @@ class DevtoCollector(BaseCollector):
             if normalized is not None:
                 articles.append(normalized)
 
+        if skipped_in_tag > 0:
+            logger.info(
+                f"Dev.to tag='{tag}' : {skipped_in_tag} articles sautes (deja en BDD), "
+                f"{len(articles)} nouveaux fetches"
+            )
         return articles
 
     async def _fetch_article_detail(

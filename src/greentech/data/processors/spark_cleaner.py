@@ -230,9 +230,20 @@ def clean_api_data(df: DataFrame) -> DataFrame:
 
 
 def clean_scraping_data(df: DataFrame) -> DataFrame:
-    """Nettoie les données provenant du scraping TechCrunch.
+    """Nettoie les données provenant du scraping (TechCrunch + 4 sites B2.3).
 
-    Supprime les balises HTML du contenu et normalise les champs.
+    Gere deux formats de payload :
+
+    - **TechCrunch** : champ ``contenu_html`` (HTML brut) +
+      ``contenu`` (trafilatura-extrait). On prefere ``contenu`` quand il
+      est rempli (plus propre), sinon on tombe sur ``contenu_html`` qui
+      sera strippe de ses balises par ``apply_cleaning_pipeline``.
+    - **Static scraping B2.3** (greenit.fr, GSF, SWD, CAT) : pas de
+      ``contenu_html``, uniquement ``contenu`` deja extrait proprement
+      par la base class ``StaticArticleSpider``.
+
+    La langue est lue dans l'article (``article.langue``) avec fallback
+    sur ``en`` pour les anciens payloads TechCrunch qui n'ont pas ce champ.
 
     Args:
         df: DataFrame brut depuis MinIO (structure scraping).
@@ -244,14 +255,27 @@ def clean_scraping_data(df: DataFrame) -> DataFrame:
 
     articles_df = df.select(F.explode("articles").alias("article"))
 
+    # Gestion conditionnelle des champs absents selon le format source.
+    # ``schema`` refete l'union des champs de tous les payloads scraping.
+    schema_fields = {f.name for f in articles_df.schema["article"].dataType.fields}
+    has_contenu_html = "contenu_html" in schema_fields
+    has_langue = "langue" in schema_fields
+
+    contenu_expr = (
+        F.coalesce(F.col("article.contenu"), F.col("article.contenu_html"))
+        if has_contenu_html
+        else F.col("article.contenu")
+    )
+    langue_expr = F.coalesce(F.col("article.langue"), F.lit("en")) if has_langue else F.lit("en")
+
     clean_df = articles_df.select(
         F.col("article.titre").alias("titre"),
         F.col("article.url").alias("url"),
-        F.col("article.contenu_html").alias("contenu"),
+        contenu_expr.alias("contenu"),
         F.col("article.auteur").alias("auteur"),
         F.col("article.date_publication").alias("date_publication"),
         F.col("article.source_nom").alias("source_nom"),
-        F.lit("en").alias("langue"),
+        langue_expr.alias("langue"),
     )
 
     return clean_df
@@ -391,7 +415,54 @@ def apply_cleaning_pipeline(df: DataFrame) -> DataFrame:
     if removed > 0:
         logger.warning(f"Entrées corrompues supprimées : {removed}")
 
-    # 5. Suppression des doublons par URL
+    # 5. Rejet des contenus trop courts pour etre resumes (< 150 chars).
+    # Le summarizer a un seuil a 50 chars, mais les articles dont le
+    # contenu fait 50-150 chars sont quasi-toujours des cas degrades
+    # (preprints arXiv retires au "This paper has been withdrawn...",
+    # pages 404 stylees, placeholders). On filtre a 150 pour garder de
+    # la marge tout en preservant les abstracts courts legitimes.
+    before = df.count()
+    df = df.filter(F.length(F.col("contenu")) >= 150)
+    removed_short = before - df.count()
+    if removed_short > 0:
+        logger.warning(f"Articles rejetes (contenu < 150 chars) : {removed_short}")
+
+    # 6. Rejet des contenus degrades (withdrawn/retracted/placeholders).
+    # Ces articles ont parfois un abstract > 150 chars mais le texte se
+    # resume a "This paper has been withdrawn by the author" + quelques
+    # details sur la raison. Ils passeraient notre seuil de longueur mais
+    # produiraient un resume de classification de qualite nulle.
+    # Detection case-insensitive via regex sur le debut du contenu.
+    degenerate_regex = (
+        r"(?i)^.{0,300}this (paper|preprint|draft|version) (has been|is) "
+        r"(withdrawn|retracted|removed)"
+    )
+    before = df.count()
+    df = df.filter(~F.col("contenu").rlike(degenerate_regex))
+    removed_degen = before - df.count()
+    if removed_degen > 0:
+        logger.warning(f"Articles rejetes (withdrawn/retracted/removed detecte) : {removed_degen}")
+
+    # 7. Rejet des contenus a faible entropie (ex: "AAAAAA..." repete).
+    # Issus typiquement de tests API /analyze avec des payloads bidons.
+    # On compte les caracteres distincts via une fonction Spark : si le
+    # contenu a moins de 10 caracteres distincts, on considere le texte
+    # comme non-naturel et on le rejette. Un vrai paragraphe FR ou EN a
+    # toujours >= 15 chars uniques (alphabet + espaces + ponctuation).
+    before = df.count()
+    # Spark n'a pas d'egal direct a len(set(string)), on utilise une UDF
+    # Pythonique sur colonne. Les UDF sont plus lentes que Spark SQL mais
+    # acceptables pour ce filtre ponctuel (10-100k lignes, < 5s).
+    from pyspark.sql.functions import udf
+    from pyspark.sql.types import IntegerType
+
+    unique_chars_udf = udf(lambda s: len(set(s.lower())) if s else 0, IntegerType())
+    df = df.filter(unique_chars_udf(F.col("contenu")) >= 10)
+    removed_entropy = before - df.count()
+    if removed_entropy > 0:
+        logger.warning(f"Articles rejetes (entropie du contenu trop faible) : {removed_entropy}")
+
+    # 8. Suppression des doublons par URL
     before = df.count()
     df = df.dropDuplicates(["url"])
     after = df.count()
@@ -435,11 +506,14 @@ def run_spark_cleaning() -> int:
         except Exception as e:
             logger.warning(f"Aucune donnée API trouvée ou erreur : {e}")
 
-        # Source Scraping
+        # Source Scraping : on lit tout le prefixe "scraping/" pour
+        # embarquer TechCrunch + les 4 sites B2.3 (greenit_fr, greensoftware,
+        # sustainable_web, climate_action_tech) en une passe. Les payloads
+        # different un peu (presence de contenu_html TechCrunch uniquement,
+        # langue FR/EN selon le site) mais ``clean_scraping_data`` gere les
+        # deux formats via coalesce.
         try:
-            scraping_df = read_raw_json_from_minio(
-                spark, settings.minio_bucket_raw, "scraping/techcrunch"
-            )
+            scraping_df = read_raw_json_from_minio(spark, settings.minio_bucket_raw, "scraping")
             scraping_clean = clean_scraping_data(scraping_df)
             dataframes.append(scraping_clean)
             logger.info(f"Scraping : {scraping_clean.count()} articles chargés")

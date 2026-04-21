@@ -13,13 +13,17 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- Table de configuration des recherches (Source SQL dynamique).
 -- type_source accepte les categories generiques (api, scraping, file) ainsi
 -- que les sous-types dedies a chaque API REST/JSON (guardian, devto,
--- newsdata legacy). Cela permet aux collecteurs de filtrer precisement
--- leurs mots-cles sans se marcher dessus.
+-- newsdata legacy, arxiv_api, crossref). Cela permet aux collecteurs de
+-- filtrer precisement leurs mots-cles sans se marcher dessus.
 CREATE TABLE IF NOT EXISTS search_config (
     id_config SERIAL PRIMARY KEY,
     mot_cle VARCHAR(100) NOT NULL,
     url_source TEXT,
-    type_source VARCHAR(20) CHECK (type_source IN ('api', 'scraping', 'file', 'guardian', 'devto', 'newsdata')),
+    type_source VARCHAR(20) CHECK (type_source IN (
+        'api', 'scraping', 'file',
+        'guardian', 'devto', 'newsdata',
+        'arxiv_api', 'crossref'
+    )),
     priorite INTEGER DEFAULT 1,
     actif BOOLEAN DEFAULT true,
     date_creation TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -61,7 +65,29 @@ INSERT INTO search_config (mot_cle, type_source, priorite) VALUES
     -- === TechCrunch (scraping hybride RSS + HTML) ===
     ('Carbon Footprint Software', 'scraping', 2),
     ('Energy Efficient Computing', 'scraping', 2),
-    ('Data Center Sustainability', 'scraping', 3)
+    ('Data Center Sustainability', 'scraping', 3),
+    -- === arXiv API (complementaire au dataset Kaggle historique) ===
+    -- Queries ciblees (< 200 resultats attendus) pour preserver la pertinence
+    -- Green IT. Volume attendu total : 300-1500 articles bruts.
+    ('green computing', 'arxiv_api', 1),
+    ('sustainable AI', 'arxiv_api', 1),
+    ('green AI', 'arxiv_api', 1),
+    ('carbon-aware computing', 'arxiv_api', 2),
+    ('energy-efficient ML', 'arxiv_api', 2),
+    ('green software engineering', 'arxiv_api', 2),
+    ('low-power neural network', 'arxiv_api', 3),
+    ('data center sustainability', 'arxiv_api', 2),
+    ('sustainable computing', 'arxiv_api', 1),
+    -- === Crossref (peer-reviewed, Polite Pool via CROSSREF_MAILTO) ===
+    -- Recherche par query.title, top 200 par mot-cle tries par relevance.
+    ('green computing', 'crossref', 1),
+    ('sustainable AI', 'crossref', 1),
+    ('carbon-aware computing', 'crossref', 2),
+    ('green software', 'crossref', 2),
+    ('energy-efficient inference', 'crossref', 2),
+    ('green AI', 'crossref', 1),
+    ('sustainable computing', 'crossref', 1),
+    ('data center efficiency', 'crossref', 2)
 ON CONFLICT DO NOTHING;
 
 -- =============================================================================
@@ -253,7 +279,28 @@ INSERT INTO sources (nom, type, url_base, description, est_active) VALUES
     -- contenu en free tier (message "ONLY AVAILABLE IN PAID PLANS").
     ('NewsData.io', 'api', 'https://newsdata.io/api/1/latest',
      'LEGACY - Source API REST/JSON desactivee en avril 2026 (free tier tronque le contenu au placeholder "ONLY AVAILABLE IN PAID PLANS", dataset inexploitable). Remplacee par The Guardian.',
-     false)
+     false),
+    -- === arXiv API (nouvel ajout B2.2) ===
+    ('arXiv API', 'api', 'https://export.arxiv.org/api/query',
+     'API Atom XML arXiv pour recuperer les abstracts de publications scientifiques en lien avec le Green IT. Complementaire du dataset Kaggle historique (source arXiv Dataset). Categories ciblees : cs.*, eess.*, stat.ML.',
+     true),
+    -- === Crossref (nouvel ajout B2.2) ===
+    ('Crossref', 'api', 'https://api.crossref.org/works',
+     'API JSON Crossref pour publications editoriales peer-reviewed. Filtre sur has-abstract:true + journal-article + from-pub-date:2020. Polite Pool active via CROSSREF_MAILTO.',
+     true),
+    -- === Spiders Scrapy statiques (nouvel ajout B2.3) ===
+    ('GreenIT.fr', 'scraping', 'https://www.greenit.fr',
+     'Blog francophone reference sur le Green IT (1 001 posts). Ecrit par Frederic Bordage et la communaute, couvre eco-conception web, impact environnemental du numerique, etudes Green IT. Scraping via sitemap WordPress, HTML statique, langue FR.',
+     true),
+    ('Green Software Foundation', 'scraping', 'https://greensoftware.foundation',
+     'Fondation tech dediee au green software engineering (170 articles). Contenu anglophone sur SCI standard, carbon-aware computing, mesure d''emissions logicielles. Scraping via pagination HTML statique.',
+     true),
+    ('Sustainable Web Design', 'scraping', 'https://sustainablewebdesign.org',
+     'Reference WSDG (Web Sustainability Design Guidelines). 131 items : 50 posts + 81 guidelines rediges en prose. Scraping via 2 sitemaps WordPress (post-sitemap + guidelines-sitemap).',
+     true),
+    ('Climate Action Tech', 'scraping', 'https://climateaction.tech',
+     'Communaute de professionnels tech engages sur le climat (71 posts). CAT Salons, retours d''experience, pratiques industrie. Scraping via sitemap WordPress, theme Neve.',
+     true)
 ON CONFLICT (nom) DO NOTHING;
 
 -- =============================================================================

@@ -63,6 +63,11 @@ CSV_HEADERS = [
     "resume_classification",
     "source_nom",
     "date_publication",
+    # Langue detectee par le pipeline de cleaning (colonne articles.langue).
+    # Ajoutee en avril 2026 pour supporter la stratification croisee
+    # (langue x label) lors du K-fold et la back-translation ciblee
+    # EN<->FR via opus-mt sur les positifs.
+    "langue",
     "label_green_it",
     "score_confiance",
     "modele_classification",
@@ -133,6 +138,7 @@ async def export_from_db() -> dict[str, int]:
                         if article.date_publication
                         else ""
                     ),
+                    "langue": article.langue or "",
                     "label_green_it": label,
                     "score_confiance": (
                         f"{article.score_confiance:.3f}"

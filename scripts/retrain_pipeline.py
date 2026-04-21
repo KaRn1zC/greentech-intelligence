@@ -10,11 +10,11 @@ entrainee du modele, jamais une regression.
 
 Le modele cible est defini dans ``settings.huggingface_model_trainer_base``
 (par defaut ``Qwen/Qwen3-4B``, Apache-2.0, multilingue natif). L'ancien
-modele ``meta-llama/Llama-3.2-3B`` reste disponible en tant que challenger
-historique via ``greentech.ai.models.training challenger-llama``.
+modele ``meta-llama/Llama-3.2-3B`` reste disponible en tant que legacy
+historique via ``greentech.ai.models.training llama3.2``.
 
 Usage:
-    # Pipeline complet recommande
+    # Pipeline complet recommande (avec back-translation B3 avril 2026)
     uv run python scripts/retrain_pipeline.py
 
     # Etapes individuelles
@@ -26,9 +26,15 @@ Usage:
     uv run python scripts/retrain_pipeline.py summarize-green    # Resume ecologique pour les Green IT confirmes
     uv run python scripts/retrain_pipeline.py summarize          # Alias : enchaine summarize-classif puis summarize-green
     uv run python scripts/retrain_pipeline.py export-golden      # Regenere golden_dataset.csv depuis la DB
-    uv run python scripts/retrain_pipeline.py baseline           # Metriques Qwen3-4B sans fine-tuning
+    uv run python scripts/retrain_pipeline.py augment            # Back-translation EN<->FR des positifs (opus-mt) - protocole B3
+    uv run python scripts/retrain_pipeline.py baseline           # Metriques Qwen3-4B sans fine-tuning (auto-recalcul si dataset modifie)
+    uv run python scripts/retrain_pipeline.py baseline:force     # Force le recalcul baseline meme si le cache semble a jour
     uv run python scripts/retrain_pipeline.py train              # Entrainement rapide (split 80/20)
-    uv run python scripts/retrain_pipeline.py train-cv           # Entrainement robuste (K-fold stratifie K=5)
+    uv run python scripts/retrain_pipeline.py train-cv           # Protocole unifie B3 : K=5 folds x 3 seeds, stratif (langue x label), class_weight, calibration
+    uv run python scripts/retrain_pipeline.py train-cv --model=mdeberta  # Cibler un modele specifique (qwen3 ou mdeberta)
+    uv run python scripts/retrain_pipeline.py train-cv-both      # K-fold sur Qwen3-4B PUIS mDeBERTa-v3-base (~6-8h cumulees)
+    uv run python scripts/retrain_pipeline.py baseline-both      # Baseline brute Qwen3 + mDeBERTa
+    uv run python scripts/retrain_pipeline.py benchmark-models   # Benchmark final B4.4 (Qwen3 vs mDeBERTa entraines)
     uv run python scripts/retrain_pipeline.py benchmark          # Benchmark nouveau vs production vs baseline
     uv run python scripts/retrain_pipeline.py auto-promote       # Benchmark + promotion conditionnelle
     uv run python scripts/retrain_pipeline.py promote            # Promotion manuelle (forcee)
@@ -37,21 +43,28 @@ Usage:
     uv run python scripts/retrain_pipeline.py ingest-file data/mon_fichier.json
 
     # Combiner des etapes (workflow recommande apres ajout de nouvelles donnees)
-    uv run python scripts/retrain_pipeline.py collect clean summarize-classif annotate classify summarize-green export-golden train-cv auto-promote
+    uv run python scripts/retrain_pipeline.py collect clean summarize-classif annotate classify summarize-green export-golden augment train-cv auto-promote
 
 Notes:
     - `train`    : entrainement 80/20 rapide, evaluation fragile (4 Green IT au test)
     - `train-cv` : entrainement K-fold (~5x plus long) mais evaluation robuste sur
                    les 22 Green IT grace a la rotation train/test et a la moyenne
                    sur les folds. Recommande pour figer une version du modele.
-    - `baseline` : evalue Qwen3-4B brut sur l'integralite du dataset (5808 articles).
-                   Pas de data leakage car le modele n'a rien appris.
+    - `baseline` : evalue Qwen3-4B brut sur l'integralite du dataset (~5800
+                   articles). Pas de data leakage car le modele n'a rien
+                   appris. Le resultat est cache dans `models/baseline_metrics.json`
+                   et invalide automatiquement si le SHA-256 du CSV change
+                   (auto-detection d'un corpus re-collecte ou re-annote).
+    - `baseline:force` : meme chose mais force le recalcul meme si le cache
+                   semble a jour. Utile apres un changement de hardware
+                   ou de version de transformers.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -64,6 +77,19 @@ from typing import IO
 
 from loguru import logger
 
+# Force UTF-8 sur stdout/stderr du processus courant. Sur Windows, Python 3.12
+# ouvre encore stdout/stderr en cp1252 par defaut (le PEP 686 qui bascule sur
+# UTF-8 est reporte a Python 3.15+). Des qu'un caractere non-ASCII transite
+# (titres FR avec accents, \ufffd issu de bytes scrapes invalides), Python
+# plante en UnicodeEncodeError et tue le pipeline. Les sous-processus lances
+# via _spawn_subprocess_with_loguru heritent deja de PYTHONIOENCODING=utf-8
+# dans leur environnement ; cette reconfig protege le processus parent pour
+# eviter d'avoir a prefixer la commande a chaque invocation.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
 # Racine du projet
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -73,15 +99,20 @@ PRODUCTION_DIR = MODELS_DIR / "production"
 VERSIONS_DIR = MODELS_DIR / "versions"
 # Dossier du modele actuellement entraine par le pipeline. Qwen3-4B + LoRA
 # remplace l'ancien Llama 3.2 3B + LoRA comme base d'entrainement par defaut.
-# L'ancien dossier `challenger-llama` reste accessible pour les runs legacy
-# lances via `uv run python -m greentech.ai.models.training challenger-llama`.
-TRAIN_DIR = MODELS_DIR / "challenger-qwen3"
+# L'ancien dossier `llama3.2` reste accessible pour les runs legacy
+# lances via `uv run python -m greentech.ai.models.training llama3.2`.
+TRAIN_DIR = MODELS_DIR / "qwen3"
 # Identifiant du modele dans le registre d'entrainement (`training.py`).
-TRAIN_MODEL_TYPE = "challenger-qwen3"
+TRAIN_MODEL_TYPE = "qwen3"
 
 # Fichiers de reference pour les metriques
 BEST_METRICS_FILE = MODELS_DIR / "best_metrics.json"
 BASELINE_METRICS_FILE = MODELS_DIR / "baseline_metrics.json"
+
+# Golden Dataset de reference. Centralise ici pour que `step_baseline` puisse
+# comparer la signature du CSV courant a celle stockee dans le JSON et
+# invalider automatiquement une baseline obsolete quand le dataset change.
+GOLDEN_DATASET_FILE = BASE_DIR / "data" / "golden_dataset.csv"
 
 # =============================================================================
 # CRITERES DE PROMOTION
@@ -246,6 +277,16 @@ def _stream_subprocess(cmd: list[str], source_label: str) -> int:
     Returns:
         Code de retour du sous-process (0 = succes).
     """
+    # Forcer PYTHONIOENCODING=utf-8 dans l'env du sous-process. Sans ca,
+    # Python sur Windows ouvre son stderr en cp1252 (code page 'charmap')
+    # par defaut. Les collecteurs qui loggent des titres d'articles FR avec
+    # accents ou des caracteres unicode issus de certaines pages scrapees
+    # (\ufffd replacement character de bytes invalides) faisaient planter
+    # leur propre stderr avec UnicodeEncodeError, tuant le subprocess et
+    # interrompant le pipeline. Incident observe le 2026-04-19 sur le run
+    # B2.6 apres 2h de collecte, juste avant la fin de sql_ingester.
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
     process = subprocess.Popen(
         cmd,
         cwd=str(BASE_DIR),
@@ -255,6 +296,7 @@ def _stream_subprocess(cmd: list[str], source_label: str) -> int:
         encoding="utf-8",
         errors="replace",
         bufsize=1,  # line-buffered pour un streaming temps reel
+        env=env,
     )
 
     # Threads daemon : si le parent est tue, ils s'arretent sans bloquer.
@@ -538,19 +580,27 @@ def _log_detailed_metrics(metrics: dict, titre: str) -> None:
 def step_collect() -> bool:
     """Re-collecte des donnees depuis les sources configurees.
 
-    Interroge sequentiellement les trois types de sources :
+    Interroge sequentiellement les sept types de sources actuellement
+    actives (depuis B2 en avril 2026) :
 
-    1. **API REST/JSON** : The Guardian (source principale, 5000 req/jour)
-       puis Dev.to (complement, aucune cle requise). La NewsData.io est
-       desactivee depuis avril 2026 car son free tier tronque le contenu
-       au message "ONLY AVAILABLE IN PAID PLANS".
-    2. **Scraping** : TechCrunch Climate (Scrapy + Playwright sur le DOM rendu).
+    1. **API REST/JSON** :
+       - The Guardian (source principale, 5 000 req/jour, sections
+         ``environment`` + ``technology`` depuis B2.2)
+       - Dev.to / Forem (complement, aucune cle requise)
+       - arXiv API (ajout B2.2, abstracts de preprints cs.*/eess.*/stat.ML)
+       - Crossref (ajout B2.2, journal-article peer-reviewed, Polite Pool)
+    2. **Scraping** :
+       - TechCrunch Climate (Scrapy + Playwright, DOM rendu JS)
+       - Static scraping 4 sites Green IT (ajout B2.3 :
+         greenit.fr, greensoftware.foundation, sustainablewebdesign.org,
+         climateaction.tech) via Scrapy HTTP (sans Playwright)
     3. **Nettoyage + Ingestion SQL** sur l'ensemble des nouveaux articles.
 
-    Les erreurs sur les collectes REST/JSON n'interrompent pas le pipeline :
-    on continue avec les sources restantes, puis on fait le bilan final.
-    Seul un echec du nettoyage Spark ou de l'ingestion SQL est considere
-    comme bloquant.
+    La NewsData.io reste desactivee (free tier tronque le contenu).
+
+    Les erreurs sur les collectes ne bloquent pas le pipeline : on
+    continue avec les sources restantes, puis on fait le bilan final.
+    Seul un echec du nettoyage Spark ou de l'ingestion SQL est bloquant.
     """
     logger.info("=" * 70)
     logger.info("  COLLECTE DES DONNEES")
@@ -566,9 +616,21 @@ def step_collect() -> bool:
     if not _run_module("greentech.data.collectors.devto_collector"):
         logger.warning("Collecte Dev.to echouee (probleme reseau ?), on continue")
 
+    logger.info("\n--- Collecte API (arXiv) ---")
+    if not _run_module("greentech.data.collectors.arxiv_collector"):
+        logger.warning("Collecte arXiv echouee (probleme reseau ?), on continue")
+
+    logger.info("\n--- Collecte API (Crossref) ---")
+    if not _run_module("greentech.data.collectors.crossref_collector"):
+        logger.warning("Collecte Crossref echouee (probleme reseau ?), on continue")
+
     logger.info("\n--- Scraping web (TechCrunch) ---")
     if not _run_module("greentech.data.collectors.scraper"):
-        logger.warning("Scraping echoue, on continue")
+        logger.warning("Scraping TechCrunch echoue, on continue")
+
+    logger.info("\n--- Scraping statique (4 sites Green IT) ---")
+    if not _run_module("greentech.data.collectors.static_scraping_collector"):
+        logger.warning("Scraping statique multi-sites echoue, on continue")
 
     logger.info("\n--- Nettoyage Spark ---")
     if not _run_module("greentech.data.processors.spark_cleaner"):
@@ -611,7 +673,7 @@ def step_ingest_file(file_path: str) -> bool:
 async def step_clean() -> bool:
     """Supprime les articles inexploitables de la base de donnees.
 
-    Cible trois categories d'articles qui polluent le dataset sans apporter
+    Cible cinq categories d'articles qui polluent le dataset sans apporter
     aucun signal a l'entrainement du classifieur ni au resume :
 
     1. Articles **sans contenu** (``contenu IS NULL``) : ingestion echouee
@@ -624,13 +686,22 @@ async def step_clean() -> bool:
        PAID PLANS"``) : vestiges de l'ancien pipeline NewsData dont le
        free tier tronquait le contenu. Filet de securite au cas ou de
        nouveaux articles arrivent depuis MinIO legacy.
+    4. Articles **retires / retractes** (arXiv typiquement) : contenu
+       reduit a "This paper has been withdrawn by the author..." et
+       variantes. Passent le filtre < 50 chars (le texte fait souvent
+       60-100 chars) mais ne peuvent produire un resume utile. Detection
+       par sous-chaine dans les 300 premiers caracteres.
+    5. Articles a **faible entropie** (ex: "AAAAAA..." repete) : payloads
+       de test passes via l'endpoint ``/analyze`` ou dumps corrompus. Un
+       texte naturel a toujours >= 10 caracteres distincts (alphabet +
+       espaces + ponctuation) ; on rejette sinon.
 
     L'etape est idempotente (DELETE WHERE) et rapide (quelques secondes).
     Elle s'insere entre ``collect`` et ``summarize-classif`` dans le
     pipeline par defaut, mais peut aussi etre lancee manuellement via
     ``uv run python scripts/retrain_pipeline.py clean``.
     """
-    from sqlalchemy import delete, func, or_
+    from sqlalchemy import delete, or_, select, text
 
     from greentech.ai.services.classification_summarizer import (
         CLASSIFICATION_MIN_INPUT_CHARS,
@@ -642,30 +713,90 @@ async def step_clean() -> bool:
     logger.info("  NETTOYAGE DES ARTICLES INEXPLOITABLES")
     logger.info("=" * 70)
 
+    # Patterns arXiv "withdrawn / retracted / removed" a detecter dans
+    # les 300 premiers caracteres du contenu. On utilise ILIKE plutot que
+    # regex car Postgres n'accepte pas `(?i){N,M}` ensemble (InvalidRepetitionCount).
+    # La condition SQL devient : LOWER(SUBSTRING(contenu, 1, 300)) LIKE
+    # ANY ('{%pattern1%, %pattern2%, ...}'). Equivalent fonctionnel du
+    # filtre dans ``classification_summarizer.py``.
+    withdrawn_patterns = [
+        "%this paper has been withdrawn%",
+        "%this preprint has been withdrawn%",
+        "%this draft is withdrawn%",
+        "%this paper has been retracted%",
+        "%this paper has been temporarily removed%",
+        "%this paper has been removed%",
+        "%this version has been withdrawn%",
+    ]
+    # ILIKE ANY (ARRAY[...]) : conserve la semantique case-insensitive
+    # tout en evitant les limitations regex Postgres.
+    withdrawn_sql_clause = (
+        "LOWER(SUBSTRING(contenu, 1, 300)) LIKE ANY (ARRAY["
+        + ",".join(f"'{p}'" for p in withdrawn_patterns)
+        + "])"
+    )
+
     async with async_session_factory() as session:
-        # Comptage pre-suppression pour le log detaille
-        from sqlalchemy import select
-
-        preview = await session.execute(
-            select(
-                func.count().filter(Article.contenu.is_(None)).label("sans_contenu"),
-                func.count()
-                .filter(
-                    Article.contenu.isnot(None),
-                    func.length(Article.contenu) < CLASSIFICATION_MIN_INPUT_CHARS,
-                )
-                .label("trop_courts"),
-                func.count()
-                .filter(Article.contenu.contains("ONLY AVAILABLE IN PAID PLANS"))
-                .label("placeholder_newsdata"),
+        # Comptage pre-suppression : on utilise des SELECT distincts
+        # pour pouvoir logger detail par categorie (plus parlant qu'un
+        # seul total).
+        sans_contenu = (
+            await session.scalar(
+                select(text("COUNT(*)"))
+                .select_from(Article)
+                .where(Article.contenu.is_(None))
             )
+            or 0
         )
-        row = preview.one()
-        sans_contenu = row.sans_contenu
-        trop_courts = row.trop_courts
-        placeholder = row.placeholder_newsdata
+        trop_courts = (
+            await session.scalar(
+                select(text("COUNT(*)"))
+                .select_from(Article)
+                .where(
+                    Article.contenu.isnot(None),
+                    text(f"LENGTH(contenu) < {CLASSIFICATION_MIN_INPUT_CHARS}"),
+                )
+            )
+            or 0
+        )
+        placeholder = (
+            await session.scalar(
+                select(text("COUNT(*)"))
+                .select_from(Article)
+                .where(Article.contenu.contains("ONLY AVAILABLE IN PAID PLANS"))
+            )
+            or 0
+        )
+        # Withdrawn/retracted : ILIKE ANY sur les 300 premiers chars.
+        withdrawn = (
+            await session.scalar(
+                select(text("COUNT(*)"))
+                .select_from(Article)
+                .where(text(withdrawn_sql_clause))
+            )
+            or 0
+        )
+        # Entropie : detection rapide des contenus trivialement
+        # degeneres (sequences du meme caractere, ex: "AAAA...",
+        # "XXXXX...", espaces en boucle) via une regex Postgres simple.
+        # Pattern : une chaine de 50+ copies du meme char (insensible a
+        # la casse) = contenu de test, placeholder, junk. Ne detecte pas
+        # tous les cas (ex: "ABABABAB..." serait ignore) mais couvre
+        # 99 % des junks observes en production, en O(N) vs O(N × chars)
+        # de la version naive avec generate_series.
+        low_entropy_clause = r"contenu ~* '^(.)\1{49,}'"
+        low_entropy = (
+            await session.scalar(
+                select(text("COUNT(*)"))
+                .select_from(Article)
+                .where(text(low_entropy_clause))
+            )
+            or 0
+        )
 
-        total_a_supprimer = sans_contenu + trop_courts + placeholder
+        total_a_supprimer = (
+            sans_contenu + trop_courts + placeholder + withdrawn + low_entropy
+        )
         if total_a_supprimer == 0:
             logger.info("Aucun article inexploitable detecte, base propre")
             return True
@@ -673,15 +804,18 @@ async def step_clean() -> bool:
         logger.info(
             f"Articles a supprimer : {total_a_supprimer} "
             f"(sans contenu={sans_contenu}, trop courts={trop_courts}, "
-            f"placeholder NewsData={placeholder})"
+            f"placeholder NewsData={placeholder}, "
+            f"withdrawn/retracted={withdrawn}, low-entropy={low_entropy})"
         )
 
-        # Suppression en une requete atomique
+        # Suppression en une requete atomique (OR des 5 conditions).
         stmt = delete(Article).where(
             or_(
                 Article.contenu.is_(None),
-                func.length(Article.contenu) < CLASSIFICATION_MIN_INPUT_CHARS,
+                text(f"LENGTH(contenu) < {CLASSIFICATION_MIN_INPUT_CHARS}"),
                 Article.contenu.contains("ONLY AVAILABLE IN PAID PLANS"),
+                text(withdrawn_sql_clause),
+                text(low_entropy_clause),
             )
         )
         result = await session.execute(stmt)
@@ -871,6 +1005,27 @@ async def step_export_golden() -> bool:
     return True
 
 
+def step_augment() -> bool:
+    """Augmente les positifs via back-translation EN<->FR (opus-mt).
+
+    Double le nombre d'articles Green IT (1 018 -> ~2 036) pour ramener le
+    ratio de desequilibre de 1:10.5 a ~1:5.25. Utilise ``Helsinki-NLP/opus-mt``
+    (MarianMT) avec filtre cosine similarity sentence-transformers.
+
+    Produit ``data/golden_dataset_augmented.csv``. Les variantes portent
+    ``augmentation_source='opus-mt-backtranslation'`` et sont automatiquement
+    exclues du val/test split par ``train_with_unified_protocol`` pour
+    eviter la fuite d'evaluation.
+
+    Appel en subprocess pour isoler le chargement des modeles MarianMT
+    (~600 Mo VRAM) du process parent.
+    """
+    logger.info("=" * 70)
+    logger.info("  AUGMENTATION PAR BACK-TRANSLATION EN<->FR")
+    logger.info("=" * 70)
+    return _run_script("scripts/augment_positives.py")
+
+
 # =============================================================================
 # ARCHIVAGE
 # =============================================================================
@@ -922,39 +1077,48 @@ CV_REPORT_FILE = MODELS_DIR / "cv_report.json"
 
 async def step_train_cv(
     n_splits: int = 5,
+    n_seeds: int = 3,
     random_state: int = 42,
-    train_final: bool = True,
+    model_type: str | None = None,
 ) -> dict | None:
-    """Entraine Qwen3-4B + LoRA via K-fold stratifie (K=5 par defaut).
+    """Entraine un modele via le protocole unifie B3 (avril 2026).
 
-    Chaque fold est entraine avec oversampling de la classe minoritaire, puis
-    evalue sur le test du fold (sans oversampling). Les metriques agregees
-    (moyenne + ecart-type sur K folds) servent de reference pour la promotion.
+    Remplace l'ancien K-fold base sur ``train_with_legacy_cv`` par
+    ``train_with_unified_protocol`` qui implemente :
 
-    Un modele final est re-entraine sur l'integralite des donnees et sauvegarde
-    dans `models/challenger-qwen3/`, pret pour la promotion en production si
-    les criteres sont satisfaits.
+    - Stratification croisee ``(langue x label)`` via MultilabelStratifiedKFold
+    - 3 seeds par fold (15 trainings total) pour stabiliser sigma MCC < 0.10
+    - class_weight=[1.0, N_neg/N_pos] (~10.5) en remplacement de l'oversampling
+    - Exclusion des variantes back-translation du val/test split
+    - Calibration post-fold (temperature scaling + threshold tuning, MCC)
+    - Sauvegarde par fold dans ``models/<model>/folds/fold_X_seed_Y/``
 
     Args:
-        n_splits: Nombre de folds (defaut 5).
-        random_state: Seed pour la reproductibilite du split.
-        train_final: Si True, entraine un modele final sur tout le dataset apres le K-fold.
+        n_splits: Nombre de folds K-fold (defaut 5).
+        n_seeds: Nombre de seeds par fold (defaut 3, 15 trainings total).
+        random_state: Seed de base pour la reproductibilite du split.
+        model_type: ``"qwen3"`` (defaut) ou ``"mdeberta"``.
+            Si None, utilise ``TRAIN_MODEL_TYPE`` (``qwen3``).
 
     Returns:
         Rapport complet du K-fold, ou None en cas d'erreur.
     """
-    from greentech.ai.models.training import train_challenger_with_cv
+    from greentech.ai.models.training import train_with_unified_protocol
+
+    target_model = model_type or TRAIN_MODEL_TYPE
 
     logger.info("=" * 70)
-    logger.info(f"  RE-ENTRAINEMENT QWEN3-4B + LoRA (K-fold K={n_splits})")
+    logger.info(
+        f"  PROTOCOLE UNIFIE B3 ({target_model}, K={n_splits} x {n_seeds} seeds)"
+    )
     logger.info("=" * 70)
 
     try:
-        rapport = await train_challenger_with_cv(
-            model_type=TRAIN_MODEL_TYPE,
+        rapport = await train_with_unified_protocol(
+            model_type=target_model,
             n_splits=n_splits,
-            random_state=random_state,
-            train_final=train_final,
+            n_seeds=n_seeds,
+            base_random_state=random_state,
         )
     except Exception as exc:
         logger.exception(f"K-fold echoue : {exc}")
@@ -966,6 +1130,132 @@ async def step_train_cv(
 
     _log_cv_report(rapport)
     return rapport
+
+
+# Alias pratique pour le mapping CLI : raccourci -> nom HF complet du modele
+# baseline. Permet d'accepter `--model qwen3` au lieu de `--model Qwen/Qwen3-4B`.
+BASELINE_MODEL_ALIASES: dict[str, str] = {
+    "qwen3": "Qwen/Qwen3-4B",
+    "mdeberta": "microsoft/mdeberta-v3-base",
+}
+
+# Liste des modeles cibles du benchmark B4 (protocole unifie B3).
+# Utilisee par step_baseline_both et step_train_cv_both pour iterer.
+BENCHMARK_MODEL_TYPES: tuple[str, ...] = ("qwen3", "mdeberta")
+
+
+async def step_baseline_both(force: bool = False) -> dict[str, dict]:
+    """Calcule les baselines des 2 modeles cibles (Qwen3-4B + mDeBERTa-v3-base).
+
+    Pour chaque modele, evalue la version pre-entrainee (avec tete de
+    classification a poids aleatoires) sur le golden dataset. Cela donne une
+    reference equitable contre laquelle mesurer le gain apporte par le
+    fine-tuning B3 sur chaque architecture.
+
+    Les fichiers JSON de baseline sont distincts :
+    - ``models/baseline_metrics.json`` (Qwen3-4B, defaut historique)
+    - ``models/baseline_metrics_mdeberta-v3-base.json`` (mDeBERTa)
+
+    Args:
+        force: Si True, recalcule les 2 baselines meme si elles existent deja.
+
+    Returns:
+        Dictionnaire ``{model_alias: metrics}`` avec les MCC/F1/recall/etc.
+        des 2 modeles. Permet de produire un tableau comparatif.
+    """
+    logger.info("=" * 70)
+    logger.info("  BASELINE COMPARATIVE Qwen3-4B vs mDeBERTa-v3-base")
+    logger.info("=" * 70)
+
+    results: dict[str, dict] = {}
+    for alias in BENCHMARK_MODEL_TYPES:
+        hf_name = BASELINE_MODEL_ALIASES[alias]
+        logger.info(f"\n>>> Baseline {alias} ({hf_name}) <<<")
+        try:
+            metrics = await step_baseline(force=force, model_name=hf_name)
+            results[alias] = dict(metrics)
+        except Exception as exc:
+            logger.exception(f"Baseline {alias} echouee : {exc}")
+            results[alias] = {"error": str(exc)}
+
+    # Resume comparatif lisible
+    logger.info("")
+    logger.info("=" * 70)
+    logger.info("  RESUME BASELINES (sans fine-tuning, dataset complet)")
+    logger.info("=" * 70)
+    logger.info(f"  {'Modele':<12} {'MCC':<10} {'F1':<10} {'Recall':<10} {'Precision':<10}")
+    for alias, metrics in results.items():
+        if "error" in metrics:
+            logger.warning(f"  {alias:<12} ERREUR : {metrics['error']}")
+            continue
+        logger.info(
+            f"  {alias:<12} "
+            f"{metrics.get('mcc', 0):<10.4f} "
+            f"{metrics.get('f1', 0):<10.4f} "
+            f"{metrics.get('recall', 0):<10.4f} "
+            f"{metrics.get('precision', 0):<10.4f}"
+        )
+
+    return results
+
+
+async def step_train_cv_both(
+    n_splits: int = 5,
+    n_seeds: int = 3,
+    random_state: int = 42,
+) -> dict[str, dict | None]:
+    """Lance le K-fold protocole unifie B3 sur Qwen3-4B PUIS mDeBERTa-v3-base.
+
+    Total ~6-8 heures cumulees sur RX 7900 XTX (Qwen3 ~4-6h + mDeBERTa ~2h).
+    Chaque modele est entraine independamment, ses artefacts (folds + T +
+    threshold) vont dans son propre dossier ``models/<model>/``. Les rapports
+    K-fold sont ecrits dans des CV_REPORT_FILE distincts pour permettre le
+    benchmark B4 a posteriori.
+
+    Args:
+        n_splits: Nombre de folds K-fold (defaut 5).
+        n_seeds: Nombre de seeds par fold (defaut 3).
+        random_state: Seed de base pour la reproductibilite.
+
+    Returns:
+        Dictionnaire ``{model_type: rapport_kfold}`` ou ``None`` si erreur
+        sur un modele. Le pipeline continue sur le second meme si le premier
+        echoue, pour ne pas perdre l'investissement temps deja realise.
+    """
+    logger.info("=" * 70)
+    logger.info(
+        f"  K-FOLD COMPARATIF Qwen3-4B + mDeBERTa-v3-base "
+        f"(K={n_splits} x {n_seeds} seeds chacun)"
+    )
+    logger.info("=" * 70)
+
+    results: dict[str, dict | None] = {}
+    for model_type in BENCHMARK_MODEL_TYPES:
+        logger.info("")
+        logger.info("#" * 70)
+        logger.info(f"#  ENTRAINEMENT K-FOLD : {model_type}")
+        logger.info("#" * 70)
+        try:
+            rapport = await step_train_cv(
+                n_splits=n_splits,
+                n_seeds=n_seeds,
+                random_state=random_state,
+                model_type=model_type,
+            )
+            results[model_type] = rapport
+            # Renommer le rapport K-fold pour ne pas qu'il soit ecrase par
+            # le suivant. CV_REPORT_FILE est partage par defaut, on duplique.
+            if rapport is not None:
+                model_cv_report = MODELS_DIR / f"cv_report_{model_type}.json"
+                model_cv_report.write_text(
+                    json.dumps(rapport, indent=2, default=str), encoding="utf-8"
+                )
+                logger.info(f"Rapport {model_type} : {model_cv_report}")
+        except Exception as exc:
+            logger.exception(f"K-fold {model_type} echoue : {exc}")
+            results[model_type] = None
+
+    return results
 
 
 def _is_cv_report_fresh() -> bool:
@@ -996,49 +1286,94 @@ def _log_cv_variability(aggregated: dict) -> None:
 
 
 def _log_cv_report(rapport: dict) -> None:
-    """Affiche un resume lisible du rapport K-fold dans les logs."""
+    """Affiche un resume lisible du rapport K-fold dans les logs.
+
+    Supporte deux formats :
+
+    - **Nouveau** (protocole unifie B3) : clef ``runs`` avec un dict par
+      (fold, seed), clef ``calibration`` pour T et threshold moyens.
+    - **Legacy** (``train_with_legacy_cv``) : clef ``folds``, clef
+      ``global`` pour metriques concatenees.
+
+    L'autodetection se fait sur la presence de ``runs``.
+    """
     aggregated = rapport["aggregated"]
-    global_m = rapport["global"]
-    folds = rapport["folds"]
+    is_unified = "runs" in rapport
+    entries = rapport["runs"] if is_unified else rapport["folds"]
 
     logger.info("")
     logger.info("=" * 72)
-    logger.info(f"  RAPPORT K-FOLD ({rapport['n_splits']} folds)")
+    if is_unified:
+        meta = rapport.get("metadata", {})
+        n_splits = meta.get("n_splits", rapport.get("n_splits", "?"))
+        n_seeds = meta.get("n_seeds", 1)
+        logger.info(f"  RAPPORT PROTOCOLE UNIFIE ({n_splits} folds x {n_seeds} seeds)")
+    else:
+        logger.info(f"  RAPPORT K-FOLD ({rapport['n_splits']} folds)")
     logger.info("=" * 72)
-    logger.info("  Metriques par fold :")
-    logger.info(f"    {'Fold':<6}{'n_test':<10}{'n_green':<10}{'MCC':<12}{'F1':<12}{'Recall':<12}")
-    for f in folds:
+    logger.info("  Metriques par run :")
+    header = (
+        f"    {'Fold.S':<8}{'n_val':<8}{'n_green':<9}{'MCC':<10}{'F1':<10}"
+        f"{'Recall':<10}{'T':<8}{'Seuil':<8}"
+    )
+    logger.info(header)
+    for f in entries:
+        fold_tag = (
+            f"{f['fold']}.{f.get('seed_idx', 1)}" if is_unified else str(f["fold"])
+        )
+        n_val = f.get("n_val", f.get("n_test", 0))
+        n_green = f.get("n_green_val", f.get("n_green_test", 0))
+        temp = f.get("temperature", float("nan"))
+        thr = f.get("threshold", float("nan"))
         logger.info(
-            f"    {f['fold']:<6}{f['n_test']:<10}{f['n_green_test']:<10}"
-            f"{f['mcc']:<12.4f}{f['f1']:<12.4f}{f['recall']:<12.4f}"
+            f"    {fold_tag:<8}{n_val:<8}{n_green:<9}"
+            f"{f['mcc']:<10.4f}{f['f1']:<10.4f}{f['recall']:<10.4f}"
+            f"{temp:<8.3f}{thr:<8.2f}"
         )
 
     logger.info("")
-    logger.info("  Moyennes sur les folds (+/- ecart-type) :")
+    logger.info("  Moyennes sur les runs (+/- ecart-type) :")
     for key in ("mcc", "f1", "balanced_accuracy", "precision", "recall", "specificite"):
-        stats = aggregated[key]
+        stats = aggregated.get(key)
+        if not stats:
+            continue
         logger.info(
             f"    {key:<20}: {stats['mean']:.4f} "
             f"(+/- {stats['std']:.4f}, "
             f"min={stats['min']:.4f}, max={stats['max']:.4f})"
         )
 
-    logger.info("")
-    logger.info("  Metriques globales (concatenation des predictions des folds) :")
-    logger.info(f"    MCC global         : {global_m['mcc']:.4f}")
-    logger.info(f"    F1 global          : {global_m['f1']:.4f}")
-    logger.info(f"    Balanced accuracy  : {global_m['balanced_accuracy']:.4f}")
-    logger.info(f"    Recall Green IT    : {global_m['recall']:.4f}")
-    logger.info(f"    Precision          : {global_m['precision']:.4f}")
-    logger.info(f"    Specificite        : {global_m['specificite']:.4f}")
-    logger.info("")
-    logger.info("  Matrice de confusion globale (K folds agreges) :")
-    logger.info(f"    TP = {global_m['vrais_positifs']}  |  FN = {global_m['faux_negatifs']}")
-    logger.info(f"    FP = {global_m['faux_positifs']}  |  TN = {global_m['vrais_negatifs']}")
-
-    if rapport.get("final_model_trained"):
+    if is_unified:
+        calib = rapport.get("calibration", {})
         logger.info("")
-        logger.info("  Modele final entraine sur l'integralite du dataset : OK")
+        logger.info("  Calibration finale (moyennee sur tous les runs) :")
+        logger.info(f"    Temperature  : {calib.get('temperature_mean', float('nan')):.4f}")
+        logger.info(f"    Threshold    : {calib.get('threshold_mean', float('nan')):.4f}")
+    else:
+        global_m = rapport.get("global", {})
+        if global_m:
+            logger.info("")
+            logger.info("  Metriques globales (concatenation des predictions des folds) :")
+            logger.info(f"    MCC global         : {global_m['mcc']:.4f}")
+            logger.info(f"    F1 global          : {global_m['f1']:.4f}")
+            logger.info(f"    Balanced accuracy  : {global_m['balanced_accuracy']:.4f}")
+            logger.info(f"    Recall Green IT    : {global_m['recall']:.4f}")
+            logger.info(f"    Precision          : {global_m['precision']:.4f}")
+            logger.info(f"    Specificite        : {global_m['specificite']:.4f}")
+            logger.info("")
+            logger.info("  Matrice de confusion globale (K folds agreges) :")
+            logger.info(
+                f"    TP = {global_m['vrais_positifs']}  |  "
+                f"FN = {global_m['faux_negatifs']}"
+            )
+            logger.info(
+                f"    FP = {global_m['faux_positifs']}  |  "
+                f"TN = {global_m['vrais_negatifs']}"
+            )
+
+        if rapport.get("final_model_trained"):
+            logger.info("")
+            logger.info("  Modele final entraine sur l'integralite du dataset : OK")
     logger.info("=" * 72)
 
 
@@ -1047,7 +1382,10 @@ def _log_cv_report(rapport: dict) -> None:
 # =============================================================================
 
 
-async def step_baseline(force: bool = False) -> dict[str, float | int]:
+async def step_baseline(
+    force: bool = False,
+    model_name: str | None = None,
+) -> dict[str, float | int]:
     """Calcule les metriques du modele de base SANS fine-tuning (reference permanente).
 
     Delegue au module `greentech.ai.models.baseline` qui factorise la logique
@@ -1055,13 +1393,23 @@ async def step_baseline(force: bool = False) -> dict[str, float | int]:
     Hugging Face compatible `AutoModelForSequenceClassification`. Par defaut,
     evalue `Qwen/Qwen3-4B` defini dans ``settings.huggingface_model_baseline``.
 
+    Args:
+        force: Si True, recalcule meme si la baseline existe et semble fraiche.
+        model_name: Si fourni, override le modele evalue (ex:
+            ``"microsoft/mdeberta-v3-base"``). Le JSON de baseline est suffixe
+            par un slug du modele pour eviter d'ecraser la baseline par defaut.
+
     La baseline est recalculee si :
     - Aucune baseline n'a ete sauvegardee, OU
     - Le format de la baseline existante est obsolete (ancien split 20% ou
       metriques incompletes), OU
-    - ``force=True`` est explicitement passe, OU
+    - ``force=True`` est explicitement passe (via l'etape CLI
+      ``baseline:force``), OU
     - Le modele de la baseline existante differe du modele configure (par
-      exemple apres une migration Llama -> Qwen3-4B).
+      exemple apres une migration Llama -> Qwen3-4B), OU
+    - La signature du Golden Dataset (SHA-256 tronque du CSV) a change
+      depuis la derniere baseline, ce qui indique que le corpus a ete
+      re-collecte, nettoye ou re-annote.
 
     Args:
         force: Si True, recalcule meme si une baseline existe deja.
@@ -1071,31 +1419,73 @@ async def step_baseline(force: bool = False) -> dict[str, float | int]:
         recall, specificite, matrice de confusion, distribution des
         predictions, latence moyenne).
     """
+    from greentech.ai.mlops.baseline_tracking import (
+        compute_dataset_signature,
+        track_baseline,
+    )
     from greentech.ai.models.baseline import evaluate_baseline
     from greentech.config import get_settings
 
     settings = get_settings()
-    expected_model = settings.huggingface_model_baseline
+    expected_model = model_name or settings.huggingface_model_baseline
 
-    existing = _load_json(BASELINE_METRICS_FILE)
+    # Suffixer le JSON par un slug du modele pour eviter qu'une baseline
+    # mDeBERTa ecrase la baseline Qwen3 par defaut, et inversement. La
+    # baseline historique reste sur baseline_metrics.json (sans suffixe).
+    if model_name and model_name != settings.huggingface_model_baseline:
+        slug = model_name.split("/")[-1].replace(".", "_").lower()
+        baseline_file = MODELS_DIR / f"baseline_metrics_{slug}.json"
+    else:
+        baseline_file = BASELINE_METRICS_FILE
+
+    current_signature = compute_dataset_signature(GOLDEN_DATASET_FILE)
+
+    existing = _load_json(baseline_file)
     required_keys = {"mcc", "specificite", "balanced_accuracy"}
     correct_scope = existing.get("evaluation_scope") == "full_dataset" if existing else False
     correct_model = existing.get("model") == expected_model if existing else False
+    stored_signature = existing.get("dataset_signature") if existing else None
+    # La signature devient obligatoire dans le format moderne. Son absence
+    # dans un JSON existant signale une baseline ecrite par une version
+    # anterieure du pipeline : on la considere comme obsolete pour forcer
+    # un recalcul avec la nouvelle tracabilite complete.
+    signature_missing = bool(existing) and stored_signature is None
+    signature_mismatch = (
+        bool(existing)
+        and stored_signature is not None
+        and current_signature is not None
+        and stored_signature != current_signature
+    )
     legacy_format = bool(existing) and (
         not required_keys.issubset(existing.get("metrics", {}).keys())
         or not correct_scope
         or not correct_model
+        or signature_missing
+        or signature_mismatch
     )
 
     if existing and not force and not legacy_format:
         logger.info(
             f"Baseline deja calculee (model={existing['model']}, "
             f"MCC={existing['metrics'].get('mcc', 0.0):.4f}, "
-            f"F1={existing['metrics']['f1']:.4f}), reutilisation"
+            f"F1={existing['metrics']['f1']:.4f}, "
+            f"dataset={stored_signature}), reutilisation"
         )
         _log_detailed_metrics(existing["metrics"], "Baseline (rechargee)")
         return existing["metrics"]
-    if legacy_format:
+    if force:
+        logger.info("Recalcul baseline force par l'utilisateur (baseline:force)")
+    elif signature_mismatch:
+        logger.info(
+            f"Golden Dataset modifie depuis la derniere baseline "
+            f"(signature {stored_signature} -> {current_signature}), recalcul"
+        )
+    elif signature_missing:
+        logger.info(
+            "Baseline existante sans signature dataset (format pre-patch), "
+            "recalcul pour tracabilite complete"
+        )
+    elif legacy_format:
         logger.info(
             "Baseline en ancien format ou modele different detecte "
             f"(attendu : {expected_model}), recalcul complet"
@@ -1104,6 +1494,8 @@ async def step_baseline(force: bool = False) -> dict[str, float | int]:
     logger.info("=" * 70)
     logger.info(f"  CALCUL BASELINE : {expected_model} SANS fine-tuning")
     logger.info("  Portee            : TOUT le dataset (aucun data leakage possible)")
+    if current_signature is not None:
+        logger.info(f"  Signature dataset : {current_signature}")
     logger.info("=" * 70)
 
     result = evaluate_baseline(model_name=expected_model)
@@ -1115,13 +1507,15 @@ async def step_baseline(force: bool = False) -> dict[str, float | int]:
 
     # Tracking triple : JSON local + MLflow (run tagge baseline) + Pushgateway
     # Prometheus (metriques greentech_baseline_* visibles dans Grafana).
-    from greentech.ai.mlops.baseline_tracking import track_baseline
-
-    track_baseline(result, BASELINE_METRICS_FILE)
+    track_baseline(
+        result,
+        baseline_file,
+        dataset_signature=current_signature,
+    )
     logger.info(
         f"Baseline sauvegardee : MCC={result.metrics['mcc']:.4f}, "
         f"F1={result.metrics['f1']:.4f}, Recall={result.metrics['recall']:.4f} "
-        f"(n={result.n_articles})"
+        f"(n={result.n_articles}, signature={current_signature})"
     )
 
     return dict(result.metrics)
@@ -1139,9 +1533,9 @@ async def _evaluate_new_model(
     """Evalue le modele fraichement entraine sur le test set.
 
     Charge l'adaptateur LoRA depuis ``TRAIN_DIR`` (par defaut
-    ``models/challenger-qwen3/``) et execute l'inference. Si le dossier
-    contient un modele d'une autre famille (par exemple un ancien challenger
-    Llama), la sous-classe adequate est instanciee via l'`adapter_config.json`
+    ``models/qwen3/``) et execute l'inference. Si le dossier
+    contient un modele d'une autre famille (par exemple un ancien LoRA Llama
+    ou Qwen2.5), la sous-classe adequate est instanciee via l'`adapter_config.json`
     pour reconstruire exactement le setup d'entrainement.
     """
     import json
@@ -1151,8 +1545,8 @@ async def _evaluate_new_model(
 
     from greentech.ai.models.classifier import TrainingConfig
     from greentech.ai.models.training import (
-        ChallengerClassifier,
-        ChallengerQwen3Classifier,
+        LoRAClassifier,
+        Qwen3Classifier,
     )
     from greentech.config import get_settings
 
@@ -1169,9 +1563,9 @@ async def _evaluate_new_model(
     is_qwen3 = "qwen3-4b" in name_lower or "qwen3_4b" in name_lower
     config = TrainingConfig(nom_modele=base_model_name, output_dir=TRAIN_DIR)
     classifier = (
-        ChallengerQwen3Classifier(config=config)
+        Qwen3Classifier(config=config)
         if is_qwen3
-        else ChallengerClassifier(config=config)
+        else LoRAClassifier(config=config)
     )
     classifier.load(TRAIN_DIR)
 
@@ -1572,8 +1966,16 @@ def step_force_promote() -> bool:
 # =============================================================================
 
 
-async def run_pipeline(steps: list[str]) -> None:
-    """Execute les etapes du pipeline dans l'ordre demande."""
+async def run_pipeline(steps: list[str], *, model_override: str | None = None) -> None:
+    """Execute les etapes du pipeline dans l'ordre demande.
+
+    Args:
+        steps: Liste ordonnee des etapes a executer.
+        model_override: Si fourni (ex: ``"qwen3"`` ou ``"mdeberta"``), force
+            le modele cible pour les etapes ``train-cv`` et ``baseline``.
+            Par defaut, ``train-cv`` utilise Qwen3 et ``baseline`` utilise
+            le modele de ``settings.huggingface_model_baseline`` (Qwen3).
+    """
     start = time.perf_counter()
     logger.info("")
     logger.info("#" * 70)
@@ -1598,12 +2000,43 @@ async def run_pipeline(steps: list[str]) -> None:
             await step_auto_promote()
             continue
         if step_name == "baseline":
-            await step_baseline()
+            override_hf = (
+                BASELINE_MODEL_ALIASES.get(model_override) if model_override else None
+            )
+            await step_baseline(model_name=override_hf)
+            continue
+        if step_name == "baseline:force":
+            override_hf = (
+                BASELINE_MODEL_ALIASES.get(model_override) if model_override else None
+            )
+            await step_baseline(force=True, model_name=override_hf)
+            continue
+        if step_name == "baseline-both":
+            await step_baseline_both()
+            continue
+        if step_name == "baseline-both:force":
+            await step_baseline_both(force=True)
             continue
         if step_name == "train-cv":
-            logger.info("\n>>> Re-entrainement Qwen3-4B (K-fold CV)...")
-            if await step_train_cv() is None:
+            target = model_override or TRAIN_MODEL_TYPE
+            logger.info(f"\n>>> Re-entrainement K-fold protocole unifie B3 ({target})...")
+            if await step_train_cv(model_type=target) is None:
                 logger.error("Interrompu a : train-cv")
+                return
+            continue
+        if step_name == "train-cv-both":
+            logger.info("\n>>> K-fold comparatif Qwen3-4B + mDeBERTa-v3-base...")
+            results = await step_train_cv_both()
+            if all(r is None for r in results.values()):
+                logger.error("Interrompu : aucun K-fold n'a abouti")
+                return
+            continue
+        if step_name == "benchmark-models":
+            logger.info(
+                "\n>>> Benchmark final B4.4 (Qwen3-4B vs mDeBERTa-v3-base)..."
+            )
+            if not _run_script("scripts/benchmark_models.py"):
+                logger.error("Interrompu a : benchmark-models")
                 return
             continue
 
@@ -1643,6 +2076,10 @@ async def run_pipeline(steps: list[str]) -> None:
         # summarize-classif, donc pas de risque de saturation PIPE.
         sync_steps = {
             "collect": ("Collecte des donnees", step_collect),
+            "augment": (
+                "Augmentation par back-translation EN<->FR (opus-mt)",
+                step_augment,
+            ),
             "train": ("Re-entrainement Qwen3-4B (split 80/20)", step_train),
             "promote": ("Promotion forcee", step_force_promote),
         }
@@ -1659,10 +2096,24 @@ async def run_pipeline(steps: list[str]) -> None:
             valid = (
                 list(async_steps.keys())
                 + list(sync_steps.keys())
-                + ["benchmark", "auto-promote", "baseline", "train-cv"]
+                + [
+                    "benchmark",
+                    "auto-promote",
+                    "baseline",
+                    "baseline:force",
+                    "baseline-both",
+                    "baseline-both:force",
+                    "train-cv",
+                    "train-cv-both",
+                    "benchmark-models",
+                ]
             )
             logger.error(f"Etape inconnue : {step_name}")
             logger.info(f"Valides : {', '.join(valid)}, ingest-file <path>")
+            logger.info(
+                "Flag optionnel : --model=qwen3|mdeberta pour cibler 'baseline' "
+                "ou 'train-cv' sur un modele specifique."
+            )
             return
 
         label, func = sync_steps[step_name]
@@ -1698,6 +2149,24 @@ def main() -> None:
         sys.path.insert(0, scripts_dir)
 
     args = sys.argv[1:]
+
+    # Parse le flag global --model=<alias> pour cibler un modele specifique
+    # sur les etapes 'baseline' et 'train-cv'. Alias acceptes : qwen3, mdeberta.
+    model_override: str | None = None
+    filtered_args: list[str] = []
+    for arg in args:
+        if arg.startswith("--model="):
+            alias = arg.split("=", 1)[1].strip()
+            if alias not in BENCHMARK_MODEL_TYPES:
+                logger.error(
+                    f"--model={alias} invalide. Valeurs acceptees : "
+                    f"{', '.join(BENCHMARK_MODEL_TYPES)}"
+                )
+                sys.exit(2)
+            model_override = alias
+        else:
+            filtered_args.append(arg)
+    args = filtered_args
 
     processed: list[str] = []
     i = 0
@@ -1740,7 +2209,7 @@ def main() -> None:
             "auto-promote",
         ]
 
-    asyncio.run(run_pipeline(processed))
+    asyncio.run(run_pipeline(processed, model_override=model_override))
 
 
 if __name__ == "__main__":

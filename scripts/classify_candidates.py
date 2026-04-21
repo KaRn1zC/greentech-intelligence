@@ -14,9 +14,17 @@ Usage
 
     uv run python scripts/classify_candidates.py
 
-Le script respecte un delai de 0.5s entre chaque appel pour rester dans le
-fair-use HF Serverless. Avec un corpus de 500 candidats, le traitement prend
-environ 15 a 20 minutes.
+Resilience aux interruptions (kill-safe)
+----------------------------------------
+
+Le script traite et **commit les verdicts par batchs** de ``BATCH_COMMIT_SIZE``
+articles. Sur une interruption (kill, coupure, shutdown), au maximum
+``BATCH_COMMIT_SIZE`` verdicts calcules mais non persistes sont perdus
+(~10 min de travail a 5 articles/min cote Qwen local). Le script est
+idempotent : un re-run relit uniquement les articles encore NULL.
+
+Avec un corpus de 500 candidats, le traitement prend environ 15 a 20
+minutes via HF Serverless, 1 a 2 heures via Qwen local (GPU AMD ROCm).
 
 En cas d'echec API ponctuel, l'article reste en l'etat (est_green_it=NULL)
 et sera re-tente au prochain passage du script.
@@ -41,6 +49,11 @@ from greentech.data.storage.models import Article
 FINAL_MODELE_TAG = "keyword_filter+qwen_llm_judge"
 # Marqueur produit par le pre-filtre : articles en attente de LLM
 PREFILTER_MODELE_TAG = "keyword_filter"
+
+# Taille des batchs de commit : trade-off entre pertes sur kill et
+# overhead DB. 50 articles = ~5-10 min de travail LLM local au pire,
+# acceptable comme perte maximale sur interruption.
+BATCH_COMMIT_SIZE = 50
 
 
 async def fetch_candidates(limit: int | None = None) -> list[tuple[int, str, str]]:
@@ -107,12 +120,26 @@ async def classify_all_candidates(
     *,
     limit: int | None = None,
     delay_seconds: float = 1.0,
+    batch_size: int = BATCH_COMMIT_SIZE,
 ) -> dict[str, int]:
     """Orchestre l'etage 2 : LLM judge sur tous les candidats.
 
+    Traite les candidats par batchs de ``batch_size`` pour limiter la
+    perte sur interruption. Apres chaque batch, les verdicts sont
+    persistes (``apply_verdicts`` -> commit) et le prochain batch est
+    lance. Sur kill/shutdown entre deux commits, on perd au maximum
+    ``batch_size`` verdicts deja calcules mais non persistes.
+
+    Au re-run, ``fetch_candidates`` ne renvoie que les articles encore
+    ``est_green_it IS NULL``, donc le script reprend la ou il s'etait
+    arrete sans re-traiter les articles deja decides.
+
     Args:
         limit: Plafond optionnel pour un run partiel (debug ou test).
-        delay_seconds: Pause entre deux appels LLM pour respecter le fair-use HF.
+        delay_seconds: Pause entre deux appels LLM pour respecter le
+            fair-use HF. Ignoree en mode local (GPU saturation naturelle).
+        batch_size: Nombre d'articles par batch de commit. Plus petit =
+            moins de perte sur kill, plus gros = moins d'overhead DB.
 
     Returns:
         Statistiques {total, green_it, non_green_it, echecs}.
@@ -124,21 +151,58 @@ async def classify_all_candidates(
         logger.info("Aucun candidat a verifier - etage 2 inactif")
         return stats
 
-    logger.info(f"{len(candidates)} candidats a verifier via LLM judge")
-    verdicts = await verify_green_it_batch(candidates, delay_seconds=delay_seconds)
-
-    for verdict in verdicts.values():
-        if not verdict.succes or verdict.est_green_it is None:
-            stats["echecs"] += 1
-        elif verdict.est_green_it:
-            stats["green_it"] += 1
-        else:
-            stats["non_green_it"] += 1
-
-    succes_ecrit, echecs_ecrit = await apply_verdicts(verdicts)
     logger.info(
-        f"Verdicts appliques : {succes_ecrit} ecrits, {echecs_ecrit} echoues"
+        f"{len(candidates)} candidats a verifier via LLM judge "
+        f"(batch_size={batch_size}, commit apres chaque batch)"
     )
+
+    # Decoupage en batchs. Chaque batch : LLM judge -> apply_verdicts ->
+    # commit. Kill-safe : perte max = batch_size verdicts.
+    total = len(candidates)
+    total_succes_ecrit = 0
+    total_echecs_ecrit = 0
+    for batch_start in range(0, total, batch_size):
+        batch_end = min(batch_start + batch_size, total)
+        batch = candidates[batch_start:batch_end]
+        batch_num = batch_start // batch_size + 1
+        total_batches = (total + batch_size - 1) // batch_size
+
+        logger.info(
+            f"[Batch {batch_num}/{total_batches}] "
+            f"Traitement articles {batch_start + 1}..{batch_end} ({len(batch)} candidats)"
+        )
+
+        verdicts = await verify_green_it_batch(batch, delay_seconds=delay_seconds)
+
+        # Mise a jour stats globales pour ce batch
+        batch_green = 0
+        batch_non_green = 0
+        batch_echecs = 0
+        for verdict in verdicts.values():
+            if not verdict.succes or verdict.est_green_it is None:
+                batch_echecs += 1
+                stats["echecs"] += 1
+            elif verdict.est_green_it:
+                batch_green += 1
+                stats["green_it"] += 1
+            else:
+                batch_non_green += 1
+                stats["non_green_it"] += 1
+
+        # Commit immediat du batch : kill-safe.
+        succes_ecrit, echecs_ecrit = await apply_verdicts(verdicts)
+        total_succes_ecrit += succes_ecrit
+        total_echecs_ecrit += echecs_ecrit
+
+        logger.info(
+            f"[Batch {batch_num}/{total_batches}] "
+            f"Commit : {succes_ecrit} ecrits, {echecs_ecrit} echoues | "
+            f"batch (green={batch_green}, non_green={batch_non_green}, echecs={batch_echecs}) | "
+            f"cumul ({batch_end}/{total} articles, green={stats['green_it']}, "
+            f"non_green={stats['non_green_it']}, echecs={stats['echecs']})"
+        )
+
+    logger.info(f"Verdicts appliques : {total_succes_ecrit} ecrits, {total_echecs_ecrit} echoues")
     logger.info("Bilan etage 2 :")
     logger.info(f"  Total candidats : {stats['total']}")
     logger.info(f"  Green IT        : {stats['green_it']}")

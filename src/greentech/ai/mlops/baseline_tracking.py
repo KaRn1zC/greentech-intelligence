@@ -19,6 +19,7 @@ deux points d'entree produisent exactement la meme tracabilite.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,10 +30,47 @@ from loguru import logger
 if TYPE_CHECKING:
     from greentech.ai.models.baseline import BaselineResult
 
+# Taille de bloc utilisee pour le streaming du hash du Golden Dataset.
+# 64 KiB est un bon compromis memoire/perf : le CSV tient dans le cache
+# disque Windows apres la premiere lecture, le hash est sous 100 ms pour
+# un fichier de 7 MB.
+_HASH_CHUNK_SIZE = 65536
+
+# Longueur tronquee du hash conservee dans le JSON. 16 hex chars = 64 bits
+# d'entropie, suffisant pour detecter sans collision realiste que le CSV
+# a change, tout en gardant un JSON lisible a l'oeil.
+_SIGNATURE_HEX_LEN = 16
+
+
+def compute_dataset_signature(dataset_path: Path) -> str | None:
+    """Calcule une empreinte SHA-256 tronquee du Golden Dataset.
+
+    Sert de cle de cache pour detecter si le dataset a change depuis la
+    derniere baseline : tant que la signature est identique, on peut
+    reutiliser les metriques persistees sans relancer l'inference.
+
+    Args:
+        dataset_path: Chemin du fichier CSV a hasher.
+
+    Returns:
+        Les 16 premiers hex chars du SHA-256 du fichier, ou ``None`` si
+        le fichier est introuvable (l'appelant decide comment reagir).
+    """
+    if not dataset_path.exists():
+        return None
+
+    digest = hashlib.sha256()
+    with dataset_path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(_HASH_CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return digest.hexdigest()[:_SIGNATURE_HEX_LEN]
+
 
 def save_baseline_metrics_json(
     result: BaselineResult,
     output_file: Path,
+    *,
+    dataset_signature: str | None = None,
 ) -> None:
     """Persiste les metriques baseline dans un fichier JSON.
 
@@ -43,6 +81,9 @@ def save_baseline_metrics_json(
     Args:
         result: Resultat complet de l'evaluation baseline.
         output_file: Chemin du fichier JSON a ecrire.
+        dataset_signature: Empreinte du Golden Dataset utilise. Stockee
+            telle quelle dans le JSON ; sert au pipeline a invalider
+            automatiquement la baseline quand le dataset change.
     """
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -51,6 +92,7 @@ def save_baseline_metrics_json(
         "date": datetime.now(UTC).isoformat(),
         "evaluation_scope": "full_dataset",
         "n_articles": result.n_articles,
+        "dataset_signature": dataset_signature,
         "duration_seconds": result.duration_seconds,
         "metrics": dict(result.metrics),
     }
@@ -62,7 +104,11 @@ def save_baseline_metrics_json(
     )
 
 
-def log_baseline_to_mlflow(result: BaselineResult) -> None:
+def log_baseline_to_mlflow(
+    result: BaselineResult,
+    *,
+    dataset_signature: str | None = None,
+) -> None:
     """Logge la baseline dans un run MLflow dedie.
 
     Le run est tagge ``type=baseline`` pour etre filtrable dans l'UI
@@ -72,6 +118,9 @@ def log_baseline_to_mlflow(result: BaselineResult) -> None:
 
     Args:
         result: Resultat complet de l'evaluation baseline.
+        dataset_signature: Empreinte du Golden Dataset utilise. Logguee
+            en param MLflow pour retrouver dans l'UI la version exacte du
+            dataset a laquelle se rattache la baseline.
 
     Raises:
         Exception: Toute erreur de connexion MLflow ou d'upload vers
@@ -83,6 +132,14 @@ def log_baseline_to_mlflow(result: BaselineResult) -> None:
     from greentech.ai.mlops.tracking import ExperimentConfig, tracked_experiment
 
     safe_name = result.model_name.replace("/", "_").replace(".", "_")
+    params: dict[str, str | int | float] = {
+        "model": result.model_name,
+        "method": "zero-shot",
+        "n_articles": result.n_articles,
+        "duration_seconds": round(result.duration_seconds, 2),
+    }
+    if dataset_signature is not None:
+        params["dataset_signature"] = dataset_signature
     exp_config = ExperimentConfig(
         nom_experience="greentech-classification",
         nom_run=f"baseline-{safe_name}",
@@ -92,22 +149,13 @@ def log_baseline_to_mlflow(result: BaselineResult) -> None:
             "method": "zero-shot",
             "evaluation_scope": "full_dataset",
         },
-        params={
-            "model": result.model_name,
-            "method": "zero-shot",
-            "n_articles": result.n_articles,
-            "duration_seconds": round(result.duration_seconds, 2),
-        },
+        params=params,
         mesurer_carbone=True,
     )
 
     with tracked_experiment(exp_config):
         mlflow.log_metrics(
-            {
-                k: float(v)
-                for k, v in result.metrics.items()
-                if isinstance(v, (int, float))
-            }
+            {k: float(v) for k, v in result.metrics.items() if isinstance(v, (int, float))}
         )
 
 
@@ -135,7 +183,12 @@ def push_baseline_to_prometheus(result: BaselineResult) -> None:
         logger.warning(f"Push Prometheus baseline echoue : {exc}")
 
 
-def track_baseline(result: BaselineResult, json_path: Path) -> None:
+def track_baseline(
+    result: BaselineResult,
+    json_path: Path,
+    *,
+    dataset_signature: str | None = None,
+) -> None:
     """Orchestre la persistance triple (JSON + MLflow + Prometheus).
 
     Chaque destination est independante : un echec sur MLflow ou
@@ -147,11 +200,14 @@ def track_baseline(result: BaselineResult, json_path: Path) -> None:
     Args:
         result: Resultat complet de l'evaluation baseline.
         json_path: Chemin du fichier JSON de reference locale.
+        dataset_signature: Empreinte du Golden Dataset utilise. Propagee
+            dans le JSON local et les params MLflow pour lier sans
+            ambiguite les metriques a une version precise du dataset.
     """
-    save_baseline_metrics_json(result, json_path)
+    save_baseline_metrics_json(result, json_path, dataset_signature=dataset_signature)
 
     try:
-        log_baseline_to_mlflow(result)
+        log_baseline_to_mlflow(result, dataset_signature=dataset_signature)
     except Exception as exc:
         logger.warning(f"MLflow indisponible, baseline non trackee : {exc}")
 

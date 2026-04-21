@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     #   3. Chat template Qwen aligne sur `Qwen3-4B-Instruct-2507` deja utilise
     #      pour les summarizers et le LLM judge : une seule famille a maintenir.
     # Ce modele remplace l'ancien `meta-llama/Llama-3.2-3B` gated (besoin de
-    # demande d'acces HF) comme base du challenger fine-tune sur le golden
+    # demande d'acces HF) comme base du modele fine-tune sur le golden
     # dataset et promu en production par `scripts/retrain_pipeline.py`.
     #
     # Note : la tentative precedente avec `Qwen/Qwen3.5-4B` a echoue car il
@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     huggingface_model_trainer_base: str = "Qwen/Qwen3-4B"
     # Meme modele utilise comme baseline : evalue zero-shot (sans fine-tuning)
     # sur l'integralite du dataset annote pour mesurer le gain apporte par
-    # l'entrainement LoRA. Avoir la meme base en baseline et challenger permet
+    # l'entrainement LoRA. Avoir la meme base en baseline et fine-tuning permet
     # de comparer strictement l'impact du fine-tuning, sans bruit lie au
     # changement d'architecture.
     huggingface_model_baseline: str = "Qwen/Qwen3-4B"
@@ -176,6 +176,12 @@ class Settings(BaseSettings):
     # Dev.to / Forem API : aucune cle necessaire en lecture publique, on
     # garde une variable optionnelle pour passer en write API plus tard.
     devto_api_key: str = ""
+    # Email utilise pour le Polite Pool de Crossref (api.crossref.org).
+    # Fournir un contact permet a Crossref de prioriser nos requetes sur
+    # le pool public (latences plus stables, meilleur rate limit). Non
+    # sensible : publie dans le User-Agent de chaque requete. Ref:
+    # https://www.crossref.org/documentation/retrieve-metadata/rest-api/tips-for-using-the-crossref-rest-api/
+    crossref_mailto: str = ""
 
     # --- Monitoring ---
     loki_url: str = "http://localhost:3100"

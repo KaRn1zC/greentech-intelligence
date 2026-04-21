@@ -232,7 +232,7 @@ def record_fold_metrics(
     """Enregistre les metriques d'un fold et pousse vers Pushgateway.
 
     Args:
-        model_type: "challenger-llama" ou "challenger-qwen".
+        model_type: "llama3.2", "qwen2.5" ou "qwen3".
         run_name: Nom du run MLflow associe (pour joindre les deux systemes).
         fold: Numero du fold (1-indexe).
         total_folds: K dans la cross-validation.
