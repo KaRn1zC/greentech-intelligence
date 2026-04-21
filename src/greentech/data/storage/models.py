@@ -105,6 +105,12 @@ class Article(Base):
     est_green_it: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     score_confiance: Mapped[float | None] = mapped_column(Float, nullable=True)
     modele_classification: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    raison_llm_judge: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Annotation manuelle (audit B2.10, avril 2026)
+    annotation_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    annotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    annotated_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Audit
     chemin_donnees_brutes: Mapped[str | None] = mapped_column(Text, nullable=True)

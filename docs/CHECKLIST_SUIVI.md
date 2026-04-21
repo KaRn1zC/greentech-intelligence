@@ -481,6 +481,7 @@
 
 - [x] Candidats identifies : `climatebert/climate_detection` (1 700 paragraphes), `climatebert/environmental_claims` (2 647 phrases), `tdiggelm/climate_fever` (1 535 claims)
 - [x] **DECISION : Ecarte du plan B2**. Format incompatible (ni titre ni URL), labels "climat general" hors scope Green IT specifique, domaine corporate/fact-checking different des articles tech. Utilisable eventuellement comme corpus d'evaluation robustesse dans une phase ulterieure.
+- [x] Documentation de la decision d'ecart : section B2.1 ci-dessus + note dans `docs/PLAN_ETAPES.md` section 7.2 (2026-04-19).
 
 ##### Validation globale prealable
 
@@ -601,43 +602,45 @@
 #### B2.4 Ingestion Hugging Face dataset (ECARTE)
 
 > Supprime du plan apres validation prealable (B2.1). Le dataset `climatebert/climate_detection` a un format incompatible (ni titre ni URL, paragraphes corporate hors scope tech) et des labels "climat general" qui corrompraient le ground truth Green IT. Les 7 autres sources fournissent largement le volume cible. Cette source pourrait eventuellement servir de corpus d'evaluation robustesse dans une phase ulterieure.
-- [ ] Documentation
+- [x] Documentation de la decision d'ecart : note consignee dans B2.1 (CHECKLIST) + `docs/PLAN_ETAPES.md` section 7.2 (2026-04-19).
 
-#### B2.5 Mise a jour des metadata BDD
+#### B2.5 Mise a jour des metadata BDD (TERMINEE 2026-04-19)
 
-- [ ] Mettre a jour `scripts/sql/init.sql` ou creer une migration :
-  - [ ] Ajouter les 8 nouvelles sources dans la table `sources` (nom, type, URL, active=true)
-  - [ ] Ajouter les nouveaux mots-cles dans la table `search_config`
-- [ ] Executer la migration sur la base existante
-- [ ] Verifier via `uv run python -c "..."` ou requete SQL directe
+- [x] Mettre a jour `scripts/sql/init.sql` ou creer une migration :
+  - [x] Ajouter les 8 nouvelles sources dans la table `sources` (nom, type, URL, active=true) — 10 sources actives en BDD (arXiv Dataset, arXiv API, Crossref, The Guardian, Dev.to, TechCrunch Climate, GreenIT.fr, Green Software Foundation, Sustainable Web Design, Climate Action Tech) + NewsData.io conservee desactivee
+  - [x] Ajouter les nouveaux mots-cles dans la table `search_config` — 79 mots-cles repartis : 36 api + 15 guardian + 9 arxiv_api + 8 crossref + 8 devto + 3 scraping
+- [x] Executer la migration sur la base existante — `migration_002_b2_sources_config.sql` + `migration_003_b2_3_spiders.sql` appliquees, `scripts/sql/init.sql` aligne pour les deploiements futurs
+- [x] Verifier via `uv run python -c "..."` ou requete SQL directe — 11 664 articles repartis sur 10 sources actives, 0 article sans source
 
-#### B2.6 Lancement collecte massive
+#### B2.6 Lancement collecte massive (TERMINEE 2026-04-19)
 
-- [ ] Creer `scripts/collect_all_sources.py` qui orchestre :
-  - [ ] arxiv_collector
-  - [ ] crossref_collector
-  - [ ] guardian_collector (avec nouvelles sections)
-  - [ ] devto_collector (existant)
-  - [ ] api_collector legacy (NewsData, garder desactive)
-  - [ ] Les 4 nouveaux spiders Scrapy (via subprocess scrapy crawl)
-  - [ ] file_ingester avec dataset HF
-- [ ] Executer la collecte (idempotente : skip articles deja en BDD via URL unique)
-- [ ] Mesurer le volume reellement collecte (logs + requete SQL `SELECT source, COUNT(*) FROM articles GROUP BY source`)
+> **Note d'implementation** : l'orchestration n'a pas ete materialisee dans un nouveau `scripts/collect_all_sources.py` dedie. Elle est integree directement dans `scripts/retrain_pipeline.py collect`, qui appelle sequentiellement tous les collecteurs. Ce choix garantit que la collecte utilise les memes flags (`skip_existing=True`, pre-check URL) que le reste du pipeline et evite un script redondant.
 
-#### B2.7 Nettoyage Spark sur le nouveau volume
+- [x] Orchestration de la collecte (implementee dans `scripts/retrain_pipeline.py collect`) :
+  - [x] arxiv_collector
+  - [x] crossref_collector
+  - [x] guardian_collector (avec nouvelles sections `environment` + `technology`)
+  - [x] devto_collector (existant)
+  - [x] api_collector legacy (NewsData, desactive conformement au plan)
+  - [x] Les 4 nouveaux spiders Scrapy (via `static_scraping_collector` en un seul `CrawlerProcess`)
+  - [x] file_ingester (arXiv Kaggle, conserve pour retro-compatibilite ; dataset HF ecarte en B2.4)
+- [x] Executer la collecte (idempotente : skip articles deja en BDD via URL unique normalisee) — pre-check BDD actif sur tous les collecteurs (cf. B2.3)
+- [x] Mesurer le volume reellement collecte — 11 664 articles totaux en BDD : arXiv Dataset 4 957, GreenIT.fr 2 945, Crossref 1 499, The Guardian 1 252, arXiv API 382, Green Software Foundation 193, Dev.to 135, Sustainable Web Design 130, TechCrunch Climate 105, Climate Action Tech 66
 
-- [ ] Verifier que `src/greentech/data/processors/spark_cleaner.py` tient le nouveau volume
-- [ ] Adapter la conf memoire si besoin (driver memory, executor memory)
-- [ ] Lancer le nettoyage : `uv run python -m greentech.data.processors.spark_cleaner`
-- [ ] Verifier que les articles trop courts (< seuil deja existant) sont bien filtres
-- [ ] Verifier la deduplication
+#### B2.7 Nettoyage Spark sur le nouveau volume (TERMINEE 2026-04-19)
 
-#### B2.8 Generation des resumes de classification
+- [x] Verifier que `src/greentech/data/processors/spark_cleaner.py` tient le nouveau volume — generalise pour lire le prefixe MinIO `scraping/` complet (plus uniquement `scraping/techcrunch`) et pour supporter deux formats (TechCrunch `contenu_html` + 4 spiders `contenu`)
+- [x] Adapter la conf memoire si besoin (driver memory, executor memory) — configuration existante suffisante, aucune OOM observee sur les 11 664 articles
+- [x] Lancer le nettoyage : `uv run python -m greentech.data.processors.spark_cleaner` — execute dans le pipeline `retrain_pipeline.py clean`
+- [x] Verifier que les articles trop courts (< seuil deja existant) sont bien filtres — 76 articles junk (tests API + preprints retractes) supprimes avant B2.8 ; filtres low-entropy/withdrawn/retracted actifs dans `classification_summarizer.py`
+- [x] Verifier la deduplication — URL normalisee (http->https, host lowercase, trailing slash) utilisee comme cle de dedup, 42 tests unitaires dans `test_url_precheck.py`
 
-- [ ] Pour les articles complets sans abstract (issus du scraping principalement) : generer le resume via `classification_summarizer`
-- [ ] Lancer : `uv run python scripts/generate_classification_summaries.py`
-- [ ] Verifier que tous les articles ont desormais soit `abstract` soit `resume` <= 450 tokens
-- [ ] Requete SQL de validation : compter les articles sans `(abstract OR resume)`
+#### B2.8 Generation des resumes de classification (TERMINEE 2026-04-19)
+
+- [x] Pour les articles complets sans abstract (issus du scraping principalement) : generer le resume via `classification_summarizer`
+- [x] Lancer : `uv run python scripts/generate_classification_summaries.py` — 5 977 articles traites sur 5-9h, 0 resume bidon grace aux filtres low-entropy + withdrawn/retracted
+- [x] Verifier que tous les articles ont desormais soit `abstract` soit `resume` <= 450 tokens — `CLASSIFICATION_MAX_TOKENS=450` respecte via `classification_summarizer.py`
+- [x] Requete SQL de validation : compter les articles sans `(abstract OR resume)` — 11 664 articles avec resume non-null, 0 article sans resume (verifie 2026-04-21)
 
 #### B2.9 Re-classification du corpus etendu (TERMINE 2026-04-21 00:32)
 
@@ -661,29 +664,40 @@
 
 #### B2.10 Annotation manuelle (procedure detaillee)
 
-- [ ] **Etape 1 - Identifier les borderline** :
-  - [ ] Modifier `classify_candidates.py` pour logger le score brut du LLM judge (probabilite/confiance)
-  - [ ] Identifier les articles avec score entre 0.3 et 0.7 (zone d'incertitude)
-- [ ] **Etape 2 - Decision sur le volume** :
-  - [ ] Compter les borderline. Si < 50 : tout annoter manuellement. Si 50-200 : echantillon stratifie. Si > 200 : echantillon de 100 max.
-  - [ ] Communiquer le volume a l'utilisateur pour validation avant lancement
-- [ ] **Etape 3 - Outil d'annotation** :
-  - [ ] Creer `scripts/manual_annotation_helper.py` :
-    - [ ] CLI interactif (Rich/Textual ou simple input())
-    - [ ] Pour chaque article : affiche titre + resume + URL
-    - [ ] Demande input : `g` (Green IT) / `n` (Non Green IT) / `s` (skip) / `q` (quit)
-    - [ ] Sauvegarde decision en BDD avec flag `annotation_source='manual'`, `annotated_at=now()`, `annotated_by='KaRn1zC'`
-    - [ ] Possibilite de reprendre une session interrompue
-- [ ] **Etape 4 - Documentation** :
-  - [ ] Creer `docs/ANNOTATION_MANUELLE.md` avec :
-    - [ ] Procedure step-by-step illustree
-    - [ ] Criteres de decision Green IT (rappel des definitions)
-    - [ ] Exemples de cas limites avec leur classification correcte
-    - [ ] Commandes CLI exactes
+> **Decision 2026-04-22 (option C)** : apres analyse, le score
+> ``score_confiance`` est en realite **deja persiste** en BDD pour les
+> 5 574 articles classifies par le LLM judge (il l'etait des le run
+> du 2026-04-20 via `apply_verdicts`). Pas besoin de re-runner pour
+> obtenir les scores. La seule information manquante est la
+> justification textuelle (`verdict.raison`) : elle est desormais
+> captee via la migration 004 + modification de `classify_candidates.py`
+> pour le **prochain** run naturel, sans re-run force immediat.
+
+- [x] **Etape 1 - Identifier les borderline** :
+  - [x] Modifier `classify_candidates.py` pour logger le score brut du LLM judge (probabilite/confiance) (2026-04-22) — le score etait deja persiste dans `score_confiance` depuis le run du 2026-04-20. Modification supplementaire : ajout de la persistence de `verdict.raison` (justification textuelle) dans `raison_llm_judge` + `annotation_source='llm_judge'` pour tracabilite. Actif des le prochain run LLM (pas re-run force). Migration SQL `migration_004_annotation_manuelle.sql` appliquee (5 574 + 6 090 articles backfillee).
+  - [x] Identifier les articles avec score entre 0.3 et 0.7 (zone d'incertitude) — 1 325 articles borderline identifies via index partiel `idx_articles_borderline_llm`. Tous classes Non Green IT (le LLM hesite a dire OUI et tranche NON).
+- [x] **Etape 2 - Decision sur le volume** :
+  - [x] Compter les borderline. Si < 50 : tout annoter manuellement. Si 50-200 : echantillon stratifie. Si > 200 : echantillon de 100 max. — 1 325 articles borderline, tous a examiner selon decision utilisateur 2026-04-22 (pas d'echantillonnage). Priorite a GreenIT.fr (969 borderline, site 100 % Green IT = potentiels faux negatifs concentres).
+  - [x] Communiquer le volume a l'utilisateur pour validation avant lancement — fait le 2026-04-22 avec ventilation par source. Audit exhaustif valide.
+- [x] **Etape 3 - Outil d'annotation** (2026-04-22) :
+  - [x] Creer `scripts/manual_annotation_helper.py` :
+    - [x] CLI interactif via `rich` (Console, Panel, Table, Prompt, Markdown)
+    - [x] Pour chaque article : affiche titre + resume + URL + contenu tronque + raison LLM (si peuplee) + score + decision LLM actuelle
+    - [x] Demande input : `g` (Green IT) / `n` (Non Green IT) / `s` (skip) / `o` (ouvrir URL dans navigateur) / `q` (quit)
+    - [x] Sauvegarde decision en BDD avec `annotation_source='manual'`, `annotated_at=now()`, `annotated_by='KaRn1zC'` (configurable via `--by`). Preserve `score_confiance` et `raison_llm_judge` pour mesurer le taux de correction humaine a posteriori.
+    - [x] Possibilite de reprendre une session interrompue : les articles `annotation_source='manual'` sont automatiquement exclus au prochain lancement. Filtres CLI : `--source`, `--score-min`, `--score-max`, `--limit`.
+- [x] **Etape 4 - Documentation** (2026-04-22) :
+  - [x] Creer `docs/ANNOTATION_MANUELLE.md` avec :
+    - [x] Procedure step-by-step illustree (commandes CLI par cas d'usage, raccourcis clavier, reprise de session)
+    - [x] Criteres de decision Green IT (rappel de la definition inclusive du prompt systeme LLM, alignement strict pour eviter toute derive)
+    - [x] Exemples de cas limites avec leur classification correcte (6 exemples couvrant Crossref, Guardian, GreenIT.fr, arXiv, TechCrunch, Dev.to)
+    - [x] Commandes CLI exactes (commandes usuelles, raccourcis clavier, reprise, annulation)
+    - [x] Justification de la fenetre [0.3 ; 0.7] vs [0.3 ; 0.8] (distance a 0.5, volume annotable, strategie d'elargissement conditionnelle)
+    - [x] Priorite par source (GreenIT.fr en tete : 969 borderline sur 1 325)
 - [ ] **Etape 5 - Versioning** :
-  - [ ] Re-export du golden dataset apres annotation manuelle
-  - [ ] Tag DVC du nouveau dataset versionne (`golden_dataset.csv.dvc`)
-  - [ ] Push vers MinIO via `uv run dvc push`
+  - [ ] Re-export du golden dataset apres annotation manuelle — **A FAIRE apres audit**
+  - [ ] Tag DVC du nouveau dataset versionne (`golden_dataset.csv.dvc`) — **A FAIRE apres audit**
+  - [ ] Push vers MinIO via `uv run dvc push` — **A FAIRE apres audit**
 
 #### B2.11 Mise a jour documentation
 
@@ -707,70 +721,74 @@
 
 > Priorite 1. Gain principal sur l'ecart-type MCC (cible sigma < 0.10).
 
-- [ ] Installer `iterative-stratification` via `uv add iterative-stratification`
-- [ ] Remplacer `StratifiedKFold(K=5, stratify=y)` par `MultilabelStratifiedKFold(K=5)` sur le vecteur compose `(langue, label)` (une seule colonne multi-label encodee one-hot)
-- [ ] Verifier que chaque fold contient la distribution correcte :
-  - [ ] ~75 % EN / ~25 % FR
-  - [ ] ~8.73 % positifs globaux, avec ~4.80 % positifs parmi les EN et ~20.37 % parmi les FR
-  - [ ] Assert automatique avec tolerance 2 pts de pourcentage
-- [ ] Tests unitaires dans `tests/unit/test_stratification.py`
-- [ ] Logger les stats de chaque fold dans MLflow (params : `fold_X_n_en`, `fold_X_n_fr`, `fold_X_ratio_green_fr`, etc.)
+- [x] Installer `iterative-stratification` via `uv add iterative-stratification` — `iterative-stratification>=0.1.9` dans `pyproject.toml:73`
+- [x] Remplacer `StratifiedKFold(K=5, stratify=y)` par `MultilabelStratifiedKFold(K=5)` sur le vecteur compose `(langue, label)` (une seule colonne multi-label encodee one-hot) — import `training.py:1562`, usage ligne 1646
+- [x] Verifier que chaque fold contient la distribution correcte :
+  - [x] ~75 % EN / ~25 % FR — `_log_fold_split_stats` logue les compteurs EN/FR par fold (ligne 1935)
+  - [x] ~8.73 % positifs globaux, avec ~4.80 % positifs parmi les EN et ~20.37 % parmi les FR — loguee via `n_val_green` / `n_train_green`
+  - [x] Assert automatique avec tolerance 2 pts de pourcentage (2026-04-21) — `_check_fold_stratification()` compare les 5 ratios observes aux cibles `_STRATIFICATION_TARGET_RATIOS` (tolerance `_STRATIFICATION_TOLERANCE_PP = 0.02`). Mode hybride : warning loguru par defaut, `AssertionError` si `strict_stratification=True`. Flag CLI `--strict-stratification` expose par `retrain_pipeline.py`. Ratios observes logges dans MLflow (`fold_X_val_ratio_*`) pour audit post-entrainement.
+- [x] Tests unitaires dans `tests/unit/test_stratification.py` (2026-04-21) — 14 tests pytest : coherence des constantes cibles (tolerance 2 pp, EN+FR=1, ordre FR>global>EN), logique `_check_fold_stratification` (conforme, juste en dessous, legerement au-dela, multiples deviations, mode strict, cles manquantes), calcul `_log_fold_split_stats` (5 cles, valeurs manuelles, val vide degenere, propagation `strict_stratification`). Tous verts sans mock IA.
+- [x] Logger les stats de chaque fold dans MLflow (params : `fold_X_n_en`, `fold_X_n_fr`, `fold_X_ratio_green_fr`, etc.) — integre dans `train_with_unified_protocol`
 
 #### B3.2 Loss ponderee (class_weight)
 
-- [ ] Remplacer `_oversample_minority` dans `src/greentech/ai/models/training.py` par passage du `class_weight` a la CrossEntropy :
-  - Calcul au demarrage de chaque fold : `class_weight = torch.tensor([1.0, N_neg_train / N_pos_train])` (~[1.0, 10.46] sur le full train, varie legerement par fold)
-  - Passer via `compute_loss_func` custom ou en sub-classant `Trainer.compute_loss`
-- [ ] Supprimer l'oversampling x84 (overfits les 22 memes textes, inflate le train set)
-- [ ] Tests unitaires : verifier que la loss converge sur un mini-dataset desequilibre synthetique
-- [ ] Run MLflow : tag explicite `loss_strategy=weighted_ce` pour tracabilite
-- [ ] **Focal Loss NON retenue** : les 3 agents convergent — Focal Loss degrade la calibration et n'apporte de gain qu'au-dela de 1:50 (notre ratio 1:10.5 est "modere"). Elle pourra etre testee en phase 2 si le MCC plafonne sous 0.75.
+- [x] Remplacer `_oversample_minority` dans `src/greentech/ai/models/training.py` par passage du `class_weight` a la CrossEntropy :
+  - [x] Calcul au demarrage de chaque fold : `class_weight = torch.tensor([1.0, N_neg_train / N_pos_train])` (~[1.0, 10.46] sur le full train, varie legerement par fold) — `compute_class_weight()` ligne 190
+  - [x] Passer via `compute_loss_func` custom ou en sub-classant `Trainer.compute_loss` — `WeightedLossTrainer` ligne 140, override `compute_loss()` avec `torch.nn.CrossEntropyLoss(weight=weight)`
+- [x] Supprimer l'oversampling x84 (overfits les 22 memes textes, inflate le train set) — `_oversample_minority` n'est plus appele dans `train_with_unified_protocol`
+- [x] Tests unitaires : verifier que la loss converge sur un mini-dataset desequilibre synthetique (2026-04-21) — `tests/unit/ai/test_class_weight.py` (11 tests pytest). Couvre `compute_class_weight` (balanced, imbalanced 1:9, ratio production 1:10.46, degenere sans positif, input numpy, shape/dtype) et `WeightedLossTrainer.compute_loss` (amplification sur batch mixte hard-positifs, formule `sum(w_i*CE_i)/sum(w_i)` verifiee numeriquement, fallback CE standard sans class_weight, restauration `inputs["labels"]`, `return_outputs=True`). Stub Trainer via `__new__` pour eviter l'init HF complet, stub model pour mocker `outputs.logits`.
+- [x] Run MLflow : tag explicite `loss_strategy=weighted_ce` pour tracabilite (2026-04-21) — tag ajoute dans l'`ExperimentConfig` de `train_with_unified_protocol` (ligne 1623). Tag complementaire `stratification=multilabel_langue_label` + tag `augmentation=opus-mt-backtranslation|none` pour tracabilite complete du protocole B3 dans MLflow.
+- [x] **Focal Loss NON retenue** : les 3 agents convergent — Focal Loss degrade la calibration et n'apporte de gain qu'au-dela de 1:50 (notre ratio 1:10.5 est "modere"). Elle pourra etre testee en phase 2 si le MCC plafonne sous 0.75.
 
-#### B3.3 Back-translation EN<->FR (opus-mt)
+#### B3.3 Back-translation EN<->FR (opus-mt) (EXECUTEE 2026-04-21 04:00-04:13)
 
 > Double le nombre de positifs (1 018 -> ~2 036), ratio effectif 1:10.5 -> ~1:5.25. Gain attendu +0.05 a +0.08 MCC.
+>
+> **Resultat reel** : 1 018 positifs originaux -> 1 686 positifs totaux (+ 668 variantes back-translation acceptees, ratio effectif ~1:6.3). Le filtre qualite cosine [0.85, 0.99] a rejete ~350 variantes (similarite trop faible ou trop haute).
 
-- [ ] Installer `sentence-transformers` (filtre qualite) via `uv add sentence-transformers`
-- [ ] Telecharger modeles : `Helsinki-NLP/opus-mt-en-fr` et `Helsinki-NLP/opus-mt-fr-en` (2x ~75M params, ~150 Mo chacun)
-- [ ] Creer `src/greentech/data/processors/back_translator.py` :
-  - [ ] Classe `BackTranslator` avec methode `augment_positives(articles, target_similarity_range=(0.85, 0.99))`
-  - [ ] Pipeline : EN positif -> FR (opus-mt-en-fr) -> EN (opus-mt-fr-en) ; idem sens inverse
-  - [ ] Filtre qualite : similarite cosine `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (original, retraduit) hors [0.85, 0.99] = rejet
-  - [ ] N'appliquer que sur `resume` (150-220 mots). Titre inchange, reutilise tel quel.
-  - [ ] Variantes ont meme `id_source`, meme label, mais `uuid` different + flag `augmentation_source='opus-mt-backtranslation'`
-- [ ] Creer `scripts/augment_positives.py` (CLI) :
-  - [ ] Lit `data/golden_dataset.csv`, filtre positifs
-  - [ ] Genere les variantes via `BackTranslator`
-  - [ ] Output : `data/golden_dataset_augmented.csv` (union des originaux + variantes acceptees)
-  - [ ] Logs MLflow : nombre genere, nombre accepte, nombre rejete (similarite hors bornes), temps total
-- [ ] **Regle d'or** : les variantes vont UNIQUEMENT dans le train split de chaque fold. Le val/test split n'est construit qu'a partir des articles originaux (jamais augmentes), sinon on biaise l'evaluation. Cette regle est implementee dans la logique K-fold : stratifier sur les originaux, puis augmenter chaque train split apres splitting.
-- [ ] Tests unitaires : verifier que val/test ne contient jamais de `augmentation_source` non-null
-- [ ] Temps estime sur RX 7900 XTX : ~20-30 min pour 1 018 positifs (batch 32, MarianMT)
+- [x] Installer `sentence-transformers` (filtre qualite) via `uv add sentence-transformers` — `sentence-transformers>=5.4.1` dans `pyproject.toml:74`
+- [x] Telecharger modeles : `Helsinki-NLP/opus-mt-en-fr` et `Helsinki-NLP/opus-mt-fr-en` (2x ~75M params, ~150 Mo chacun) — cache HF local, exploites sans erreur
+- [x] Creer `src/greentech/data/processors/back_translator.py` :
+  - [x] Classe `BackTranslator` avec methode `augment_positives(articles, target_similarity_range=(0.85, 0.99))` — ligne 139
+  - [x] Pipeline : EN positif -> FR (opus-mt-en-fr) -> EN (opus-mt-fr-en) ; idem sens inverse
+  - [x] Filtre qualite : similarite cosine `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (original, retraduit) hors [0.85, 0.99] = rejet
+  - [x] N'appliquer que sur `resume` (150-220 mots). Titre inchange, reutilise tel quel.
+  - [x] Variantes ont meme `id_source`, meme label, mais `uuid` different + flag `augmentation_source='opus-mt-backtranslation-simX.XXX'`
+- [x] Creer `scripts/augment_positives.py` (CLI) :
+  - [x] Lit `data/golden_dataset.csv`, filtre positifs
+  - [x] Genere les variantes via `BackTranslator`
+  - [x] Output : `data/golden_dataset_augmented.csv` (union des originaux + variantes acceptees) — 12 332 articles, 1 686 positifs, 140 valeurs distinctes de `augmentation_source` (score de similarite par variante)
+  - [x] Logs MLflow : nombre genere, nombre accepte, nombre rejete (similarite hors bornes), temps total — runs `augment-back-translation-1776736802` (2026-04-21 04:00) et `augment-back-translation-1776737626` (2026-04-21 04:13)
+- [x] **Regle d'or** : les variantes vont UNIQUEMENT dans le train split de chaque fold. Le val/test split n'est construit qu'a partir des articles originaux (jamais augmentes), sinon on biaise l'evaluation. Cette regle est implementee dans la logique K-fold : stratifier sur les originaux, puis augmenter chaque train split apres splitting — `_build_variant_index` (ligne 1875) + `_collect_variants_for_train` (ligne 1924) + split originaux-only dans `train_with_unified_protocol` (lignes 1587-1657)
+- [x] Tests unitaires : verifier que val/test ne contient jamais de `augmentation_source` non-null (2026-04-22) — `tests/unit/ai/test_back_translator.py` (15 tests pytest). Couvre `BackTranslationStats` (acceptance_rate edge cases, to_dict MLflow keys), `BackTranslator._build_result` (filtre similarite rejet/accept, bornes min/max strictes, preservation langues), `augment()` validation (longueurs incoherentes -> ValueError, input vide), routing par langue (langues non supportees loguees, pivot correct EN<->FR, comptage rejets low/high). Mocks de `load`, `_translate_batch`, `_compute_similarities` pour eviter chargement des modeles MarianMT/SentenceTransformer. La regle d'or val/test 100 % originaux est garantie structurellement par `train_with_unified_protocol` qui splitte via `original_indices` (lignes 1587-1657 de `training.py`) avant d'injecter les variantes dans le train uniquement.
+- [x] Temps estime sur RX 7900 XTX : ~20-30 min pour 1 018 positifs (batch 32, MarianMT) — reellement ~13 min cumulees (2 runs successifs)
 
 #### B3.4 Calibration post-training (temperature scaling + threshold tuning)
 
 > Integre automatiquement apres chaque fold training. Gain ~+0.02-0.05 MCC indirect via seuil optimal.
 
-- [ ] Creer `src/greentech/ai/mlops/calibration.py` :
-  - [ ] Classe `TemperatureScaler` : 1 parametre T (scalaire), optimise sur val set par LBFGS pour minimiser la NLL. Reference : Guo et al. 2017 (arXiv:1706.04599), validee 2024-2025 pour BERT/DeBERTa fine-tunes.
-  - [ ] Fonction `find_optimal_threshold(y_true, y_proba, metric='mcc') -> tuple[float, float]` : grille 0.05-0.95 pas 0.01, retourne `(threshold_optimal, mcc_optimal)`
-  - [ ] Persistence : `temperature.json` (`{"T": 1.87, "optimized_on": "fold_3_val", "nll_before": ..., "nll_after": ...}`) et `optimal_threshold.json` (`{"threshold": 0.42, "metric": "mcc", "value": 0.78}`) dans le dossier du modele
-- [ ] **Platt scaling et isotonic regression NON retenus** : overfittent avec <1 000 positifs par fold (agent A).
-- [ ] Integration dans le training loop :
-  - [ ] Apres chaque fold training, sur le val set du fold : optimiser T puis threshold
-  - [ ] Moyenner les 5 T et 5 thresholds -> un seul `temperature.json` / `optimal_threshold.json` au niveau modele
-  - [ ] Logger dans MLflow : `T_fold_X`, `threshold_fold_X`, `T_final`, `threshold_final`
-- [ ] Tests unitaires avec dataset synthetique calibre/decalibre
+- [x] Creer `src/greentech/ai/mlops/calibration.py` :
+  - [x] Classe `TemperatureScaler` : 1 parametre T (scalaire), optimise sur val set par LBFGS pour minimiser la NLL. Reference : Guo et al. 2017 (arXiv:1706.04599), validee 2024-2025 pour BERT/DeBERTa fine-tunes. — ligne 79
+  - [x] Fonction `find_optimal_threshold(y_true, y_proba, metric='mcc') -> tuple[float, float]` : grille 0.05-0.95 pas 0.01, retourne `(threshold_optimal, mcc_optimal)` — ligne 197
+  - [x] Persistence : `temperature.json` (`{"T": 1.87, "optimized_on": "fold_3_val", "nll_before": ..., "nll_after": ...}`) et `optimal_threshold.json` (`{"threshold": 0.42, "metric": "mcc", "value": 0.78}`) dans le dossier du modele — `save_calibration` ligne 268, chargement auto par `inference.py:155-166`
+- [x] **Platt scaling et isotonic regression NON retenus** : overfittent avec <1 000 positifs par fold (agent A) — documente dans le docstring de `calibration.py`
+- [x] Integration dans le training loop :
+  - [x] Apres chaque fold training, sur le val set du fold : optimiser T puis threshold — `training.py:1726-1739`
+  - [x] Moyenner les 5 T et 5 thresholds -> un seul `temperature.json` / `optimal_threshold.json` au niveau modele — `training.py:1798-1820`
+  - [x] Logger dans MLflow : `T_fold_X`, `threshold_fold_X`, `T_final`, `threshold_final` — `cv_temperature_mean` et `cv_threshold_mean` logues (ligne 1824-1825) + `temperature` / `threshold` par fold dans `fold_metrics_dict`
+- [x] Tests unitaires avec dataset synthetique calibre/decalibre (2026-04-22) — `tests/unit/ai/test_calibration.py` (21 tests pytest). Couvre `TemperatureScaler` (init T=1, transform identite a T=1, fit reduit NLL sur logits sur-confiants, preservation argmax, accepte numpy et torch), `find_optimal_threshold` (borne grille, MCC=1 sur dataset separable, metric F1 OK, erreurs shape/grille invalide, grid_values stocke), `save_calibration`/`load_calibration` round-trip (T seul, threshold seul, les deux, dossier vide retourne None/None), `apply_calibration` (retour tuple 2 arrays, equivalence T=1 vs softmax, T eleve aplatit, seuil influence preds pas probas, default 0.5).
 
-#### B3.5 Ensemble K-fold (K=5 seeds x 3)
+#### B3.5 Ensemble K-fold (K=5 seeds x 3) (IMPLEMENTE 2026-04-21)
 
 > Gain MCC +0.03 a +0.07 documente. Moyenne des logits pre-sigmoid.
+>
+> **Architecture retenue** : assemblage automatique a la fin de `train_with_unified_protocol` (recommandation option (a), utilisateur 2026-04-21). Pour chaque fold, selection de la meilleure seed (max MCC val, F1 en tie-break) via `_select_best_seed_per_fold`. Strategy differente selon l'architecture :
 
-- [ ] Apres K=5 folds x 3 seeds = 15 trainings par modele, deux strategies selon l'architecture :
-  - [ ] **Qwen3-4B LoRA** : fusionner les 5 adapters (un par fold, seeds moyennes par fold) via `PeftModel.merge_and_unload()` puis conserver les poids fusionnes -> 1 seul modele prod, cout inference 1x
-  - [ ] **mDeBERTa** : charger les 5 modeles en parallele a l'inference, moyenner les logits. Cout ~5x latence, ~5.5 Go VRAM (5x 1.1 Go) sur RX 7900 XTX
-- [ ] Alternative si mDeBERTa trop lent : garder les 3 meilleurs folds (best val MCC) au lieu des 5
-- [ ] Enregistrer tous les modeles folds dans `models/<model>/folds/fold_X/` + un `ensemble_config.json` listant les folds selectionnes
+- [x] Apres K=5 folds x 3 seeds = 15 trainings par modele, deux strategies selon l'architecture :
+  - [x] **Qwen3-4B LoRA** : fusionner les 5 adapters (un par fold, seeds moyennes par fold) via `PeftModel.merge_and_unload()` puis conserver les poids fusionnes -> 1 seul modele prod, cout inference 1x — implemente dans `_merge_lora_adapters()` + `_average_lora_deltas()` + `_copy_tokenizer_artifacts()` (`training.py`). Moyenne arithmetique des deltas LoRA A/B (equivalent SWA light) avant `merge_and_unload()`. Sauvegarde dans `models/qwen3/merged/`. Rechargeable comme LoRA classique via `LoRAClassifier.load()`.
+  - [x] **mDeBERTa** : charger les 5 modeles en parallele a l'inference, moyenner les logits. Cout ~5x latence, ~5.5 Go VRAM (5x 1.1 Go) sur RX 7900 XTX — classe `EnsembleClassifier` dans `inference.py` herite de `BaseClassifier`, charge les K membres via `classifier_factory`, moyenne les `proba_positive` a chaque `predict()`. Active automatiquement par `get_classifier()` quand `strategy=logit_average` detectee dans `ensemble_config.json`.
+- [x] Alternative si mDeBERTa trop lent : garder les 3 meilleurs folds (best val MCC) au lieu des 5 — supporte nativement par `EnsembleClassifier` (nombre de membres = taille de `fold_paths` dans `ensemble_config.json`, modifiable a posteriori sans recode).
+- [x] Enregistrer tous les modeles folds dans `models/<model>/folds/fold_X/` + un `ensemble_config.json` listant les folds selectionnes — `training.py:1690` sauvegarde dans `folds/fold_X_seed_Y/`. `_build_ensemble()` ecrit `ensemble_config.json` a la racine du modele avec `strategy`, `folds` (fold+seed+metriques+path), `inference_model_path(s)`, `calibration` (T+seuil moyens), `metadata` (date, n_folds, cv_mcc_mean/std). Tags MLflow `ensemble_strategy` + metric `ensemble_n_folds`.
 
 #### B3.6 Validation Deepchecks renforcee
 
@@ -845,12 +863,12 @@
 
 #### B4.4 Benchmark comparatif des modeles entraines
 
-- [ ] Creer `scripts/benchmark_models.py` :
-  - [ ] Charger les 2 modeles entraines
-  - [ ] Evaluer sur le meme test set (split fige, hold-out non vu pendant l'entrainement)
-  - [ ] Metriques completes : MCC, F1, Recall, Precision, balanced_accuracy, specificite, matrice de confusion, latence p50/p95, CO2eq
-  - [ ] Generer un rapport markdown comparatif dans `docs/BENCHMARK_FINAL_2026-04.md`
-- [ ] Run MLflow `model-selection-final-2026-04`
+- [x] Creer `scripts/benchmark_models.py` :
+  - [x] Charger les 2 modeles entraines — MODEL_REGISTRY (lignes 73-82) mappe `qwen3` vers `Qwen3Classifier` et `mdeberta` vers `MDeBERTaClassifier`, chargement via `_load_classifier_for_model()` (ligne 119)
+  - [ ] Evaluer sur le meme test set (split fige, hold-out non vu pendant l'entrainement) — **RESTE A FAIRE** : execution en attente des modeles entraines (B4.3)
+  - [ ] Metriques completes : MCC, F1, Recall, Precision, balanced_accuracy, specificite, matrice de confusion, latence p50/p95, CO2eq — **RESTE A FAIRE** (execution)
+  - [ ] Generer un rapport markdown comparatif dans `docs/BENCHMARK_FINAL_2026-04.md` — **RESTE A FAIRE** (execution)
+- [ ] Run MLflow `model-selection-final-2026-04` — **RESTE A FAIRE**
 
 #### B4.5 Selection et promotion du modele
 

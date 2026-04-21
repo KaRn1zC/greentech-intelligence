@@ -41,8 +41,11 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import time
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -175,9 +178,7 @@ class WeightedLossTrainer(Trainer):
         outputs = model(**inputs)
         logits = outputs.logits
 
-        weight = (
-            self.class_weight.to(logits.device) if self.class_weight is not None else None
-        )
+        weight = self.class_weight.to(logits.device) if self.class_weight is not None else None
 
         loss_fct = torch.nn.CrossEntropyLoss(weight=weight)
         loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
@@ -1506,6 +1507,7 @@ async def train_with_unified_protocol(
     n_splits: int = 5,
     n_seeds: int = 3,
     base_random_state: int = 42,
+    strict_stratification: bool = False,
 ) -> dict:
     """Entraine un modele selon le protocole unifie B3 (avril 2026).
 
@@ -1546,6 +1548,10 @@ async def train_with_unified_protocol(
         n_seeds: Nombre de seeds par fold (defaut 3).
         base_random_state: Seed de base pour le split K-fold. Les seeds
             intra-fold sont derives : ``base_random_state + seed_idx``.
+        strict_stratification: Si ``True``, leve ``AssertionError`` des
+            qu'un fold devie de plus de 2 points de pourcentage par
+            rapport aux ratios cible (EN/FR/Green global/Green par langue).
+            Defaut ``False`` : logge un warning et poursuit l'entrainement.
 
     Returns:
         Dictionnaire contenant :
@@ -1557,6 +1563,8 @@ async def train_with_unified_protocol(
 
     Raises:
         ValueError: Si ``model_type`` n'est pas un modele cible du B4.
+        AssertionError: Si ``strict_stratification=True`` et un fold devie
+            au-dela de la tolerance de 2 pp.
     """
     import mlflow
     from iterstrat.ml_stratifiers import MultilabelStratifiedKFold
@@ -1619,8 +1627,8 @@ async def train_with_unified_protocol(
         tags={
             "phase": "b3-unified-protocol",
             "model_type": model_type,
-            "stratification": "langue_x_label",
-            "loss": "weighted_ce",
+            "stratification": "multilabel_langue_label",
+            "loss_strategy": "weighted_ce",
             "augmentation": "opus-mt-backtranslation" if n_augmented > 0 else "none",
         },
         params={
@@ -1666,7 +1674,7 @@ async def train_with_unified_protocol(
             val_labels_fold = labels_arr[val_orig_global].tolist()
             val_langues_fold = langues_arr[val_orig_global].tolist()
 
-            _log_fold_split_stats(
+            observed_ratios = _log_fold_split_stats(
                 fold_idx=fold_idx,
                 n_splits=n_splits,
                 train_texts_fold=train_texts_fold,
@@ -1675,6 +1683,17 @@ async def train_with_unified_protocol(
                 val_labels_fold=val_labels_fold,
                 val_langues_fold=val_langues_fold,
                 n_augmented_in_train=len(augment_global),
+                strict_stratification=strict_stratification,
+            )
+
+            # Traçabilité MLflow : les ratios observes par fold permettent de
+            # verifier la qualite de la stratification apres coup dans l'UI.
+            mlflow.log_metrics(
+                {
+                    f"fold_{fold_idx}_val_{key}": float(value)
+                    for key, value in observed_ratios.items()
+                },
+                step=fold_idx,
             )
 
             # class_weight calcule sur le train set (ratio varie legerement par fold)
@@ -1683,8 +1702,10 @@ async def train_with_unified_protocol(
             for seed_idx in range(n_seeds):
                 seed = base_random_state + seed_idx
                 logger.info("")
-                logger.info(f"  --- FOLD {fold_idx}/{n_splits} SEED {seed_idx + 1}/{n_seeds} "
-                            f"(seed={seed}) ---")
+                logger.info(
+                    f"  --- FOLD {fold_idx}/{n_splits} SEED {seed_idx + 1}/{n_seeds} "
+                    f"(seed={seed}) ---"
+                )
 
                 fold_start = time.perf_counter()
                 fold_output_dir = folds_root / f"fold_{fold_idx}_seed_{seed_idx + 1}"
@@ -1738,9 +1759,7 @@ async def train_with_unified_protocol(
                 )
 
                 # Recalculer les predictions avec seuil optimal pour logger les metriques
-                calibrated_preds = (
-                    calibrated_probs >= threshold_result.threshold
-                ).astype(int)
+                calibrated_preds = (calibrated_probs >= threshold_result.threshold).astype(int)
                 fold_metrics_dict = _compute_fold_metrics(
                     val_labels_arr.tolist(),
                     calibrated_preds.tolist(),
@@ -1776,9 +1795,7 @@ async def train_with_unified_protocol(
                     fold=fold_idx,
                     total_folds=n_splits,
                     metrics={
-                        k: v
-                        for k, v in fold_metrics_dict.items()
-                        if isinstance(v, int | float)
+                        k: v for k, v in fold_metrics_dict.items() if isinstance(v, int | float)
                     },
                     duration_seconds=fold_metrics_dict["duration_s"],
                 )
@@ -1831,24 +1848,39 @@ async def train_with_unified_protocol(
             mcc_std=aggregated["mcc"]["std"],
         )
 
+        # Assemblage final B3.5 : selection de la meilleure seed par fold,
+        # fusion LoRA (Qwen3) ou generation d'un ensemble logit-average (mDeBERTa).
+        # Produit `ensemble_config.json` consomme par `inference.py` au chargement.
+        ensemble_info = _build_ensemble(
+            model_type=model_type,
+            model_output_root=model_output_root,
+            run_metrics=run_metrics,
+            folds_root=folds_root,
+            mean_temperature=mean_temperature,
+            mean_threshold=mean_threshold,
+            aggregated=aggregated,
+        )
+
+        mlflow.log_metric("ensemble_n_folds", float(len(ensemble_info["folds"])))
+        mlflow.set_tag("ensemble_strategy", ensemble_info["strategy"])
+
     logger.info("")
     logger.info("=" * 70)
     logger.info(f"  PROTOCOLE UNIFIE TERMINE ({n_splits} folds x {n_seeds} seeds)")
     logger.info("=" * 70)
     logger.info(
-        f"  MCC        : {aggregated['mcc']['mean']:.4f} "
-        f"(+/- {aggregated['mcc']['std']:.4f})"
+        f"  MCC        : {aggregated['mcc']['mean']:.4f} (+/- {aggregated['mcc']['std']:.4f})"
     )
     logger.info(
-        f"  F1         : {aggregated['f1']['mean']:.4f} "
-        f"(+/- {aggregated['f1']['std']:.4f})"
+        f"  F1         : {aggregated['f1']['mean']:.4f} (+/- {aggregated['f1']['std']:.4f})"
     )
     logger.info(
-        f"  Recall GIT : {aggregated['recall']['mean']:.4f} "
-        f"(+/- {aggregated['recall']['std']:.4f})"
+        f"  Recall GIT : {aggregated['recall']['mean']:.4f} (+/- {aggregated['recall']['std']:.4f})"
     )
     logger.info(f"  Temperature moyenne : {mean_temperature:.4f}")
     logger.info(f"  Threshold optimal moyen : {mean_threshold:.4f}")
+    logger.info(f"  Ensemble strategy   : {ensemble_info['strategy']}")
+    logger.info(f"  Ensemble folds      : {len(ensemble_info['folds'])}")
     logger.info(f"  Artefacts : {model_output_root}")
 
     return {
@@ -1860,6 +1892,7 @@ async def train_with_unified_protocol(
             "threshold_mean": mean_threshold,
             "threshold_per_run": thresholds,
         },
+        "ensemble": ensemble_info,
         "metadata": {
             "model_type": model_type,
             "n_splits": n_splits,
@@ -1932,6 +1965,64 @@ def _collect_variants_for_train(
     return np.array(variants, dtype=int)
 
 
+# Distribution cible du dataset final (cf. B2.9 CHECKLIST_SUIVI) : un fold bien
+# stratifie doit rester dans une fenetre de +/- 2 points de pourcentage autour
+# de ces valeurs. Au-dela, la variance inter-fold du MCC peut exploser.
+_STRATIFICATION_TARGET_RATIOS: dict[str, float] = {
+    "ratio_en": 0.7475,
+    "ratio_fr": 0.2525,
+    "ratio_green_global": 0.0873,
+    "ratio_green_en": 0.0480,
+    "ratio_green_fr": 0.2037,
+}
+_STRATIFICATION_TOLERANCE_PP: float = 0.02
+
+
+def _check_fold_stratification(
+    *,
+    fold_idx: int,
+    observed: dict[str, float],
+    strict: bool,
+) -> list[str]:
+    """Compare les ratios observes du fold aux cibles et emet des alertes.
+
+    Args:
+        fold_idx: Numero du fold (1-indexe) pour le logging.
+        observed: Ratios observes sur le val set (memes cles que
+            ``_STRATIFICATION_TARGET_RATIOS``).
+        strict: Si ``True``, leve ``AssertionError`` a la premiere
+            deviation superieure a la tolerance. Si ``False``, logge un
+            warning par ratio devie et retourne la liste.
+
+    Returns:
+        Liste des messages d'ecart detectes (vide si le fold est conforme).
+
+    Raises:
+        AssertionError: Si ``strict=True`` et au moins un ratio devie au-dela
+            de la tolerance.
+    """
+    deviations: list[str] = []
+    for key, target in _STRATIFICATION_TARGET_RATIOS.items():
+        obs = observed.get(key)
+        if obs is None:
+            continue
+        diff = abs(obs - target)
+        if diff > _STRATIFICATION_TOLERANCE_PP:
+            msg = (
+                f"Fold {fold_idx} : {key}={obs:.4f} "
+                f"(cible={target:.4f}, ecart={diff * 100:.2f}pp, "
+                f"tolerance={_STRATIFICATION_TOLERANCE_PP * 100:.0f}pp)"
+            )
+            deviations.append(msg)
+            if strict:
+                raise AssertionError(
+                    f"Stratification stricte violee : {msg}. "
+                    "Desactive le flag strict_stratification pour un warning uniquement."
+                )
+            logger.warning(f"  [STRATIFICATION] {msg}")
+    return deviations
+
+
 def _log_fold_split_stats(
     *,
     fold_idx: int,
@@ -1942,8 +2033,27 @@ def _log_fold_split_stats(
     val_labels_fold: list[int],
     val_langues_fold: list[str],
     n_augmented_in_train: int,
-) -> None:
-    """Logge les statistiques de split du fold pour verification de stratification."""
+    strict_stratification: bool = False,
+) -> dict[str, float]:
+    """Logge les statistiques de split du fold et verifie la stratification.
+
+    Args:
+        fold_idx: Numero du fold courant (1-indexe).
+        n_splits: Nombre total de folds du K-fold.
+        train_texts_fold: Textes du train split (originaux + variantes).
+        train_labels_fold: Labels du train split.
+        val_texts_fold: Textes du val split (originaux uniquement).
+        val_labels_fold: Labels du val split.
+        val_langues_fold: Codes langue du val split (``"en"`` / ``"fr"``).
+        n_augmented_in_train: Nombre de variantes back-translation injectees
+            dans le train split.
+        strict_stratification: Si ``True``, leve ``AssertionError`` des qu'un
+            ratio observe devie de plus de 2 pp par rapport a la cible
+            attendue. Defaut ``False`` : logge un warning et poursuit.
+
+    Returns:
+        Dictionnaire des ratios observes pour logging MLflow ulterieur.
+    """
     logger.info("")
     logger.info("=" * 70)
     logger.info(f"  FOLD {fold_idx}/{n_splits}")
@@ -1952,14 +2062,38 @@ def _log_fold_split_stats(
     n_val_green = int(sum(val_labels_fold))
     val_en = sum(1 for lang in val_langues_fold if lang == "en")
     val_fr = sum(1 for lang in val_langues_fold if lang == "fr")
+    n_val = len(val_texts_fold)
+    val_green_en = sum(
+        1
+        for lang, label in zip(val_langues_fold, val_labels_fold, strict=True)
+        if lang == "en" and label == 1
+    )
+    val_green_fr = sum(
+        1
+        for lang, label in zip(val_langues_fold, val_labels_fold, strict=True)
+        if lang == "fr" and label == 1
+    )
     logger.info(
         f"  Train : {len(train_texts_fold)} (Green: {n_train_green}, "
         f"augmentes: {n_augmented_in_train})"
     )
-    logger.info(
-        f"  Val   : {len(val_texts_fold)} (Green: {n_val_green}, "
-        f"EN: {val_en}, FR: {val_fr})"
+    logger.info(f"  Val   : {n_val} (Green: {n_val_green}, EN: {val_en}, FR: {val_fr})")
+
+    observed: dict[str, float] = {
+        "ratio_en": val_en / n_val if n_val else 0.0,
+        "ratio_fr": val_fr / n_val if n_val else 0.0,
+        "ratio_green_global": n_val_green / n_val if n_val else 0.0,
+        "ratio_green_en": val_green_en / val_en if val_en else 0.0,
+        "ratio_green_fr": val_green_fr / val_fr if val_fr else 0.0,
+    }
+
+    _check_fold_stratification(
+        fold_idx=fold_idx,
+        observed=observed,
+        strict=strict_stratification,
     )
+
+    return observed
 
 
 def _probas_to_binary_logits(probas_positive: np.ndarray) -> np.ndarray:
@@ -1986,7 +2120,6 @@ def _resolve_model_output_root(model_type: str) -> Path:
         msg = f"Pas de racine definie pour model_type={model_type}"
         raise ValueError(msg)
     return mapping[model_type]
-
 
 
 def _compute_fold_metrics(
@@ -2056,6 +2189,270 @@ def _aggregate_fold_metrics(fold_metrics: list[dict]) -> dict[str, dict[str, flo
             "values": values,
         }
     return aggregated
+
+
+def _select_best_seed_per_fold(run_metrics: list[dict]) -> list[dict]:
+    """Selectionne la meilleure seed (max MCC val) pour chaque fold.
+
+    En cas d'egalite parfaite sur le MCC (tres rare), on conserve la seed
+    avec le F1 le plus eleve pour departager. Resultat : un checkpoint par
+    fold, soit K checkpoints au total pour l'ensemble.
+
+    Args:
+        run_metrics: Liste des dicts ``fold_metrics_dict`` produits par
+            ``train_with_unified_protocol`` (un par (fold, seed)). Chaque
+            entree doit contenir au minimum les cles ``fold``, ``seed_idx``,
+            ``mcc``, ``f1``.
+
+    Returns:
+        Liste de K entrees, une par fold, correspondant a la meilleure seed.
+    """
+    folds_by_idx: dict[int, list[dict]] = {}
+    for entry in run_metrics:
+        folds_by_idx.setdefault(int(entry["fold"]), []).append(entry)
+
+    best_per_fold: list[dict] = []
+    for fold_idx in sorted(folds_by_idx):
+        candidates = folds_by_idx[fold_idx]
+        best = max(candidates, key=lambda e: (float(e["mcc"]), float(e["f1"])))
+        best_per_fold.append(best)
+    return best_per_fold
+
+
+def _build_ensemble(
+    *,
+    model_type: str,
+    model_output_root: Path,
+    run_metrics: list[dict],
+    folds_root: Path,
+    mean_temperature: float,
+    mean_threshold: float,
+    aggregated: dict,
+) -> dict:
+    """Assemble l'ensemble final a partir des K*N checkpoints K-fold.
+
+    Deux strategies selon l'architecture du modele :
+
+    * **Qwen3-4B + LoRA** (``strategy="merge_lora"``) : fusionne les K adapters
+      LoRA (meilleure seed par fold) dans les poids du base model via
+      ``PeftModel.merge_and_unload()``. Les poids fusionnes sont moyennes
+      arithmetiquement entre les K folds (equivalent SWA light sur les
+      deltas LoRA). Sauvegarde dans ``models/qwen3/merged/`` + genere un
+      ``adapter_config.json`` pointant vers ce merged model pour que
+      ``inference.py`` le charge comme un modele LoRA classique. Cout
+      inference : **1x** (un seul modele en VRAM).
+
+    * **mDeBERTa-v3-base** (``strategy="logit_average"``) : pas de fusion
+      de poids possible (architectures full fine-tune, pas LoRA). Les K
+      checkpoints sont conserves a leur emplacement ``folds/fold_X_seed_Y/``
+      et moyennes a l'inference (logit averaging, cf. ``EnsembleClassifier``
+      dans ``inference.py``). Cout inference : **~5x** latence, ~5.5 Go VRAM.
+
+    Dans les deux cas, le fichier ``ensemble_config.json`` est ecrit a la
+    racine du modele (``model_output_root``) avec la liste des folds
+    selectionnes, leurs metriques, et la strategie. C'est ce fichier qui
+    active l'ensemble a l'inference.
+
+    Args:
+        model_type: ``"qwen3"`` ou ``"mdeberta"``.
+        model_output_root: Dossier racine du modele (``models/qwen3`` ou
+            ``models/mdeberta``).
+        run_metrics: Liste de tous les (fold, seed) metrics.
+        folds_root: Dossier contenant les K*N checkpoints fold_X_seed_Y.
+        mean_temperature: Temperature moyenne K-fold (deja persistee via
+            ``save_calibration``, reporte ici pour tracabilite).
+        mean_threshold: Seuil moyen K-fold (idem).
+        aggregated: Metriques agregees K-fold (``_aggregate_fold_metrics``).
+
+    Returns:
+        Dict avec ``strategy``, ``folds`` (liste), ``inference_model_path(s)``,
+        ``metadata``. Ce dict est ecrit tel quel dans ``ensemble_config.json``.
+    """
+    best_per_fold = _select_best_seed_per_fold(run_metrics)
+
+    folds_info = [
+        {
+            "fold": int(entry["fold"]),
+            "seed_idx": int(entry["seed_idx"]),
+            "seed": int(entry["seed"]),
+            "mcc": float(entry["mcc"]),
+            "f1": float(entry["f1"]),
+            "recall": float(entry["recall"]),
+            "precision": float(entry["precision"]),
+            "temperature": float(entry["temperature"]),
+            "threshold": float(entry["threshold"]),
+            "checkpoint_path": str(folds_root / f"fold_{entry['fold']}_seed_{entry['seed_idx']}"),
+        }
+        for entry in best_per_fold
+    ]
+
+    if model_type == "qwen3":
+        merged_dir = model_output_root / "merged"
+        _merge_lora_adapters(
+            fold_checkpoints=[Path(f["checkpoint_path"]) for f in folds_info],
+            output_dir=merged_dir,
+        )
+        strategy = "merge_lora"
+        inference_key: dict[str, str | list[str]] = {"inference_model_path": str(merged_dir)}
+    elif model_type == "mdeberta":
+        strategy = "logit_average"
+        inference_key = {"inference_model_paths": [f["checkpoint_path"] for f in folds_info]}
+    else:
+        msg = f"Ensemble non supporte pour model_type={model_type}"
+        raise ValueError(msg)
+
+    ensemble_info = {
+        "strategy": strategy,
+        "model_type": model_type,
+        "folds": folds_info,
+        **inference_key,
+        "calibration": {
+            "temperature": float(mean_temperature),
+            "threshold": float(mean_threshold),
+        },
+        "metadata": {
+            "built_at": datetime.now(UTC).isoformat(),
+            "n_folds": len(folds_info),
+            "cv_mcc_mean": float(aggregated["mcc"]["mean"]),
+            "cv_mcc_std": float(aggregated["mcc"]["std"]),
+        },
+    }
+
+    config_path = model_output_root / "ensemble_config.json"
+    config_path.write_text(
+        json.dumps(ensemble_info, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    logger.info(f"Ensemble config ecrit : {config_path} (strategy={strategy})")
+
+    return ensemble_info
+
+
+def _merge_lora_adapters(
+    *,
+    fold_checkpoints: list[Path],
+    output_dir: Path,
+) -> None:
+    """Fusionne K adapters LoRA dans un unique modele prod.
+
+    Strategie : charge le base model + le premier adapter, moyenne les
+    deltas LoRA des K adapters, puis ``merge_and_unload()`` pour absorber
+    les poids fusionnes dans le base model. Le resultat est sauvegarde
+    comme un nouveau adapter LoRA (avec ``adapter_model.safetensors`` +
+    ``adapter_config.json``) pour etre rechargeable par ``LoRAClassifier``.
+
+    Args:
+        fold_checkpoints: Liste des dossiers de checkpoints LoRA (un par
+            fold, issus de ``_select_best_seed_per_fold``).
+        output_dir: Dossier destination pour le merged model (typiquement
+            ``models/qwen3/merged/``). Sera cree si besoin.
+
+    Raises:
+        FileNotFoundError: Si l'un des checkpoints n'existe pas.
+        ValueError: Si la liste de checkpoints est vide.
+    """
+    from peft import PeftModel
+    from transformers import AutoModelForSequenceClassification
+
+    if not fold_checkpoints:
+        msg = "fold_checkpoints vide, impossible de fusionner"
+        raise ValueError(msg)
+
+    for ckpt in fold_checkpoints:
+        if not ckpt.exists():
+            msg = f"Checkpoint LoRA introuvable : {ckpt}"
+            raise FileNotFoundError(msg)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # On charge le base model + premier adapter. Les deltas LoRA suivants
+    # sont moyennes dans les tenseurs A et B avant merge_and_unload().
+    first_adapter_config = fold_checkpoints[0] / "adapter_config.json"
+    adapter_meta = json.loads(first_adapter_config.read_text(encoding="utf-8"))
+    base_model_name = adapter_meta.get("base_model_name_or_path")
+    if not base_model_name:
+        msg = f"adapter_config.json de {fold_checkpoints[0]} sans base_model_name_or_path"
+        raise ValueError(msg)
+
+    logger.info(f"Chargement base model {base_model_name} pour fusion LoRA...")
+    base_model = AutoModelForSequenceClassification.from_pretrained(
+        base_model_name,
+        num_labels=2,
+        torch_dtype=torch.bfloat16,
+    )
+
+    peft_model = PeftModel.from_pretrained(base_model, fold_checkpoints[0])
+
+    # Moyenne des deltas LoRA (A et B) sur les K checkpoints. On remplace
+    # les poids de l'adapter charge par la moyenne arithmetique des K.
+    # Equivalent a un SWA (Stochastic Weight Averaging) sur les deltas LoRA,
+    # documente comme plus stable que le stacking d'adapters.
+    if len(fold_checkpoints) > 1:
+        _average_lora_deltas(peft_model, fold_checkpoints)
+
+    logger.info("Fusion merge_and_unload() en cours...")
+    merged_model = peft_model.merge_and_unload()
+    merged_model.save_pretrained(output_dir, safe_serialization=True)
+
+    # Copie du tokenizer et d'adapter_config.json depuis le premier checkpoint
+    # pour garder un format "chargeable comme LoRA" (meme si les poids sont
+    # deja fusionnes). Facilite le rechargement via `LoRAClassifier.load()`.
+    _copy_tokenizer_artifacts(fold_checkpoints[0], output_dir)
+    logger.info(f"Modele LoRA fusionne sauvegarde : {output_dir}")
+
+
+def _average_lora_deltas(peft_model: Any, fold_checkpoints: list[Path]) -> None:
+    """Moyenne les tenseurs LoRA A et B sur les K adapters.
+
+    Modifie ``peft_model`` en place : les poids actuellement charges
+    (depuis le premier checkpoint) sont remplaces par la moyenne
+    arithmetique des K. Appele uniquement si ``len(fold_checkpoints) >= 2``.
+    """
+    from safetensors.torch import load_file
+
+    n = len(fold_checkpoints)
+    state_dict_avg: dict[str, torch.Tensor] = {}
+
+    for ckpt in fold_checkpoints:
+        adapter_file = ckpt / "adapter_model.safetensors"
+        if not adapter_file.exists():
+            msg = f"adapter_model.safetensors manquant dans {ckpt}"
+            raise FileNotFoundError(msg)
+        state = load_file(str(adapter_file))
+        for key, tensor in state.items():
+            if key not in state_dict_avg:
+                state_dict_avg[key] = tensor.clone().to(torch.float32) / n
+            else:
+                state_dict_avg[key] = state_dict_avg[key] + tensor.to(torch.float32) / n
+
+    # Injecte la moyenne dans le peft_model charge. On caste en bfloat16
+    # pour rester coherent avec la precision d'entrainement.
+    peft_state = peft_model.state_dict()
+    for key, value in state_dict_avg.items():
+        if key in peft_state:
+            peft_state[key] = value.to(peft_state[key].dtype)
+    peft_model.load_state_dict(peft_state, strict=False)
+    logger.info(f"Deltas LoRA moyennes sur {n} checkpoints")
+
+
+def _copy_tokenizer_artifacts(source: Path, destination: Path) -> None:
+    """Copie le tokenizer et les fichiers meta d'un checkpoint LoRA vers le merged.
+
+    Fichiers concernes : ``tokenizer.json``, ``tokenizer_config.json``,
+    ``chat_template.jinja``, ``special_tokens_map.json`` si presents.
+    """
+    import shutil
+
+    files = (
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "chat_template.jinja",
+        "special_tokens_map.json",
+    )
+    for name in files:
+        src = source / name
+        if src.exists():
+            shutil.copy2(src, destination / name)
 
 
 async def train_single(model_type: str) -> dict[str, float]:

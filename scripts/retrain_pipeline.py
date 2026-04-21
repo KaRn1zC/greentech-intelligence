@@ -33,6 +33,7 @@ Usage:
     uv run python scripts/retrain_pipeline.py train-cv           # Protocole unifie B3 : K=5 folds x 3 seeds, stratif (langue x label), class_weight, calibration
     uv run python scripts/retrain_pipeline.py train-cv --model=mdeberta  # Cibler un modele specifique (qwen3 ou mdeberta)
     uv run python scripts/retrain_pipeline.py train-cv-both      # K-fold sur Qwen3-4B PUIS mDeBERTa-v3-base (~6-8h cumulees)
+    uv run python scripts/retrain_pipeline.py train-cv --strict-stratification  # Assert bloquant sur deviation stratification > 2pp (defaut : warning)
     uv run python scripts/retrain_pipeline.py baseline-both      # Baseline brute Qwen3 + mDeBERTa
     uv run python scripts/retrain_pipeline.py benchmark-models   # Benchmark final B4.4 (Qwen3 vs mDeBERTa entraines)
     uv run python scripts/retrain_pipeline.py benchmark          # Benchmark nouveau vs production vs baseline
@@ -168,9 +169,7 @@ def _max_mcc_std(n_green: int | None) -> float:
 # deja dans le meme fichier de log via son propre handler, donc inutile de la
 # re-injecter : on aurait des doublons).
 # Format attendu : "2026-04-15 00:26:58 | WARNING  | module:function:line | ..."
-_LOGURU_LINE_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \| [A-Z]+\s+\|"
-)
+_LOGURU_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \| [A-Z]+\s+\|")
 
 # Regex pour stripper les codes ANSI (coloration loguru console) AVANT de
 # tester _LOGURU_LINE_RE. Sans ce stripping, les lignes colorees du
@@ -742,9 +741,7 @@ async def step_clean() -> bool:
         # seul total).
         sans_contenu = (
             await session.scalar(
-                select(text("COUNT(*)"))
-                .select_from(Article)
-                .where(Article.contenu.is_(None))
+                select(text("COUNT(*)")).select_from(Article).where(Article.contenu.is_(None))
             )
             or 0
         )
@@ -770,9 +767,7 @@ async def step_clean() -> bool:
         # Withdrawn/retracted : ILIKE ANY sur les 300 premiers chars.
         withdrawn = (
             await session.scalar(
-                select(text("COUNT(*)"))
-                .select_from(Article)
-                .where(text(withdrawn_sql_clause))
+                select(text("COUNT(*)")).select_from(Article).where(text(withdrawn_sql_clause))
             )
             or 0
         )
@@ -787,16 +782,12 @@ async def step_clean() -> bool:
         low_entropy_clause = r"contenu ~* '^(.)\1{49,}'"
         low_entropy = (
             await session.scalar(
-                select(text("COUNT(*)"))
-                .select_from(Article)
-                .where(text(low_entropy_clause))
+                select(text("COUNT(*)")).select_from(Article).where(text(low_entropy_clause))
             )
             or 0
         )
 
-        total_a_supprimer = (
-            sans_contenu + trop_courts + placeholder + withdrawn + low_entropy
-        )
+        total_a_supprimer = sans_contenu + trop_courts + placeholder + withdrawn + low_entropy
         if total_a_supprimer == 0:
             logger.info("Aucun article inexploitable detecte, base propre")
             return True
@@ -923,18 +914,14 @@ async def step_summarize_classification() -> bool:
     total = stats.get("total", 0)
     succes = stats.get("succes", 0)
     echecs = stats.get("echecs", 0)
-    logger.info(
-        f"Resumes de classification termines : {succes}/{total} succes, {echecs} echecs"
-    )
+    logger.info(f"Resumes de classification termines : {succes}/{total} succes, {echecs} echecs")
     # Seuil d'acceptation : on tolere jusqu'a 5% d'echecs (articles au
     # contenu degenere, API ponctuellement indisponible). Au-dela on
     # considere que quelque chose cloche structurellement et on stoppe
     # le pipeline pour investigation avant de propager des resumes
     # incomplets aux etapes en aval.
     if total > 0 and echecs / total > 0.05:
-        logger.error(
-            f"Taux d'echec trop eleve ({echecs / total:.1%}), arret pipeline"
-        )
+        logger.error(f"Taux d'echec trop eleve ({echecs / total:.1%}), arret pipeline")
         return False
     return True
 
@@ -1080,6 +1067,7 @@ async def step_train_cv(
     n_seeds: int = 3,
     random_state: int = 42,
     model_type: str | None = None,
+    strict_stratification: bool = False,
 ) -> dict | None:
     """Entraine un modele via le protocole unifie B3 (avril 2026).
 
@@ -1099,6 +1087,9 @@ async def step_train_cv(
         random_state: Seed de base pour la reproductibilite du split.
         model_type: ``"qwen3"`` (defaut) ou ``"mdeberta"``.
             Si None, utilise ``TRAIN_MODEL_TYPE`` (``qwen3``).
+        strict_stratification: Si ``True``, leve ``AssertionError`` des
+            qu'un fold devie de plus de 2 points de pourcentage par rapport
+            aux ratios cible (EN/FR/Green). Defaut ``False`` : warning seul.
 
     Returns:
         Rapport complet du K-fold, ou None en cas d'erreur.
@@ -1108,9 +1099,7 @@ async def step_train_cv(
     target_model = model_type or TRAIN_MODEL_TYPE
 
     logger.info("=" * 70)
-    logger.info(
-        f"  PROTOCOLE UNIFIE B3 ({target_model}, K={n_splits} x {n_seeds} seeds)"
-    )
+    logger.info(f"  PROTOCOLE UNIFIE B3 ({target_model}, K={n_splits} x {n_seeds} seeds)")
     logger.info("=" * 70)
 
     try:
@@ -1119,6 +1108,7 @@ async def step_train_cv(
             n_splits=n_splits,
             n_seeds=n_seeds,
             base_random_state=random_state,
+            strict_stratification=strict_stratification,
         )
     except Exception as exc:
         logger.exception(f"K-fold echoue : {exc}")
@@ -1203,6 +1193,7 @@ async def step_train_cv_both(
     n_splits: int = 5,
     n_seeds: int = 3,
     random_state: int = 42,
+    strict_stratification: bool = False,
 ) -> dict[str, dict | None]:
     """Lance le K-fold protocole unifie B3 sur Qwen3-4B PUIS mDeBERTa-v3-base.
 
@@ -1216,6 +1207,9 @@ async def step_train_cv_both(
         n_splits: Nombre de folds K-fold (defaut 5).
         n_seeds: Nombre de seeds par fold (defaut 3).
         random_state: Seed de base pour la reproductibilite.
+        strict_stratification: Si ``True``, leve ``AssertionError`` des
+            qu'un fold devie de plus de 2 points de pourcentage par rapport
+            aux ratios cible (EN/FR/Green). Propage aux deux modeles.
 
     Returns:
         Dictionnaire ``{model_type: rapport_kfold}`` ou ``None`` si erreur
@@ -1224,8 +1218,7 @@ async def step_train_cv_both(
     """
     logger.info("=" * 70)
     logger.info(
-        f"  K-FOLD COMPARATIF Qwen3-4B + mDeBERTa-v3-base "
-        f"(K={n_splits} x {n_seeds} seeds chacun)"
+        f"  K-FOLD COMPARATIF Qwen3-4B + mDeBERTa-v3-base (K={n_splits} x {n_seeds} seeds chacun)"
     )
     logger.info("=" * 70)
 
@@ -1241,6 +1234,7 @@ async def step_train_cv_both(
                 n_seeds=n_seeds,
                 random_state=random_state,
                 model_type=model_type,
+                strict_stratification=strict_stratification,
             )
             results[model_type] = rapport
             # Renommer le rapport K-fold pour ne pas qu'il soit ecrase par
@@ -1318,9 +1312,7 @@ def _log_cv_report(rapport: dict) -> None:
     )
     logger.info(header)
     for f in entries:
-        fold_tag = (
-            f"{f['fold']}.{f.get('seed_idx', 1)}" if is_unified else str(f["fold"])
-        )
+        fold_tag = f"{f['fold']}.{f.get('seed_idx', 1)}" if is_unified else str(f["fold"])
         n_val = f.get("n_val", f.get("n_test", 0))
         n_green = f.get("n_green_val", f.get("n_green_test", 0))
         temp = f.get("temperature", float("nan"))
@@ -1363,12 +1355,10 @@ def _log_cv_report(rapport: dict) -> None:
             logger.info("")
             logger.info("  Matrice de confusion globale (K folds agreges) :")
             logger.info(
-                f"    TP = {global_m['vrais_positifs']}  |  "
-                f"FN = {global_m['faux_negatifs']}"
+                f"    TP = {global_m['vrais_positifs']}  |  FN = {global_m['faux_negatifs']}"
             )
             logger.info(
-                f"    FP = {global_m['faux_positifs']}  |  "
-                f"TN = {global_m['vrais_negatifs']}"
+                f"    FP = {global_m['faux_positifs']}  |  TN = {global_m['vrais_negatifs']}"
             )
 
         if rapport.get("final_model_trained"):
@@ -1553,7 +1543,10 @@ async def _evaluate_new_model(
     adapter_file = TRAIN_DIR / "adapter_config.json"
     if adapter_file.exists():
         adapter_meta = json.loads(adapter_file.read_text())
-        base_model_name = adapter_meta.get("base_model_name_or_path") or get_settings().huggingface_model_trainer_base
+        base_model_name = (
+            adapter_meta.get("base_model_name_or_path")
+            or get_settings().huggingface_model_trainer_base
+        )
     else:
         base_model_name = get_settings().huggingface_model_trainer_base
 
@@ -1562,11 +1555,7 @@ async def _evaluate_new_model(
     name_lower = base_model_name.lower()
     is_qwen3 = "qwen3-4b" in name_lower or "qwen3_4b" in name_lower
     config = TrainingConfig(nom_modele=base_model_name, output_dir=TRAIN_DIR)
-    classifier = (
-        Qwen3Classifier(config=config)
-        if is_qwen3
-        else LoRAClassifier(config=config)
-    )
+    classifier = Qwen3Classifier(config=config) if is_qwen3 else LoRAClassifier(config=config)
     classifier.load(TRAIN_DIR)
 
     preds: list[int] = []
@@ -1966,7 +1955,12 @@ def step_force_promote() -> bool:
 # =============================================================================
 
 
-async def run_pipeline(steps: list[str], *, model_override: str | None = None) -> None:
+async def run_pipeline(
+    steps: list[str],
+    *,
+    model_override: str | None = None,
+    strict_stratification: bool = False,
+) -> None:
     """Execute les etapes du pipeline dans l'ordre demande.
 
     Args:
@@ -1975,6 +1969,10 @@ async def run_pipeline(steps: list[str], *, model_override: str | None = None) -
             le modele cible pour les etapes ``train-cv`` et ``baseline``.
             Par defaut, ``train-cv`` utilise Qwen3 et ``baseline`` utilise
             le modele de ``settings.huggingface_model_baseline`` (Qwen3).
+        strict_stratification: Si ``True``, leve ``AssertionError`` dans
+            les etapes ``train-cv`` / ``train-cv-both`` des qu'un fold
+            devie de plus de 2 points de pourcentage par rapport aux
+            ratios cible (EN/FR/Green). Defaut ``False`` : warning seul.
     """
     start = time.perf_counter()
     logger.info("")
@@ -2000,15 +1998,11 @@ async def run_pipeline(steps: list[str], *, model_override: str | None = None) -
             await step_auto_promote()
             continue
         if step_name == "baseline":
-            override_hf = (
-                BASELINE_MODEL_ALIASES.get(model_override) if model_override else None
-            )
+            override_hf = BASELINE_MODEL_ALIASES.get(model_override) if model_override else None
             await step_baseline(model_name=override_hf)
             continue
         if step_name == "baseline:force":
-            override_hf = (
-                BASELINE_MODEL_ALIASES.get(model_override) if model_override else None
-            )
+            override_hf = BASELINE_MODEL_ALIASES.get(model_override) if model_override else None
             await step_baseline(force=True, model_name=override_hf)
             continue
         if step_name == "baseline-both":
@@ -2020,21 +2014,27 @@ async def run_pipeline(steps: list[str], *, model_override: str | None = None) -
         if step_name == "train-cv":
             target = model_override or TRAIN_MODEL_TYPE
             logger.info(f"\n>>> Re-entrainement K-fold protocole unifie B3 ({target})...")
-            if await step_train_cv(model_type=target) is None:
+            if (
+                await step_train_cv(
+                    model_type=target,
+                    strict_stratification=strict_stratification,
+                )
+                is None
+            ):
                 logger.error("Interrompu a : train-cv")
                 return
             continue
         if step_name == "train-cv-both":
             logger.info("\n>>> K-fold comparatif Qwen3-4B + mDeBERTa-v3-base...")
-            results = await step_train_cv_both()
+            results = await step_train_cv_both(
+                strict_stratification=strict_stratification,
+            )
             if all(r is None for r in results.values()):
                 logger.error("Interrompu : aucun K-fold n'a abouti")
                 return
             continue
         if step_name == "benchmark-models":
-            logger.info(
-                "\n>>> Benchmark final B4.4 (Qwen3-4B vs mDeBERTa-v3-base)..."
-            )
+            logger.info("\n>>> Benchmark final B4.4 (Qwen3-4B vs mDeBERTa-v3-base)...")
             if not _run_script("scripts/benchmark_models.py"):
                 logger.error("Interrompu a : benchmark-models")
                 return
@@ -2152,7 +2152,10 @@ def main() -> None:
 
     # Parse le flag global --model=<alias> pour cibler un modele specifique
     # sur les etapes 'baseline' et 'train-cv'. Alias acceptes : qwen3, mdeberta.
+    # Parse aussi --strict-stratification pour activer l'assert bloquant sur
+    # la stratification des folds (defaut : warning seul).
     model_override: str | None = None
+    strict_stratification: bool = False
     filtered_args: list[str] = []
     for arg in args:
         if arg.startswith("--model="):
@@ -2164,6 +2167,8 @@ def main() -> None:
                 )
                 sys.exit(2)
             model_override = alias
+        elif arg == "--strict-stratification":
+            strict_stratification = True
         else:
             filtered_args.append(arg)
     args = filtered_args
@@ -2209,7 +2214,13 @@ def main() -> None:
             "auto-promote",
         ]
 
-    asyncio.run(run_pipeline(processed, model_override=model_override))
+    asyncio.run(
+        run_pipeline(
+            processed,
+            model_override=model_override,
+            strict_stratification=strict_stratification,
+        )
+    )
 
 
 if __name__ == "__main__":

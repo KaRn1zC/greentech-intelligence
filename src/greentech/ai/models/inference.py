@@ -39,6 +39,8 @@ avec les modeles deja en production.
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Callable
 from datetime import UTC
 from pathlib import Path
 
@@ -63,6 +65,142 @@ DEFAULT_MODEL_PATH = BASE_DIR / "models" / "production"
 _classifier: BaseClassifier | None = None
 _calibration_temperature: float | None = None
 _calibration_threshold: float | None = None
+
+
+class EnsembleClassifier(BaseClassifier):
+    """Ensemble K-fold par moyenne des logits (strategy=logit_average).
+
+    Charge les K classifieurs independamment, puis moyenne leurs
+    probabilites de classe positive a chaque prediction. Utilise pour
+    mDeBERTa (full fine-tune) ou tout autre modele dont les poids ne
+    peuvent pas etre fusionnes directement (pas de LoRA). Cout inference :
+    ~Kx latence, ~K x VRAM_model (acceptable tant que K x 1 Go <= VRAM GPU).
+
+    Active automatiquement par `get_classifier` quand un
+    `ensemble_config.json` avec `strategy=logit_average` est detecte a la
+    racine du modele (cf. `_build_ensemble` dans `training.py`).
+
+    Attributes:
+        fold_paths: Chemins des K checkpoints a charger.
+        classifier_factory: Callable qui construit un classifieur concret
+            a partir d'un chemin de checkpoint (typiquement
+            ``MDeBERTaClassifier(TrainingConfig(nom_modele=str(path)))``).
+        members: Liste des K classifieurs charges (peuplee par ``load()``).
+    """
+
+    def __init__(
+        self,
+        *,
+        fold_paths: list[Path],
+        classifier_factory: Callable[[Path], BaseClassifier],
+    ) -> None:
+        """Initialise l'ensemble sans charger les modeles (lazy via ``load``).
+
+        Args:
+            fold_paths: Chemins des K checkpoints (un par fold).
+            classifier_factory: Factory qui construit un classifieur a
+                partir d'un chemin (injectee pour decoupler de la classe concrete).
+        """
+        if not fold_paths:
+            msg = "EnsembleClassifier requiert au moins 1 fold_path"
+            raise ValueError(msg)
+        # On reutilise la config du premier membre pour la trace MLflow/logs.
+        first_config = TrainingConfig(nom_modele=f"ensemble-k{len(fold_paths)}")
+        super().__init__(first_config)
+        self.fold_paths = fold_paths
+        self.classifier_factory = classifier_factory
+        self.members: list[BaseClassifier] = []
+
+    async def train(
+        self,
+        train_texts: list[str],
+        train_labels: list[int],
+        val_texts: list[str],
+        val_labels: list[int],
+    ) -> dict[str, float]:
+        """EnsembleClassifier ne s'entraine pas : il assemble des membres deja entraines."""
+        msg = (
+            "EnsembleClassifier n'implemente pas train() : entrainer les membres "
+            "via train_with_unified_protocol puis reconstruire l'ensemble."
+        )
+        raise NotImplementedError(msg)
+
+    def save(self, output_dir: Path | None = None) -> Path:
+        """Ne sauvegarde rien : les membres vivent dans leurs checkpoints d'origine.
+
+        Le `ensemble_config.json` a la racine du modele de production suffit
+        a reconstituer l'ensemble au chargement suivant.
+        """
+        msg = "EnsembleClassifier.save() est un no-op : ensemble_config.json suffit."
+        logger.debug(msg)
+        return output_dir or DEFAULT_MODEL_PATH
+
+    def load(self, model_path: Path) -> None:
+        """Instancie et charge les K classifieurs membres via leurs checkpoints.
+
+        Args:
+            model_path: Chemin racine (non utilise directement : chaque
+                membre a son propre checkpoint dans ``fold_paths``). Conserve
+                pour respecter la signature de ``BaseClassifier``.
+        """
+        _ = model_path  # interface compatibility, non utilise
+        logger.info(f"Chargement ensemble : {len(self.fold_paths)} membres")
+        for idx, fold_path in enumerate(self.fold_paths, 1):
+            if not fold_path.exists():
+                msg = f"Checkpoint membre {idx} introuvable : {fold_path}"
+                raise FileNotFoundError(msg)
+            member = self.classifier_factory(fold_path)
+            member.load(fold_path)
+            self.members.append(member)
+            logger.info(f"  Membre {idx}/{len(self.fold_paths)} charge : {fold_path.name}")
+
+    async def predict(self, text: str) -> PredictionResult:
+        """Predit via moyenne des probabilites positives des K membres.
+
+        Strategie : on demande a chaque membre sa ``proba_positive``, on
+        moyenne, puis on reconstruit un ``PredictionResult`` conforme a
+        l'interface. La calibration (temperature + threshold) est appliquee
+        en aval par ``_apply_calibration_to_result``, comme pour un membre
+        unique — d'ou le besoin de renvoyer un ``proba_positive`` coherent.
+
+        Args:
+            text: Texte de l'article a classifier.
+
+        Returns:
+            PredictionResult avec la proba moyenne et la latence cumulee.
+        """
+        if not self.members:
+            msg = "EnsembleClassifier.predict appele avant load()"
+            raise RuntimeError(msg)
+
+        start = time.perf_counter()
+        probas: list[float] = []
+        modele_ids: list[str] = []
+        for member in self.members:
+            result = await member.predict(text)
+            if result.proba_positive is None:
+                # Fallback : si un membre ne fournit pas proba_positive,
+                # on derive une pseudo-proba depuis le label + score_confiance.
+                pseudo = (
+                    result.score_confiance if result.est_green_it else 1.0 - result.score_confiance
+                )
+                probas.append(pseudo)
+            else:
+                probas.append(result.proba_positive)
+            modele_ids.append(result.modele)
+
+        avg_proba = sum(probas) / len(probas)
+        label = LabelGreenIT.GREEN if avg_proba >= 0.5 else LabelGreenIT.NON_GREEN
+        score = avg_proba if label == LabelGreenIT.GREEN else 1.0 - avg_proba
+        duration_ms = int((time.perf_counter() - start) * 1000)
+
+        return PredictionResult(
+            label=label,
+            score_confiance=float(score),
+            temps_ms=duration_ms,
+            modele=f"ensemble({len(self.members)}x)",
+            proba_positive=float(avg_proba),
+        )
 
 
 async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
@@ -97,6 +235,47 @@ async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
         )
         raise FileNotFoundError(msg)
 
+    # Detection d'un ensemble K-fold (B3.5 protocole unifie avril 2026).
+    # Si `ensemble_config.json` est present a la racine, il decrit la
+    # strategie d'ensembling :
+    #   - `merge_lora` (Qwen3) : redirection vers le merged LoRA (single model).
+    #   - `logit_average` (mDeBERTa) : instanciation d'`EnsembleClassifier`
+    #     qui charge les K checkpoints et moyenne les logits a l'inference.
+    ensemble_config_path = path / "ensemble_config.json"
+    if ensemble_config_path.exists():
+        ensemble_cfg = json.loads(ensemble_config_path.read_text(encoding="utf-8"))
+        strategy = ensemble_cfg.get("strategy")
+        if strategy == "merge_lora":
+            merged_path = Path(ensemble_cfg["inference_model_path"])
+            logger.info(f"Ensemble merge_lora detecte : redirection vers {merged_path}")
+            path = merged_path
+        elif strategy == "logit_average":
+            from greentech.ai.models.training import MDeBERTaClassifier
+
+            fold_paths = [Path(p) for p in ensemble_cfg["inference_model_paths"]]
+            logger.info(
+                f"Ensemble logit_average detecte : chargement de {len(fold_paths)} "
+                f"checkpoints mDeBERTa pour moyenne des logits"
+            )
+            candidate = EnsembleClassifier(
+                fold_paths=fold_paths,
+                classifier_factory=lambda p: MDeBERTaClassifier(TrainingConfig(nom_modele=str(p))),
+            )
+            candidate.load(path)
+            _calibration_temperature, _calibration_threshold = load_calibration(path)
+            if _calibration_temperature is not None or _calibration_threshold is not None:
+                logger.info(
+                    f"Calibration chargee : T={_calibration_temperature}, "
+                    f"seuil={_calibration_threshold}"
+                )
+            _classifier = candidate
+            return _classifier
+        else:
+            logger.warning(
+                f"ensemble_config.json present mais strategy inconnue : {strategy}. "
+                "Fallback sur chargement classique."
+            )
+
     adapter_config_path = path / "adapter_config.json"
 
     # On instancie puis on appelle load() AVANT d'assigner au cache global.
@@ -128,9 +307,7 @@ async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
         name_lower = base_model_name.lower()
         is_qwen3 = "qwen3-4b" in name_lower or "qwen3_4b" in name_lower
         config = TrainingConfig(nom_modele=base_model_name)
-        candidate: BaseClassifier = (
-            Qwen3Classifier(config) if is_qwen3 else LoRAClassifier(config)
-        )
+        candidate: BaseClassifier = Qwen3Classifier(config) if is_qwen3 else LoRAClassifier(config)
         candidate.load(path)
         logger.info(f"Modele LoRA ({base_model_name}) charge depuis {path}")
     else:
@@ -158,8 +335,7 @@ async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
     _calibration_temperature, _calibration_threshold = load_calibration(path)
     if _calibration_temperature is not None or _calibration_threshold is not None:
         logger.info(
-            f"Calibration chargee : T={_calibration_temperature}, "
-            f"seuil={_calibration_threshold}"
+            f"Calibration chargee : T={_calibration_temperature}, seuil={_calibration_threshold}"
         )
     else:
         logger.info(
@@ -234,7 +410,8 @@ def _apply_calibration_to_result(result: PredictionResult) -> PredictionResult:
     predicted_label = int(calibrated_preds[0])
     calibrated_pos_proba = float(calibrated_probs[0])
     calibrated_confidence = (
-        calibrated_pos_proba if predicted_label == LabelGreenIT.GREEN.value
+        calibrated_pos_proba
+        if predicted_label == LabelGreenIT.GREEN.value
         else 1.0 - calibrated_pos_proba
     )
 

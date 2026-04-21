@@ -86,6 +86,15 @@ async def fetch_candidates(limit: int | None = None) -> list[tuple[int, str, str
 async def apply_verdicts(verdicts: dict[int, ClassifierVerdict]) -> tuple[int, int]:
     """Ecrit les verdicts du LLM en base de donnees.
 
+    Persiste pour chaque article :
+
+    - ``est_green_it`` : decision binaire
+    - ``score_confiance`` : confiance du LLM (0.0-1.0)
+    - ``raison_llm_judge`` : justification textuelle courte (ajout migration 004)
+    - ``modele_classification`` : tag stable ``keyword_filter+qwen_llm_judge``
+    - ``annotation_source='llm_judge'`` : tracabilite pour distinguer les
+      classements LLM des annotations manuelles (cf. `manual_annotation_helper.py`)
+
     Args:
         verdicts: Dictionnaire {id_article: ClassifierVerdict}.
 
@@ -101,13 +110,23 @@ async def apply_verdicts(verdicts: dict[int, ClassifierVerdict]) -> tuple[int, i
                 echecs += 1
                 continue
 
+            # Protection defensive : ne jamais ecraser une annotation manuelle.
+            # En pratique `fetch_candidates` filtre deja sur est_green_it IS NULL
+            # donc ce cas ne devrait pas se produire, mais la clause
+            # annotation_source != 'manual' est un filet de securite explicite
+            # si un re-run forcait la reclassification.
             await session.execute(
                 update(Article)
                 .where(Article.id_article == id_article)
+                .where(
+                    (Article.annotation_source.is_(None)) | (Article.annotation_source != "manual")
+                )
                 .values(
                     est_green_it=verdict.est_green_it,
                     modele_classification=FINAL_MODELE_TAG,
                     score_confiance=verdict.confiance,
+                    raison_llm_judge=verdict.raison or None,
+                    annotation_source="llm_judge",
                 )
             )
             succes += 1

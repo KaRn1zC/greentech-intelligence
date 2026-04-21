@@ -130,6 +130,12 @@ CREATE TABLE IF NOT EXISTS articles (
     est_green_it BOOLEAN,
     score_confiance FLOAT CHECK (score_confiance >= 0 AND score_confiance <= 1),
     modele_classification VARCHAR(100),
+    raison_llm_judge TEXT,
+
+    -- Annotation manuelle (audit B2.10, avril 2026)
+    annotation_source VARCHAR(20),
+    annotated_at TIMESTAMP WITH TIME ZONE,
+    annotated_by VARCHAR(100),
 
     -- Audit
     chemin_donnees_brutes TEXT,
@@ -142,6 +148,11 @@ CREATE TABLE IF NOT EXISTS articles (
 CREATE INDEX IF NOT EXISTS idx_articles_est_green_it ON articles(est_green_it);
 CREATE INDEX IF NOT EXISTS idx_articles_date_publication ON articles(date_publication DESC);
 CREATE INDEX IF NOT EXISTS idx_articles_id_source ON articles(id_source);
+-- Index partiel pour l'audit manuel des borderline (migration 004)
+CREATE INDEX IF NOT EXISTS idx_articles_borderline_llm
+    ON articles (score_confiance, id_source)
+    WHERE modele_classification = 'keyword_filter+qwen_llm_judge'
+      AND score_confiance BETWEEN 0.3 AND 0.7;
 CREATE INDEX IF NOT EXISTS idx_articles_date_analyse ON articles(date_analyse) WHERE date_analyse IS NOT NULL;
 
 -- =============================================================================
