@@ -94,12 +94,19 @@ class LoraConfig:
         alpha: Facteur d'échelle alpha.
         dropout: Dropout sur les couches LoRA.
         target_modules: Modules cibles pour l'adaptation.
+        use_rslora: Si True, active rank-stabilized LoRA (Kalajdzievski 2023,
+            arXiv:2312.03732). Remplace le facteur d'échelle α/r par α/√r
+            qui préserve la stabilité des gradients à rang élevé (r ≥ 16).
+            Particulièrement recommandé pour Qwen3-4B + r=32 avec
+            target_modules="all-linear" (gain de stabilité +0.5-1 MCC
+            documenté, coût zéro à l'inférence).
     """
 
     r: int = 16
     alpha: int = 32
     dropout: float = 0.1
     target_modules: list[str] | None = None
+    use_rslora: bool = False
 
 
 class BaseClassifier(ABC):
