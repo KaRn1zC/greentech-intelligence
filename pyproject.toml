@@ -72,6 +72,7 @@ dependencies = [
     "trafilatura>=2.0.0",
     "iterative-stratification>=0.1.9",
     "sentence-transformers>=5.4.1",
+    "sacremoses>=0.1.1",
 ]
 
 # === Configuration UV pour PyTorch ROCm (AMD GPU RX 7900 XTX) ===
