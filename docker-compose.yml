@@ -115,6 +115,36 @@ services:
     networks:
       - greentech-network
 
+  # === Alertmanager (Routage des alertes Prometheus) ===
+  # Recoit les alertes declenchees par les regles `config/prometheus/alert-rules.yml`,
+  # les deduplique, les regroupe et les historise dans son UI (http://localhost:9093).
+  # Mode par defaut : "log only" (aucune notification externe). Pour activer un
+  # routage vers Discord, copier `config/alertmanager/alertmanager.discord.example.yml`
+  # vers `alertmanager.yml`, y inserer le webhook reel, puis redemarrer ce service.
+  # Alertmanager n'interpole pas les variables d'env dans son YAML : le webhook
+  # doit etre ecrit en dur dans le fichier de configuration.
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: greentech-alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:9093/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - greentech-network
+
   # === Loki (Agrégation Logs) ===
   loki:
     image: grafana/loki:2.9.0
@@ -305,6 +335,8 @@ volumes:
     name: greentech-pushgateway-data
   prometheus-data:
     name: greentech-prometheus-data
+  alertmanager-data:
+    name: greentech-alertmanager-data
   grafana-data:
     name: greentech-grafana-data
   loki-data:

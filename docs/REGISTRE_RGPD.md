@@ -19,7 +19,12 @@
 | **Finalité globale** | Plateforme d'analyse et classification automatique d'articles technologiques selon leur pertinence "Green IT" |
 | **Type de structure** | Projet éducatif (non commercial) |
 | **Date de création** | 2026-02-09 |
-| **Dernière mise à jour** | 2026-02-11 |
+| **Dernière mise à jour** | 2026-05-16 |
+| **Version** | 2.0 |
+
+> **Historique des révisions**
+> - **v1.0 (2026-02-11)** : version initiale avec 4 sources (The Guardian, Dev.to, TechCrunch, arXiv Dataset Kaggle) + NewsData.io.
+> - **v2.0 (2026-05-16)** : retrait définitif de NewsData.io (contenu tronqué en free tier, source désactivée en avril 2026). Ajout de 6 nouvelles sources actives dans le cadre de l'enrichissement du dataset (B2) : arXiv API, Crossref (Polite Pool), GreenIT.fr, Green Software Foundation, Sustainable Web Design, Climate Action Tech. Extension du collecteur The Guardian aux sections `environment` et `technology`. Documentation de la transmission de l'e-mail du responsable de traitement à Crossref dans le cadre du Polite Pool (User-Agent obligatoire pour bénéficier du rate limit prioritaire).
 
 ---
 
@@ -36,22 +41,45 @@
 - Traitement de données publiques accessibles librement sur Internet
 
 **Catégories de personnes concernées** :
-- Auteurs d'articles technologiques
-- Chercheurs scientifiques (publications arXiv)
-- Journalistes technologiques
+- Journalistes et auteurs de presse technologique et environnementale (The Guardian sections `environment` et `technology`, TechCrunch Climate)
+- Auteurs et contributeurs de blogs techniques communautaires (Dev.to)
+- Chercheurs et co-auteurs scientifiques (arXiv API, arXiv Dataset Kaggle, Crossref pour les publications peer-reviewed)
+- Auteurs de contenus Green IT spécialisés et membres d'organisations professionnelles (GreenIT.fr, Green Software Foundation, Sustainable Web Design, Climate Action Tech)
+
+**Sources actives au 2026-05-16** :
+
+| Source | Type technique | Localisation | Format | Volume en BDD |
+|--------|---------------|--------------|--------|----------------|
+| The Guardian (Open Platform) | API REST/JSON | Royaume-Uni | JSON (bodyText) | 1 252 articles |
+| Dev.to (Forem API) | API REST/JSON | États-Unis | JSON (body_markdown) | 135 articles |
+| arXiv API | API REST/Atom XML | États-Unis | XML (summary) | 382 articles |
+| arXiv Dataset (Kaggle, snapshot) | Fichier JSON local | États-Unis | JSONL | 4 957 articles |
+| Crossref (Polite Pool) | API REST/JSON | Royaume-Uni | JSON (JATS abstract) | 1 499 articles |
+| TechCrunch Climate | Scraping HTML + Playwright | États-Unis | HTML | 105 articles |
+| GreenIT.fr | Scraping HTML statique (Scrapy) | France | HTML (WordPress) | 2 945 articles |
+| Green Software Foundation | Scraping HTML statique (Scrapy) | États-Unis | HTML | 193 articles |
+| Sustainable Web Design | Scraping HTML statique (Scrapy) | États-Unis (Mightybytes) | HTML (WordPress) | 130 articles |
+| Climate Action Tech | Scraping HTML statique (Scrapy) | États-Unis | HTML (WordPress) | 66 articles |
+| **Total** | **5 catégories C1 validées** | — | — | **11 664 articles** |
+
+> **Source désactivée (historique)** : NewsData.io a été retirée définitivement le 2026-04-19 (contenu tronqué en free tier, exploitabilité insuffisante pour l'entraînement). Les 1 316 articles collectés via cette source ont été purgés de la base PostgreSQL et des buckets MinIO `raw-data` et `clean-data`. Aucune donnée personnelle issue de cette source n'est conservée.
 
 **Nature des données collectées** :
 
 | Donnée | Source | Type | Sensible | Collectée | Stockée | Exposée API |
 |--------|--------|------|----------|-----------|---------|-------------|
-| Nom complet de l'auteur | The Guardian, Dev.to, TechCrunch, arXiv | Identité | ⚠️ Oui | Oui | **Non** (anonymisée) | **Non** |
-| Initiales de l'auteur | Transformation automatique | Pseudonyme | Non | Non | Oui | Oui |
-| Adresse e-mail | (non collectée) | Contact | ⚠️ Oui | **Non** | **Non** | **Non** |
+| Nom complet de l'auteur | Toutes sources (sauf scraping anonyme) | Identité | ⚠️ Oui | Oui | **Non** (anonymisée en initiales) | **Non** |
+| Initiales de l'auteur | Transformation automatique au nettoyage Spark | Pseudonyme | Non | Non | Oui | Oui |
+| Co-auteurs scientifiques (jusqu'à 10+ par article) | arXiv API, arXiv Dataset, Crossref | Identité | ⚠️ Oui | Oui | **Non** (anonymisés en initiales) | **Non** |
+| Identifiant DOI | Crossref | Référence publique | Non | Oui | Oui | Oui |
+| Identifiant arXiv (sans version) | arXiv API, arXiv Dataset | Référence publique | Non | Oui | Oui | Oui |
+| Adresse e-mail des auteurs | (non collectée systématiquement) | Contact | ⚠️ Oui | **Non** | **Non** | **Non** |
 | Titre de l'article | Toutes sources | Contenu éditorial | Non | Oui | Oui | Oui |
-| Contenu de l'article | Toutes sources | Contenu éditorial | Non | Oui | Oui | Oui |
+| Résumé / abstract / contenu | Toutes sources | Contenu éditorial | Non | Oui | Oui | Oui |
 | URL de publication | Toutes sources | Référence publique | Non | Oui | Oui | Oui |
 | Date de publication | Toutes sources | Métadonnée | Non | Oui | Oui | Oui |
 | Nom de la source | Toutes sources | Métadonnée | Non | Oui | Oui | Oui |
+| Langue détectée (EN, FR) | Détection automatique | Métadonnée | Non | Non | Oui | Oui |
 
 **Durée de conservation** :
 - **Données brutes (MinIO `raw-data`)** : 90 jours puis suppression automatique
@@ -138,7 +166,15 @@ Les données personnelles identifiées dans les sources de collecte sont :
 | The Guardian | Nom de l'auteur | `fields.byline` (string) | Identité | Anonymisation |
 | Dev.to | Nom de l'auteur | `user.name` (string) | Identité | Anonymisation |
 | TechCrunch | Nom de l'auteur | Extrait du HTML (`a[href*="/author/"]`) | Identité | Anonymisation |
-| arXiv | Noms des chercheurs | `authors` (string) | Identité | Anonymisation |
+| arXiv API | Noms des chercheurs (souvent multiples) | `<author><name>` (Atom XML) | Identité | Anonymisation |
+| arXiv Dataset (Kaggle) | Noms des chercheurs (souvent multiples) | `authors_parsed` (JSONL) | Identité | Anonymisation |
+| Crossref | Noms des chercheurs (souvent multiples) | `author[].given + family` (JSON) | Identité | Anonymisation |
+| GreenIT.fr | Nom de l'auteur | Sélecteur CSS WordPress `.author-name` (fallback meta `byline`) | Identité | Anonymisation |
+| Green Software Foundation | Nom de l'auteur | Sélecteur CSS article header (fallback `og:author`) | Identité | Anonymisation |
+| Sustainable Web Design | Nom de l'auteur | Sélecteur CSS WordPress | Identité | Anonymisation |
+| Climate Action Tech | Nom de l'auteur | Sélecteur CSS WordPress | Identité | Anonymisation |
+
+> **Note méthodologique** : la chaîne d'anonymisation est centralisée dans le module PySpark `processors/spark_cleaner.py` (fonction `anonymiser_auteur`). Elle s'applique de manière uniforme à toutes les sources, indépendamment du collecteur d'origine. Les noms complets ne sont JAMAIS persistés dans PostgreSQL ni dans le bucket MinIO `clean-data`. Seuls les buckets `raw-data` peuvent contenir transitoirement les noms complets (durée de rétention : 90 jours maximum, voir section 2.1.1).
 
 ### 4.2 Règles d'anonymisation automatique
 
@@ -288,12 +324,16 @@ DELETE FROM articles WHERE id_article IN (...);
 
 | Service | Fournisseur | Localisation | Données transmises | Base légale |
 |---------|-------------|--------------|-------------------|-------------|
-| **The Guardian API** | Guardian News & Media | Royaume-Uni | Mots-clés de recherche uniquement | Clause contractuelle type |
-| **Dev.to API** | Forem Inc. | États-Unis | Tags de recherche uniquement | Clause contractuelle type |
-| **Hugging Face API** | Hugging Face Inc. | États-Unis | Texte des articles (anonymisé) | Clause contractuelle type |
-| **Hébergement** | Render | États-Unis | Données applicatives | Clause contractuelle type |
+| **The Guardian API (Open Platform)** | Guardian News & Media | Royaume-Uni | Mots-clés de recherche + clé API du projet | Clause contractuelle type |
+| **Dev.to API (Forem)** | Forem Inc. | États-Unis | Tags de recherche (lecture publique sans clé) | Clause contractuelle type |
+| **arXiv API** | Cornell University | États-Unis | Requêtes Atom XML par mots-clés | Clause contractuelle type |
+| **Crossref API (Polite Pool)** | Crossref (PILA) | Royaume-Uni | Requêtes JSON par mots-clés + **e-mail du responsable de traitement** dans le User-Agent (`mailto:`) | Clause contractuelle type + intérêt légitime pour rate limit prioritaire |
+| **Hugging Face Serverless Inference API** | Hugging Face Inc. | États-Unis | Texte des articles (anonymisé) + token API | Clause contractuelle type |
+| **Hébergement applicatif** | Render | États-Unis | Données applicatives anonymisées | Clause contractuelle type |
 
-**Note importante** : Aucune donnée personnelle brute (noms complets) n'est transmise aux services tiers. Seules les données anonymisées sont envoyées.
+> **Précision sur le Polite Pool Crossref** : pour bénéficier du rate limit prioritaire (et permettre à Crossref de nous contacter en cas d'usage abusif), nous transmettons volontairement l'e-mail du responsable de traitement (`karn1zc@gmail.com`) dans l'en-tête HTTP `User-Agent` de chaque requête. Cette transmission est documentée par Crossref dans sa [politique d'usage public](https://www.crossref.org/documentation/retrieve-metadata/rest-api/tips-for-using-the-rest-api/) et constitue un traitement séparé. Le responsable de traitement consent explicitement à cette transmission. La variable d'environnement correspondante est `CROSSREF_MAILTO` (laisser vide = pool public sans transmission).
+
+**Note importante** : Aucune donnée personnelle brute (noms complets) n'est transmise aux services tiers d'analyse IA (Hugging Face). Seules les données anonymisées sont envoyées au stade de l'inférence. Les API de collecte (Guardian, arXiv, Crossref, Dev.to) ne reçoivent que des requêtes par mots-clés (et le `mailto` Crossref documenté ci-dessus).
 
 ### 6.2 Garanties de conformité
 
@@ -393,5 +433,5 @@ Ce registre doit être revu et mis à jour :
 
 ---
 
-**Date de dernière mise à jour** : 2026-02-11
-**Version** : 1.0
+**Date de dernière mise à jour** : 2026-05-16
+**Version** : 2.0

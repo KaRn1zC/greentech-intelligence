@@ -36,6 +36,11 @@ env/
 .uv/
 uv.lock
 
+# === pip-audit artefacts (regeneres a la volee) ===
+# requirements.snapshot.*.txt restent traces (backups ROCm intentionnels)
+requirements.txt
+requirements.audit.txt
+
 # === IDE ===
 .vscode/
 !.vscode/settings.json
@@ -76,12 +81,17 @@ logs/
 log/
 
 # === Data & Models (gérés par DVC) ===
-/data/
-!/data/.gitkeep
-!/data/.gitignore
-!/data/*.dvc
-/models/
-!/models/.gitkeep
+# On ignore le CONTENU de data/ et models/ mais on conserve les fichiers .dvc
+# (pointeurs DVC, à versionner avec Git) et les .gitkeep. La syntaxe `data/*`
+# (au lieu de `/data/`) permet la ré-inclusion via `!` des fichiers internes.
+data/*
+!data/.gitkeep
+!data/.gitignore
+!data/*.dvc
+!data/README.md
+models/*
+!models/.gitkeep
+!models/*.dvc
 *.parquet
 *.csv
 !requirements*.csv

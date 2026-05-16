@@ -112,6 +112,21 @@ class Settings(BaseSettings):
     # de comparer strictement l'impact du fine-tuning, sans bruit lie au
     # changement d'architecture.
     huggingface_model_baseline: str = "Qwen/Qwen3-4B"
+    # Encoder concurrent du benchmark equitable B4 (avril-mai 2026) :
+    # `microsoft/mdeberta-v3-base` (278M params, encoder-only, DisentangledSelfAttention,
+    # licence MIT). Choisi comme alternative au `Qwen/Qwen3-4B` decoder pour mettre
+    # en competition deux architectures sur le golden dataset bilingue EN/FR.
+    # mDeBERTa est selectionne (et pas `deberta-v3-base` EN-only) parce que le
+    # dataset final contient 25.25 % d'articles FR (dont 600 Green IT francais
+    # issus principalement de GreenIT.fr) - un encoder EN-only encoderait mal ces
+    # signaux et fausserait le benchmark en faveur de Qwen3. Cette base sert :
+    #   1. Au benchmark BRUT zero-shot (pre-entrainement) via `benchmark_baseline.py`
+    #   2. Au benchmark FINE-TUNE via la classe `MDeBERTaClassifier` du protocole
+    #      unifie B3 (K-fold 5 x 3 seeds, stratification langue x label, class_weight,
+    #      back-translation EN<->FR, calibration temperature+seuil, ensemble
+    #      logit-average)
+    # Decision documentee dans `docs/CHOIX_DEBERTA.md` (a rediger apres B4.4).
+    huggingface_model_encoder_base: str = "microsoft/mdeberta-v3-base"
     # Longueur maximale des sequences tokenizees lors de l'entrainement. 512
     # tokens couvrent la majorite des articles du corpus (les plus longs
     # tronquent leur queue peu informative) et divisent par ~4 la consommation

@@ -1,0 +1,63 @@
+# =============================================================================
+# GreenTech Intelligence - Template Alertmanager avec routage Discord
+# =============================================================================
+#
+# Copier ce fichier vers `alertmanager.yml` dans le meme dossier, remplacer
+# `<TON_WEBHOOK_DISCORD_ICI>` par l'URL reelle du webhook Discord, puis
+# relancer le conteneur : `docker compose restart alertmanager`.
+#
+# Pour creer un webhook Discord :
+#   1. Ouvrir Discord, aller sur le salon cible
+#   2. Parametres du salon > Integrations > Webhooks > Nouveau webhook
+#   3. Copier l'URL du webhook
+#   4. La coller ci-dessous a la place de `<TON_WEBHOOK_DISCORD_ICI>`
+#
+# **Important** : le fichier `alertmanager.yml` ne doit JAMAIS contenir un
+# webhook URL en clair sur un depot public. Si ce projet devient public,
+# garder le webhook dans `.env` (non commite) et utiliser un init container
+# avec `envsubst` pour pre-traiter le YAML (cf. README).
+#
+# =============================================================================
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default'
+
+  # Routes specifiques : alertes critiques routees ET vers Discord ET vers default (log)
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: 'discord'
+      continue: true
+    - matchers:
+        - severity = "critical"
+      receiver: 'default'
+
+receivers:
+  - name: 'default'
+
+  - name: 'discord'
+    discord_configs:
+      - webhook_url: '<TON_WEBHOOK_DISCORD_ICI>'
+        send_resolved: true
+        title: '[GreenTech] {{ .GroupLabels.alertname }} ({{ .GroupLabels.severity }})'
+        message: |
+          {{ range .Alerts }}
+          **{{ .Annotations.summary }}**
+          {{ .Annotations.description }}
+          - Severite : {{ .Labels.severity }}
+          - Demarrage : {{ .StartsAt }}
+          {{ end }}
+
+inhibit_rules:
+  - source_matchers:
+      - severity = "critical"
+    target_matchers:
+      - severity = "warning"
+    equal: ['alertname']

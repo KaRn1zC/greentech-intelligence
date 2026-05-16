@@ -1,0 +1,55 @@
+# =============================================================================
+# GreenTech Intelligence - Alertmanager Configuration (mode "log only")
+# =============================================================================
+#
+# Alertmanager recoit les alertes declenchees par les regles definies dans
+# `config/prometheus/alert-rules.yml`, les deduplique, les regroupe et les
+# historise dans son UI (http://localhost:9093).
+#
+# Configuration par defaut :
+#   - **Mode "log only"** : aucune notification externe. Les alertes sont
+#     visibles UNIQUEMENT dans l'UI Alertmanager + dans `docker logs greentech-alertmanager`.
+#   - Pour activer un envoi vers Discord, Slack ou Email, copier le fichier
+#     `config/alertmanager/alertmanager.discord.example.yml` ci-cote vers
+#     `alertmanager.yml` et y inserer ton vrai webhook URL, puis relancer le
+#     conteneur : `docker compose restart alertmanager`.
+#
+# **Pourquoi pas de variable d'environnement** : Alertmanager n'interpole PAS
+# les variables d'environnement dans son YAML (limitation connue, cf. issue
+# prometheus/alertmanager#1090). Toute tentative type `${WEBHOOK_URL}` provoque
+# l'erreur "unsupported scheme" au demarrage. Le webhook doit donc etre ecrit
+# en dur dans le fichier de configuration.
+#
+# =============================================================================
+
+global:
+  resolve_timeout: 5m
+
+# Templates de notification (Slack, Discord, Email, etc.)
+# Le dossier n'existe pas par defaut, decommenter quand des templates sont ajoutes.
+# templates:
+#   - '/etc/alertmanager/templates/*.tmpl'
+
+# Arbre de routage : toutes les alertes vont au receiver "default" (log only).
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 30s        # attend 30 s avant la premiere notification
+  group_interval: 5m     # 5 min entre deux notifications du meme groupe
+  repeat_interval: 4h    # repete les notifications resolues toutes les 4 h
+  receiver: 'default'
+
+# Definition des receivers
+receivers:
+  # Receiver par defaut : aucun envoi externe. Les alertes restent visibles
+  # dans l'UI Alertmanager (http://localhost:9093) et sont logguees lors de
+  # leur reception.
+  - name: 'default'
+
+# Inhibition : empeche des notifications redondantes.
+# Si une alerte "critical" est active, on inhibe les "warning" du meme alertname.
+inhibit_rules:
+  - source_matchers:
+      - severity = "critical"
+    target_matchers:
+      - severity = "warning"
+    equal: ['alertname']
