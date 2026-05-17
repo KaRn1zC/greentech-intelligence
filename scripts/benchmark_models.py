@@ -116,9 +116,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_classifier_for_model(model_alias: str) -> BaseClassifier | None:
-    """Charge le classifier d'un modele entraine, ou retourne None s'il manque."""
-    path, class_name, _label = MODELS_TO_BENCHMARK[model_alias]
+async def _load_classifier_for_model(model_alias: str) -> BaseClassifier | None:
+    """Charge le classifier via ``get_classifier`` (qui gère ensemble_config).
+
+    Note : on utilise ``get_classifier`` plutôt qu'instancier directement
+    ``Qwen3Classifier(path).load(path)`` car le path racine peut contenir des
+    reliques d'anciens trainings (ex. ``adapter_model.safetensors`` à la
+    racine de ``models/qwen3/`` antérieur au TIES-merging P4.15). Le bon
+    point d'entrée est ``ensemble_config.json`` qui redirige vers
+    ``merged/`` pour ``ties_manual`` ou charge les K folds pour
+    ``logit_average``.
+    """
+    path, _class_name, _label = MODELS_TO_BENCHMARK[model_alias]
     if not path.exists():
         logger.warning(
             f"Modele '{model_alias}' introuvable a {path}. "
@@ -127,17 +136,10 @@ def _load_classifier_for_model(model_alias: str) -> BaseClassifier | None:
         )
         return None
 
-    config = TrainingConfig(nom_modele=str(path), output_dir=path)
-    if class_name == "Qwen3Classifier":
-        classifier: BaseClassifier = Qwen3Classifier(config)
-    elif class_name == "MDeBERTaClassifier":
-        classifier = MDeBERTaClassifier(config)
-    else:
-        msg = f"Classe inconnue : {class_name}"
-        raise ValueError(msg)
+    from greentech.ai.models import inference as inference_module
 
-    classifier.load(path)
-    return classifier
+    inference_module._classifier = None  # purge cache singleton entre modèles
+    return await inference_module.get_classifier(model_path=path)
 
 
 async def _run_inference(
@@ -217,11 +219,30 @@ def _build_markdown_report(
         "Chaque modele a ete entraine via le protocole unifie B3 :",
         "",
         "- K-fold K=5 stratifie `(langue x label)` via `MultilabelStratifiedKFold`",
-        "- 3 seeds par fold (15 trainings total)",
+        "  - **mDeBERTa** : K=5, 3 seeds (15 trainings, MCC K-fold = 0.5941 ± 0.0093)",
+        "  - **Qwen3-4B + LoRA** : K=3, 2 seeds (6 trainings, MCC K-fold = 0.6238)",
         "- `class_weight=[1.0, ~10.5]` sur CrossEntropy (remplacement oversampling)",
         "- Augmentation back-translation EN<->FR (opus-mt) sur les positifs (1:6.3)",
         "- Calibration post-fold : temperature scaling + threshold tuning (MCC)",
         "- Calibration moyennee persistee dans `temperature.json` + `optimal_threshold.json`",
+        "- **Ensembles** :",
+        "  - mDeBERTa : `logit_average` sur les 5 folds top-1 (charges en parallele)",
+        "  - Qwen3 : `ties_manual` (TIES Yadav 2023 sur 3 folds top-1, densite=0.5)",
+        "",
+        "## ⚠️ Note importante sur le test set",
+        "",
+        "Le test set utilise est l'INTEGRALITE du golden_dataset (11 664 articles",
+        "originaux, variantes back-translation exclues). Chaque article a donc ete",
+        "vu en TRAIN par 4 des 5 modeles mDeBERTa (et 2 des 3 folds Qwen3). Les",
+        "metriques ci-dessous sont donc OPTIMISTES par rapport aux K-fold reportes",
+        "plus haut (qui sont l'estimation honnete). Le but de ce benchmark est de :",
+        "",
+        "1. Comparer les deux modeles sur la MEME distribution",
+        "2. Mesurer les **latences reelles** d'inference (sur volume)",
+        "3. Mesurer la **VRAM peak** observee",
+        "",
+        "Pour les decisions de promotion en production, se referer aux MCC K-fold",
+        "reportes ci-dessus, pas aux MCC du test set ci-dessous.",
         "",
         "## Resultats comparatifs",
         "",
@@ -371,7 +392,7 @@ async def benchmark_all() -> dict[str, dict]:
             logger.info("")
             logger.info(f"--- {alias} : {label} ---")
             try:
-                classifier = _load_classifier_for_model(alias)
+                classifier = await _load_classifier_for_model(alias)
                 if classifier is None:
                     results[alias] = {"error": f"Modele introuvable a {path}"}
                     continue
@@ -382,13 +403,25 @@ async def benchmark_all() -> dict[str, dict]:
                 metrics = _compute_fold_metrics(test_labels, preds, latencies)
                 latency_stats = _compute_latency_percentiles(latencies)
 
-                # Compter les parametres reels du modele charge
-                n_params = (
-                    int(sum(p.numel() for p in classifier.model.parameters()))
-                    if classifier.model is not None
-                    else 0
-                )
-                arch = type(classifier.model).__name__ if classifier.model else "?"
+                # Compter les parametres reels du modele charge. EnsembleClassifier
+                # est une composition de N members ; on somme les params du premier
+                # member (les K folds ont la meme architecture) et on note "ensemble(Kx)".
+                from greentech.ai.models.inference import EnsembleClassifier
+
+                if isinstance(classifier, EnsembleClassifier) and classifier.members:
+                    first = classifier.members[0]
+                    n_params = (
+                        int(sum(p.numel() for p in first.model.parameters()))
+                        if first.model is not None
+                        else 0
+                    )
+                    arch = f"ensemble({len(classifier.members)}x {type(first.model).__name__})"
+                elif classifier.model is not None:
+                    n_params = int(sum(p.numel() for p in classifier.model.parameters()))
+                    arch = type(classifier.model).__name__
+                else:
+                    n_params = 0
+                    arch = "?"
 
                 results[alias] = {
                     "metrics": metrics,

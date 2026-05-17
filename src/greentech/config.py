@@ -198,6 +198,27 @@ class Settings(BaseSettings):
     # https://www.crossref.org/documentation/retrieve-metadata/rest-api/tips-for-using-the-crossref-rest-api/
     crossref_mailto: str = ""
 
+    # --- Celery / Redis (file d'attente analyses) ---
+    # Redis sert a la fois de broker (queue des messages) et de result backend
+    # (stockage des resultats). Deux DB Redis distincts pour bien separer les
+    # responsabilites et faciliter les purges ciblees (FLUSHDB) :
+    #   - DB 0 : broker (queue des taches enqueueed)
+    #   - DB 1 : backend (etat + resultat de chaque tache)
+    # En prod, on peut pointer les deux URL vers des instances Redis distinctes
+    # pour isoler la latence broker vs backend.
+    redis_url: str = "redis://localhost:6379"
+    celery_broker_url: str = "redis://localhost:6379/0"
+    celery_result_backend: str = "redis://localhost:6379/1"
+    # Retention des resultats Celery dans Redis (en secondes). 24h par defaut :
+    # un utilisateur qui lance une analyse a largement le temps de revenir
+    # consulter le statut, et au-dela on libere de la memoire Redis.
+    celery_result_expires: int = 86400
+    # Timeout d'execution d'une tache de classification. Pipeline complet
+    # (extraction + summarize + classify + summarize_green) ~10-30s en mode
+    # normal, jusqu'a 60-120s si fallback LLM local cold start. On laisse
+    # une marge pour eviter les timeouts intempestifs.
+    celery_task_time_limit: int = 600
+
     # --- Monitoring ---
     loki_url: str = "http://localhost:3100"
     prometheus_port: int = 9090

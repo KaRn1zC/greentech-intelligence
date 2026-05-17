@@ -238,17 +238,36 @@ async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
     # Detection d'un ensemble K-fold (B3.5 protocole unifie avril 2026).
     # Si `ensemble_config.json` est present a la racine, il decrit la
     # strategie d'ensembling :
-    #   - `merge_lora` (Qwen3) : redirection vers le merged LoRA (single model).
+    #   - `merge_lora` / `ties_manual` (Qwen3) : redirection vers le merged
+    #     LoRA (single model). `ties_manual` est la variante post-P4.15 ou le
+    #     TIES (Yadav 2023) a ete applique manuellement sur les safetensors
+    #     pour contourner la limitation PEFT 0.19.0 sur `modules_to_save`.
     #   - `logit_average` (mDeBERTa) : instanciation d'`EnsembleClassifier`
     #     qui charge les K checkpoints et moyenne les logits a l'inference.
     ensemble_config_path = path / "ensemble_config.json"
     if ensemble_config_path.exists():
         ensemble_cfg = json.loads(ensemble_config_path.read_text(encoding="utf-8"))
         strategy = ensemble_cfg.get("strategy")
-        if strategy == "merge_lora":
-            merged_path = Path(ensemble_cfg["inference_model_path"])
-            logger.info(f"Ensemble merge_lora detecte : redirection vers {merged_path}")
-            path = merged_path
+        if strategy in ("merge_lora", "ties_manual"):
+            # Prefere le model.safetensors colocalise avec ensemble_config.json si
+            # present. Cas typique : ``models/production/`` contient apres la
+            # promotion DVC tous les artefacts du modele merged (config, tokenizer,
+            # poids, calibration), donc on peut charger directement depuis ce path
+            # sans suivre ``inference_model_path`` qui pointe vers le dossier
+            # d'origine (``models/qwen3/merged/``). C'est crucial pour la
+            # portabilite : ``inference_model_path`` est un path absolu Windows
+            # enregistre lors du training, qui n'existe pas dans un conteneur
+            # Linux ou sur une autre machine.
+            if (path / "model.safetensors").exists():
+                logger.info(
+                    f"Ensemble {strategy} : utilise model.safetensors colocalise dans {path}"
+                )
+            else:
+                merged_path = Path(ensemble_cfg["inference_model_path"])
+                logger.info(
+                    f"Ensemble {strategy} detecte : redirection vers {merged_path}"
+                )
+                path = merged_path
         elif strategy == "logit_average":
             from greentech.ai.models.training import MDeBERTaClassifier
 

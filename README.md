@@ -132,12 +132,12 @@ cd ..
 
 ## 5. Lancer l'infrastructure Docker
 
-Docker fournit PostgreSQL, MinIO, MLflow, Prometheus, Loki et Grafana.
+Docker fournit PostgreSQL, MinIO, MLflow, Prometheus, Loki, Grafana, **Redis** (broker + result backend Celery) et optionnellement l'API/Frontend/Worker (profil `full`).
 
-### Etape 1 : Lancer les services de base
+### Etape 1 : Lancer les services de base (Postgres + MinIO + MLflow + Redis + monitoring)
 
 ```bash
-# Demarrer PostgreSQL, MinIO, MLflow, Prometheus, Loki, Grafana
+# Demarrer PostgreSQL, MinIO, MLflow, Prometheus, Loki, Grafana, Redis
 docker compose up -d
 ```
 
@@ -147,7 +147,20 @@ Attendez environ 30 secondes que tous les services demarrent. Verifiez :
 docker compose ps
 ```
 
-Tous les conteneurs doivent etre en status `Up` ou `healthy`.
+Tous les conteneurs doivent etre en status `Up` ou `healthy`. Services lances :
+
+| Service | Port | Role |
+|---------|------|------|
+| `greentech-postgres` | 5432 | Base de donnees (articles, users, logs) |
+| `greentech-minio` | 9000 (API) / 9001 (UI) | Stockage objet (modeles DVC, MLflow artefacts) |
+| `greentech-mlflow` | 5000 | Tracking experiences ML |
+| `greentech-redis` | 6379 | Broker + result backend Celery (queue `/analyze`) |
+| `greentech-prometheus` | 9090 | Metriques |
+| `greentech-alertmanager` | 9093 | Alertes |
+| `greentech-loki` | 3100 | Logs centralises |
+| `greentech-grafana` | 3000 | Dashboards |
+| `greentech-pushgateway` | 9091 | Metriques jobs ephemeres |
+| `greentech-cadvisor` | 8090 | Metriques par conteneur |
 
 ### Etape 2 : Verifier que la base est initialisee
 
@@ -161,15 +174,21 @@ docker exec greentech-postgres psql -U greentech -d greentech_db -c "\dt"
 
 Vous devriez voir les tables : `search_config`, `sources`, `articles`, `users`, `analysis_logs`, `daily_stats`.
 
-### Etape 3 (optionnel) : Lancer la stack complete avec API + Frontend Docker
+### Etape 3 (optionnel) : Lancer la stack complete (profil `full`)
+
+Le profil `full` ajoute trois conteneurs supplementaires en plus des services de base :
+
+| Service | Port | Role |
+|---------|------|------|
+| `greentech-api` | 8000 | API FastAPI (producteur de la queue Celery) |
+| `greentech-celery-worker` | — | Worker Celery (consommateur, execute les analyses) |
+| `greentech-frontend` | 80 | Frontend React/NGINX (build de prod) |
 
 ```bash
 docker compose --profile full up -d
 ```
 
-Cela ajoute les conteneurs `greentech-api` (port 8000) et `greentech-frontend` (port 80).
-
-> **Note** : En developpement, il est plus pratique de lancer l'API et le frontend hors Docker (voir section 7).
+> **Pour quel usage utiliser ce mode ?** Voir la section [7. Lancer l'application](#7-lancer-lapplication) qui detaille **trois modes** : full Docker (demo), **hybride** (recommande sur Windows + GPU AMD), et tout local.
 
 ### Etape 4 : Arreter l'infrastructure
 
@@ -177,7 +196,7 @@ Cela ajoute les conteneurs `greentech-api` (port 8000) et `greentech-frontend` (
 docker compose --profile "*" down
 ```
 
-Le wildcard `--profile "*"` active tous les profils declares dans `docker-compose.yml` et garantit que les conteneurs `greentech-api` et `greentech-frontend` (profil `full`) sont bien supprimes avec les services de base. Sans ce flag, `docker compose down` ignore les services du profil `full` et laisse le reseau `greentech-network` en etat `still in use`.
+Le wildcard `--profile "*"` active tous les profils declares dans `docker-compose.yml` et garantit que les conteneurs `greentech-api`, `greentech-celery-worker` et `greentech-frontend` (profil `full`) sont bien supprimes avec les services de base. Sans ce flag, `docker compose down` ignore les services du profil `full` et laisse le reseau `greentech-network` en etat `still in use`.
 
 ---
 
@@ -276,30 +295,38 @@ sont mises a jour dans `models/production/README.md` apres chaque promotion via
 
 ## 7. Lancer l'application
 
-### Mode developpement (recommande)
+L'architecture supporte **trois modes d'execution** selon le contexte d'usage. Choisissez en fonction de votre setup et de vos besoins.
 
-Ouvrez **deux terminaux** :
+### Tableau comparatif des modes
 
-**Terminal 1 — API Backend** :
+| Critere | Mode A : Full Docker | Mode B : **Hybride (recommande Windows + GPU AMD)** | Mode C : Tout local |
+|---------|----------------------|----------------------------------------------------|---------------------|
+| **Infra (Postgres, Redis, MinIO, MLflow, Grafana, ...)** | Docker | Docker | Manuel (a eviter) |
+| **API FastAPI** | Docker | **Local (venv)** | Local (venv) |
+| **Worker Celery** | Docker (CPU) | **Local (venv, GPU ROCm/CUDA)** | Local (venv) |
+| **Frontend React** | Docker (NGINX build prod) | Local (Vite dev server, HMR) | Local (Vite) |
+| **Performance classification** | ~5-30 s/article (CPU) | **~0.8 s/article (GPU)** | Idem mode B |
+| **Reproductibilite / portabilite** | **Maximale** (tout dans des images) | Bonne (infra dockerisee) | Faible |
+| **Hot reload du code** | Non (rebuild image) | **Oui** (uvicorn --reload, Vite HMR) | Oui |
+| **Usage cible** | **Demo, CI, evaluation diplome** | **Developpement quotidien, usage perso GPU** | Dev pur sans Docker |
 
-```bash
-uv run uvicorn src.greentech.api.main:app --reload --port 8000
-```
+### Pourquoi le mode hybride existe
 
-L'API est accessible sur http://localhost:8000
+Docker Desktop sur **Windows** utilise WSL2 (VM Linux). Or :
 
-**Terminal 2 — Frontend** :
+- **GPU AMD + WSL2** : pas de passthrough ROCm officiel (mai 2026). Le `/dev/kfd` et `/dev/dri` ne sont pas exposes au conteneur.
+- **GPU NVIDIA + WSL2** : passthrough CUDA OK avec `--gpus all`.
+- **Linux natif + GPU AMD** : passthrough ROCm OK avec `--device=/dev/kfd --device=/dev/dri --group-add video`.
 
-```bash
-cd frontend
-npm run dev
-```
+Conclusion sur ton setup **Windows + RX 7900 XTX** : le worker Celery dans Docker tombera en **CPU** (~5-30 s par classification au lieu de ~800 ms sur GPU). C'est inacceptable pour un usage quotidien, d'ou le mode hybride.
 
-Le frontend est accessible sur http://localhost:5173
+Pour la **demo / soutenance**, le mode full Docker reste pertinent : portable, autonome, fonctionnel meme en CPU (juste plus lent). Pour ton **usage local quotidien**, le mode hybride est l'optimum.
 
-### Mode Docker (stack complete)
+---
 
-Si vous preferez tout lancer via Docker :
+### Mode A : Full Docker (demo / soutenance / evaluation)
+
+Lance la stack complete (infra + API + worker + frontend) en conteneurs. Tout est autonome, accessible via les URLs `localhost`.
 
 ```bash
 docker compose --profile full up -d --build
@@ -309,6 +336,111 @@ docker compose --profile full up -d --build
 |---------|-----|
 | Frontend | http://localhost:80 |
 | API | http://localhost:8000 |
+| Swagger | http://localhost:8000/docs |
+| Grafana | http://localhost:3000 (admin/admin123) |
+| MLflow | http://localhost:5000 |
+| MinIO console | http://localhost:9001 |
+
+**Limites a connaitre** :
+- Classification IA en CPU (Qwen3-4B fp32 dans un conteneur sans GPU passthrough) : ~5-30 s par article
+- Pas de hot reload : tout changement de code Python necessite `docker compose build api celery-worker && docker compose --profile full up -d`
+- Build initial long (~5-10 min) : telechargement de ~3 GB de wheels Python (torch + nvidia-* + autres)
+- VRAM/RAM : le conteneur worker est plafonne a 8 GB RAM par defaut, ajustable via `CELERY_WORKER_MEM_LIMIT` dans `.env`
+
+> **Note construction d'image** : `models/production/` (~8 GB) est exclu du build context (`.dockerignore`) puis monte en volume read-only dans les services `api` et `celery-worker` (cf. `docker-compose.yml`). Sans cette exclusion, le build context atteindrait ~150 GB a cause des checkpoints d'entrainement adjacents dans `models/qwen3/`.
+
+---
+
+### Mode B : Hybride (recommande pour usage local sur Windows + GPU AMD)
+
+Lance l'infra en Docker (Postgres, Redis, MinIO, MLflow, monitoring), mais **API + worker + frontend tournent en local** dans ton environnement Python/Node pour beneficier du GPU AMD via ROCm et du hot reload.
+
+#### Etape 1 : Lancer uniquement l'infra (sans API ni worker)
+
+```powershell
+# Demarre tous les services hors API/worker/frontend
+docker compose up -d
+```
+
+Tous les services de la section 5 (Postgres, Redis, MinIO, MLflow, Grafana, ...) sont disponibles sur `localhost`.
+
+#### Etape 2 : Lancer le worker Celery en local (GPU ROCm)
+
+Dans un terminal PowerShell dedie :
+
+```powershell
+# Vars d'env optionnelles (les defauts de .env conviennent si Redis tourne sur localhost:6379)
+$env:CELERY_BROKER_URL = "redis://localhost:6379/0"
+$env:CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
+
+uv run celery -A greentech.api.celery_app worker --pool=solo --loglevel=info
+```
+
+Le worker :
+- Charge `Qwen3-4B + LoRA TIES` depuis `models/production/` (8 GB sur GPU ROCm)
+- Consomme les taches `classify_article` enqueueed par l'API
+- Traite **une analyse a la fois** (`--pool=solo`, ~800 ms par article sur RX 7900 XTX)
+
+> **Pourquoi `--pool=solo` ?** Avec un seul GPU 24 GB et un classifieur 7.7 GB VRAM, plusieurs workers paralleles provoqueraient un OOM. `solo` garantit qu'une seule inference s'execute a la fois. Pour scaler horizontalement : lancer un worker par GPU sur N machines distinctes pointant vers le meme broker Redis.
+
+#### Etape 3 : Lancer l'API FastAPI en local (avec hot reload)
+
+Dans un deuxieme terminal :
+
+```powershell
+uv run uvicorn src.greentech.api.main:app --reload --port 8000
+```
+
+L'API est accessible sur http://localhost:8000 (Swagger sur `/docs`). Le `--reload` redemarre automatiquement le serveur a chaque modification de fichier Python dans `src/`.
+
+#### Etape 4 : Lancer le frontend Vite (hot reload)
+
+Dans un troisieme terminal :
+
+```powershell
+cd frontend
+npm run dev
+```
+
+Frontend accessible sur http://localhost:5173 avec hot module replacement (HMR Vite).
+
+#### Verification rapide du mode hybride
+
+```powershell
+# Test E2E : soumettre une analyse et observer la latence (~800 ms si GPU OK)
+uv run python -c "
+import time
+from greentech.api.tasks import classify_article
+t0 = time.time()
+ar = classify_article.delay(url=None, texte='Article de test sur la reduction d empreinte energetique des datacenters via scheduling dynamique', titre_override='Smoke test GPU')
+ar.get(timeout=120)
+print(f'Total : {time.time()-t0:.1f}s, modele : {ar.result.get(\"modele_classification\")}, temps_inf : {ar.result.get(\"temps_inference_ms\")}ms')
+"
+```
+
+Si `temps_inference_ms` est entre 500 et 1500 ms, le worker tourne bien sur le GPU. S'il depasse 5000 ms, le fallback CPU est actif (verifier `import torch; torch.cuda.is_available()` dans le venv).
+
+---
+
+### Mode C : Tout local (sans Docker du tout)
+
+Pour le dev pur sans aucun conteneur. Necessite d'installer manuellement PostgreSQL 15, Redis 7, MinIO, etc. **Deconseille** sauf si tu as deja ces services tournant pour d'autres projets — sinon utilise le mode hybride.
+
+```powershell
+# Prerequis : Postgres + Redis installes localement et configures comme dans .env
+uv run uvicorn src.greentech.api.main:app --reload --port 8000   # Terminal 1
+uv run celery -A greentech.api.celery_app worker --pool=solo --loglevel=info   # Terminal 2
+cd frontend && npm run dev   # Terminal 3
+```
+
+---
+
+### Choisir le bon mode rapidement
+
+- **Soutenance / demo a un public** → Mode A (full Docker)
+- **Developpement quotidien sur Windows + AMD** → **Mode B (hybride)**
+- **CI/CD GitHub Actions** → Mode A (l'image API est construite et testee en CPU)
+- **Deploiement prod cloud (Render, AWS, GCP)** → Mode A adapte (avec ou sans GPU selon le tier)
 
 ---
 

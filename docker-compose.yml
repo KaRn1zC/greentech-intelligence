@@ -68,6 +68,38 @@ services:
     networks:
       - greentech-network
 
+  # === Redis (broker + result backend Celery) ===
+  # Sert deux usages :
+  #   - DB 0 : broker des taches Celery (queue des analyses /analyze)
+  #   - DB 1 : result backend (etat + resultat de chaque tache, lu par GET
+  #     /analyze/{job_id})
+  # Persistance AOF activee pour ne pas perdre les jobs en attente lors d'un
+  # redemarrage du conteneur. La RAM est plafonnee a 256 Mo avec eviction LRU
+  # pour ne pas inonder la machine en cas de retention longue.
+  redis:
+    image: redis:7-alpine
+    container_name: greentech-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--maxmemory"
+      - "256mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - greentech-network
+
   # === MLflow Tracking Server ===
   mlflow:
     build:
@@ -171,6 +203,31 @@ services:
     networks:
       - greentech-network
 
+  # === Promtail (agent de collecte de logs pour Loki) ===
+  # Decouvre dynamiquement les conteneurs Docker via le socket Docker et
+  # expedie leurs logs vers Loki avec des labels (container, compose_service,
+  # stream). Une fois actif, les logs sont consultables dans Grafana via :
+  #   - Grafana > Explore > Loki
+  #   - LogQL : {compose_service="api"} |= "analyze"
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: greentech-promtail
+    restart: unless-stopped
+    depends_on:
+      loki:
+        condition: service_healthy
+    volumes:
+      # Logs des conteneurs Docker (lecture seule).
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Socket Docker pour la decouverte dynamique des conteneurs.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Configuration Promtail.
+      - ./config/loki/promtail-config.yml:/etc/promtail/config.yml:ro
+    command:
+      - "-config.file=/etc/promtail/config.yml"
+    networks:
+      - greentech-network
+
   # === Pushgateway (Métriques jobs éphémères) ===
   # Les scripts de re-entrainement et le pipeline poussent leurs métriques ici,
   # Prometheus scrape ensuite cette instance. Indispensable pour les jobs qui
@@ -244,6 +301,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       # Pydantic Settings calcule database_url depuis ces champs (cf. config.py).
       # DATABASE_URL n'est pas lu : seuls POSTGRES_* comptent.
@@ -259,6 +318,10 @@ services:
       MINIO_SECRET_KEY: minioadmin123
       MLFLOW_TRACKING_URI: http://mlflow:5000
       LOKI_URL: http://loki:3100
+      # Celery (broker + result backend) pour la queue /analyze
+      REDIS_URL: redis://redis:6379
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
       SECRET_KEY: dev-secret-key-change-in-production
       DEBUG: "true"
       HUGGINGFACE_TOKEN: ${HUGGINGFACE_TOKEN}
@@ -277,6 +340,11 @@ services:
       - "8000:8000"
     volumes:
       - ./src:/app/src:ro
+      # Modele de production monte read-only : exclu du build context via
+      # .dockerignore (sinon ~8 Go envoyes au demon Docker a chaque build).
+      # Le path /app/models/production est ce que ``inference.py`` lit par
+      # defaut (DEFAULT_MODEL_PATH = BASE_DIR / "models" / "production").
+      - ./models/production:/app/models/production:ro
       # Cache HuggingFace persistant : evite de re-telecharger les modeles
       # (Llama-3.2-3B base ~6 Go, Qwen2.5-3B fallback ~6 Go) a chaque
       # docker-compose up --force-recreate. Le cache survit aux recreate
@@ -299,6 +367,84 @@ services:
         max-size: "10m"
         max-file: "3"
         tag: "greentech-api"
+    networks:
+      - greentech-network
+    profiles:
+      - full
+
+  # === Worker Celery (consommateur de la queue /analyze) ===
+  # Tourne le meme code que l'API (meme Dockerfile.api) mais lance le command
+  # ``celery worker`` au lieu d'``uvicorn``. La concurrency est limitee a 1
+  # pour eviter l'OOM VRAM si le classifieur Qwen3-4B (~7.7 GB) charge plusieurs
+  # instances. Pour scaler horizontalement, dupliquer ce service sur d'autres
+  # machines/GPUs en pointant vers le meme broker Redis.
+  #
+  # Note ROCm AMD : Docker Desktop sur Windows ne supporte pas le passthrough
+  # GPU AMD/ROCm. Dans ce cas, le classifieur tombe en CPU (10x plus lent).
+  # Pour beneficier du GPU sur poste Windows + RX 7900 XTX, lancer le worker
+  # en local hors Docker :
+  #
+  #   uv run celery -A greentech.api.celery_app worker --pool=solo --loglevel=info
+  #
+  # Et pointer la variable CELERY_BROKER_URL vers le Redis du compose
+  # (redis://localhost:6379/0).
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: greentech-celery-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: greentech_db
+      POSTGRES_USER: greentech
+      POSTGRES_PASSWORD: greentech_dev_password
+      POSTGRES_APP_USER: greentech_app
+      POSTGRES_APP_PASSWORD: greentech_app_password
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin123
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      LOKI_URL: http://loki:3100
+      REDIS_URL: redis://redis:6379
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      HUGGINGFACE_TOKEN: ${HUGGINGFACE_TOKEN}
+      HUGGINGFACE_MODEL_SUMMARIZER: ${HUGGINGFACE_MODEL_SUMMARIZER:-Qwen/Qwen3-4B-Instruct-2507}
+      HUGGINGFACE_MODEL_GREEN_SUMMARIZER: ${HUGGINGFACE_MODEL_GREEN_SUMMARIZER:-Qwen/Qwen3-4B-Instruct-2507}
+      HUGGINGFACE_MODEL_CLASSIFIER_LLM: ${HUGGINGFACE_MODEL_CLASSIFIER_LLM:-Qwen/Qwen3-4B-Instruct-2507}
+      HUGGINGFACE_MODEL_LOCAL_FALLBACK: ${HUGGINGFACE_MODEL_LOCAL_FALLBACK:-Qwen/Qwen2.5-3B-Instruct}
+      HUGGINGFACE_MODEL_LOCAL_FALLBACK_LIGHTWEIGHT: ${HUGGINGFACE_MODEL_LOCAL_FALLBACK_LIGHTWEIGHT:-Qwen/Qwen2.5-1.5B-Instruct}
+    command:
+      - "celery"
+      - "-A"
+      - "greentech.api.celery_app"
+      - "worker"
+      - "--concurrency=1"
+      - "--loglevel=info"
+    volumes:
+      - ./src:/app/src:ro
+      # Modele de production (cf. note dans le service api). Le worker en a
+      # besoin pour appeler ``get_classifier()`` au moment d'executer la
+      # tache classify_article.
+      - ./models/production:/app/models/production:ro
+      - hf-cache-api:/home/appuser/.cache/huggingface
+    mem_limit: ${CELERY_WORKER_MEM_LIMIT:-8g}
+    memswap_limit: ${CELERY_WORKER_MEMSWAP_LIMIT:-10g}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+        tag: "greentech-celery-worker"
     networks:
       - greentech-network
     profiles:
@@ -341,6 +487,8 @@ volumes:
     name: greentech-grafana-data
   loki-data:
     name: greentech-loki-data
+  redis-data:
+    name: greentech-redis-data
   hf-cache-api:
     name: greentech-hf-cache-api
 

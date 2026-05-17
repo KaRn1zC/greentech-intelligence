@@ -1,0 +1,71 @@
+# =============================================================================
+# Promtail — agent de collecte de logs pour Loki
+# =============================================================================
+#
+# Promtail decouvre dynamiquement les conteneurs Docker via le socket
+# /var/run/docker.sock et expedie leurs logs vers Loki avec des labels
+# (container, compose_service, stream).
+#
+# Une fois Promtail actif, les logs sont consultables via :
+#   - Grafana > Explore > Loki datasource
+#   - Requete LogQL : {compose_service="api"}
+#   - Filtre erreurs : {compose_service="celery-worker"} |= "ERROR"
+# =============================================================================
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+# Fichier de positions : Promtail memorise jusqu'ou il a lu pour chaque source
+# afin de ne pas dupliquer ni perdre de logs apres un redemarrage.
+positions:
+  filename: /tmp/positions.yaml
+
+# Cible : envoyer les logs au Loki du compose (resolvable via le DNS Docker).
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    # Retry exponentiel si Loki est temporairement indisponible.
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+
+scrape_configs:
+  # Job 1 : decouverte automatique des conteneurs Docker.
+  # Promtail interroge le daemon et auto-suit chaque conteneur qui apparait
+  # ou disparait, sans qu'il soit necessaire de lister chaque service.
+  - job_name: docker_containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+
+    relabel_configs:
+      # Label `container` : nom complet du conteneur (ex. `greentech-api`).
+      # Le prefixe `/` est retire (Docker stocke `/greentech-api`).
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+
+      # Label `compose_service` : nom du service docker-compose (ex. `api`,
+      # `celery-worker`, `postgres`). Plus stable que le nom de conteneur.
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'compose_service'
+
+      # Label `compose_project` : pour distinguer plusieurs stacks compose
+      # tournant sur la meme machine.
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'compose_project'
+
+      # Label `stream` : stdout ou stderr.
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'stream'
+
+      # Le chemin physique du fichier de log Docker (utilise par tail).
+      - source_labels: ['__meta_docker_container_id']
+        target_label: '__path__'
+        replacement: '/var/lib/docker/containers/$1/$1-json.log'
+
+    # Pipeline de parsing : extraire le timestamp et le message du JSON Docker.
+    pipeline_stages:
+      - docker: {}

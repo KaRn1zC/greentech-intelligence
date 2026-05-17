@@ -9,9 +9,21 @@ Trois modes d'entree sont supportes :
     - Fichier (upload multipart sur `/analyze/file`) — le texte est extrait
       selon le format (.txt, .md, .pdf, .docx, .html).
 
-Les analyses sont executees en arriere-plan pour ne pas bloquer
-la requete HTTP. Un job_id permet de suivre l'avancement.
+Les analyses sont **dispatchees vers une queue Celery + Redis** : l'API
+retourne immediatement un ``job_id`` (= Celery task id), le worker dedie
+execute le pipeline sequentiellement (1 GPU = 1 inference a la fois).
+Le client poll ``GET /analyze/{job_id}`` pour recuperer le statut + resultat.
 
+Avant cette refonte, les jobs etaient stockes en memoire dans un ``dict``
+process-local, ce qui posait deux problemes :
+
+1. Tout etait perdu au redemarrage de l'API.
+2. Plusieurs requetes simultanees pouvaient saturer le GPU (pas de file
+   d'attente, juste un asyncio.create_task() en arriere-plan).
+
+Avec Celery + Redis, les jobs survivent au redemarrage, le worker traite
+les analyses sequentiellement (concurrency=1), et l'on peut scaler en
+ajoutant des workers sur d'autres GPU.
 """
 
 from __future__ import annotations
@@ -19,13 +31,12 @@ from __future__ import annotations
 import io
 import re
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+from celery.result import AsyncResult
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     HTTPException,
@@ -33,8 +44,8 @@ from fastapi import (
     status,
 )
 from loguru import logger
-from sqlalchemy import select
 
+from greentech.api.celery_app import celery_app
 from greentech.api.dependencies import get_current_user
 from greentech.api.schemas.analysis import (
     AnalysisInput,
@@ -42,13 +53,10 @@ from greentech.api.schemas.analysis import (
     AnalysisResult,
     AnalysisStatus,
 )
-from greentech.data.storage.database import async_session_factory
-from greentech.data.storage.models import AnalysisLog, Article, User
+from greentech.api.tasks import classify_article as classify_article_task
+from greentech.data.storage.models import User
 
 router = APIRouter(prefix="/analyze", tags=["Analyse IA"])
-
-# Stockage en memoire des jobs d'analyse (remplacable par Redis en production)
-_jobs: dict[uuid.UUID, AnalysisResult] = {}
 
 # Contraintes d'upload : on refuse les fichiers > 10 Mo pour proteger le serveur
 # (parsing PDF/DOCX en memoire). Les articles depassent rarement quelques dizaines
@@ -293,189 +301,79 @@ async def _extract_text_from_upload(upload: UploadFile) -> tuple[str, str]:
     return titre[:500], contenu
 
 
-async def _run_analysis(
-    job_id: uuid.UUID,
-    url: str | None,
-    texte: str | None,
-    titre_override: str | None = None,
-) -> None:
-    """Execute la chaine complete d'analyse IA en arriere-plan.
+def _celery_state_to_status(celery_state: str) -> AnalysisStatus:
+    """Convertit un etat brut Celery en ``AnalysisStatus`` metier.
 
-    Orchestre l'enchainement strictement sequentiel :
+    Mapping :
 
-    1. Extraction du contenu (trafilatura pour URL, pypdf/docx pour uploads)
-    2. Insertion en base (ou recuperation si URL deja connue)
-    3. Resume de classification via LLM (peuple ``articles.resume``)
-    4. Classification Qwen3-4B + LoRA sur le resume
-       (reproduit la feature d'entrainement ``titre + resume``)
-    5. Resume ecologique si l'article est classifie Green IT
-       (peuple ``articles.resume_ecologique``)
-    6. Log d'analyse dans ``analysis_logs``
-    7. Mise a jour du statut du job en memoire
-
-    Le resume de classification (etape 3) est genere AVANT la classification
-    (etape 4) car le classifieur Qwen3-4B + LoRA a ete entraine sur le
-    resume, pas sur le contenu brut. Cet ordre garantit l'absence de
-    derive de distribution entre entrainement et inference.
-
-    Args:
-        job_id: Identifiant du job d'analyse.
-        url: URL de l'article (si fournie).
-        texte: Texte brut (si fourni).
-        titre_override: Titre a utiliser prioritairement (ex. nom de fichier uploade).
-            Si None, un titre est deduit du contenu ou de l'URL.
+    * ``PENDING`` : tache enqueue mais pas encore prise par un worker
+      (ou job_id inexistant - Celery ne distingue pas les deux cotes
+      backend). On verifie l'existence reelle de la tache en amont
+      via une autre source quand on a besoin de la distinction.
+    * ``STARTED`` : worker a pick la tache, execution en cours
+      (necessite ``task_track_started=True`` dans celery_app.py).
+    * ``SUCCESS`` : execution terminee avec resultat disponible.
+    * ``FAILURE`` : exception levee pendant l'execution.
+    * ``RETRY`` / ``REVOKED`` : agrege en ``EN_COURS`` faute de mieux
+      (notre pipeline ne fait pas de retry et ne revoke pas).
     """
-    _jobs[job_id] = AnalysisResult(
-        job_id=job_id,
-        statut=AnalysisStatus.EN_COURS,
-    )
+    mapping = {
+        "PENDING": AnalysisStatus.EN_ATTENTE,
+        "STARTED": AnalysisStatus.EN_COURS,
+        "RETRY": AnalysisStatus.EN_COURS,
+        "REVOKED": AnalysisStatus.ERREUR,
+        "SUCCESS": AnalysisStatus.TERMINE,
+        "FAILURE": AnalysisStatus.ERREUR,
+    }
+    return mapping.get(celery_state, AnalysisStatus.EN_ATTENTE)
 
-    try:
-        # 1. Extraction du contenu
-        if url:
-            titre, contenu = await _extract_text_from_url(url)
-        else:
-            titre = texte[:100] + "..." if texte and len(texte) > 100 else (texte or "")
-            contenu = texte or ""
 
-        if titre_override:
-            titre = titre_override
+def _build_analysis_result(job_id: uuid.UUID, async_result: AsyncResult) -> AnalysisResult:
+    """Construit un ``AnalysisResult`` Pydantic depuis un ``AsyncResult`` Celery.
 
-        if len(contenu) < 50:
-            _jobs[job_id] = AnalysisResult(
-                job_id=job_id,
-                statut=AnalysisStatus.ERREUR,
-                erreur="Contenu insuffisant pour l'analyse (minimum 50 caracteres)",
-            )
-            return
+    Selon l'etat :
 
-        # 2. Insertion en base (ou recuperation si URL deja connue)
-        async with async_session_factory() as session:
-            article_url = url or f"analyse-directe://{job_id}"
+    * ``SUCCESS`` : extrait le dict retourne par la tache et le fusionne avec
+      le statut TERMINE. La date d'analyse est lue depuis le resultat (la
+      tache la set en UTC).
+    * ``FAILURE`` : extrait le message d'exception via ``async_result.info``
+      (qui contient l'objet Exception levee par la tache).
+    * Autres etats : retourne juste statut + job_id, le reste reste None.
+    """
+    statut = _celery_state_to_status(async_result.state)
 
-            stmt = select(Article).where(Article.url == article_url)
-            result = await session.execute(stmt)
-            article = result.scalar_one_or_none()
-
-            if article is None:
-                article = Article(
-                    titre=titre[:500],
-                    url=article_url,
-                    contenu=contenu,
-                )
-                session.add(article)
-                await session.commit()
-                await session.refresh(article)
-
-            id_article = article.id_article
-
-        # 3. Resume de classification (feature d'entree du classifieur)
-        #    Le classifieur Qwen3-4B + LoRA a ete entraine sur `titre + resume`
-        #    (et non sur le contenu brut) pour garantir une distribution
-        #    uniforme entre toutes les sources (arXiv, TechCrunch, NewsData,
-        #    uploads). On doit donc generer le resume AVANT la classification
-        #    et utiliser le meme prompt centralise qu'a l'entrainement.
-        from greentech.ai.services.summarizer import (
-            summarize_article,
-            summarize_green_for_article,
-        )
-
-        resume: str | None = None
-        resume_ecologique: str | None = None
-
-        try:
-            resume_result = await summarize_article(id_article)
-            if resume_result.succes:
-                resume = resume_result.resume
-            else:
-                logger.warning(
-                    f"Resume de classification echoue pour article {id_article} : "
-                    f"{resume_result.erreur}"
-                )
-        except Exception as exc:
-            logger.error(f"Erreur resume de classification : {exc}")
-
-        # 4. Classification IA sur le resume (lecture de articles.resume)
-        est_green_it: bool | None = None
-        score_confiance: float | None = None
-        modele_nom: str | None = None
-        temps_ms: int | None = None
-
-        if resume is None:
-            # Sans resume, la classification ne peut pas s'executer (classify_article
-            # leve ValueError si articles.resume est NULL). On preserve le job en
-            # statut terminal mais sans prediction, plutot que de propager une erreur.
-            logger.warning(
-                f"Classification sautee pour article {id_article} : pas de resume disponible"
-            )
-        else:
+    if async_result.state == "SUCCESS":
+        payload = async_result.result or {}
+        date_str = payload.get("date_analyse")
+        date_analyse = None
+        if isinstance(date_str, str):
+            from datetime import datetime as _dt
             try:
-                from greentech.ai.models.inference import classify_article
-
-                prediction = await classify_article(id_article)
-                est_green_it = prediction.est_green_it
-                score_confiance = prediction.score_confiance
-                modele_nom = prediction.modele
-                temps_ms = prediction.temps_ms
-            except FileNotFoundError:
-                logger.warning("Modele de production non disponible, classification ignoree")
-            except Exception as e:
-                logger.error(f"Erreur classification : {e}")
-
-        # 5. Resume ecologique (uniquement si Green IT confirme)
-        #    Genere apres la classification, sur le contenu complet de l'article
-        #    (et non sur le resume) car cette synthese est destinee a l'affichage
-        #    utilisateur et peut se permettre un contexte plus riche que celui
-        #    contraint par le budget tokens du classifieur.
-        if est_green_it is True:
-            try:
-                green_result = await summarize_green_for_article(id_article)
-                if green_result.succes:
-                    resume_ecologique = green_result.resume
-                else:
-                    logger.warning(
-                        f"Resume ecologique echoue pour article {id_article} : "
-                        f"{green_result.erreur}"
-                    )
-            except Exception as exc:
-                logger.error(f"Erreur resume ecologique : {exc}")
-
-        # 6. Log d'analyse
-        async with async_session_factory() as session:
-            log = AnalysisLog(
-                id_article=id_article,
-                nom_modele=modele_nom or "non-disponible",
-                temps_inference_ms=temps_ms,
-                prediction=est_green_it,
-                confiance=score_confiance,
-            )
-            session.add(log)
-            await session.commit()
-
-        # 7. Mise a jour du job
-        _jobs[job_id] = AnalysisResult(
+                date_analyse = _dt.fromisoformat(date_str)
+            except ValueError:
+                date_analyse = None
+        return AnalysisResult(
             job_id=job_id,
-            statut=AnalysisStatus.TERMINE,
-            id_article=id_article,
-            titre=titre[:500],
-            est_green_it=est_green_it,
-            score_confiance=score_confiance,
-            resume=resume,
-            resume_ecologique=resume_ecologique,
-            modele_classification=modele_nom,
-            temps_inference_ms=temps_ms,
-            date_analyse=datetime.now(UTC),
+            statut=statut,
+            id_article=payload.get("id_article"),
+            titre=payload.get("titre"),
+            est_green_it=payload.get("est_green_it"),
+            score_confiance=payload.get("score_confiance"),
+            resume=payload.get("resume"),
+            resume_ecologique=payload.get("resume_ecologique"),
+            modele_classification=payload.get("modele_classification"),
+            temps_inference_ms=payload.get("temps_inference_ms"),
+            date_analyse=date_analyse,
         )
 
-        logger.info(f"Analyse {job_id} terminee : article_id={id_article}")
-
-    except Exception as e:
-        logger.exception(f"Erreur analyse {job_id}")
-        _jobs[job_id] = AnalysisResult(
+    if async_result.state == "FAILURE":
+        return AnalysisResult(
             job_id=job_id,
-            statut=AnalysisStatus.ERREUR,
-            erreur=str(e),
+            statut=statut,
+            erreur=str(async_result.info) if async_result.info else "Erreur inconnue",
         )
+
+    return AnalysisResult(job_id=job_id, statut=statut)
 
 
 @router.post(
@@ -486,36 +384,35 @@ async def _run_analysis(
 )
 async def create_analysis(
     data: AnalysisInput,
-    background_tasks: BackgroundTasks,
     _current_user: User = Depends(get_current_user),
 ) -> AnalysisJobCreated:
-    """Soumet une URL ou un texte pour analyse IA.
+    """Soumet une URL ou un texte pour analyse IA via la queue Celery.
 
-    Declenche en arriere-plan la chaine complete :
-    extraction du contenu, classification Green IT par le modele,
-    generation du resume via l'API HuggingFace, et stockage en base.
+    L'analyse est dispatchee vers un worker Celery dedie qui execute le
+    pipeline (extraction, classification Qwen3-4B TIES, summarize, stockage).
+    L'API retourne immediatement sans bloquer : le client peut soumettre
+    plusieurs analyses en serie sans attendre la fin de la precedente.
 
-    Le job_id retourne permet de suivre l'avancement via GET /analyze/{job_id}.
+    Le ``job_id`` retourne est le ``task_id`` Celery (UUID). Il sert a
+    consulter le statut/resultat via ``GET /analyze/{job_id}``.
 
     Args:
         data: URL ou texte a analyser (exactement un des deux).
-        background_tasks: Gestionnaire de taches en arriere-plan FastAPI.
-        _current_user: Utilisateur authentifie (verification du token).
+        _current_user: Utilisateur authentifie (verification du token JWT).
 
     Returns:
-        Identifiant du job d'analyse avec statut initial.
+        Identifiant du job + statut initial (en_attente jusqu'a ce qu'un
+        worker pick la tache, puis en_cours, puis termine ou erreur).
     """
-    job_id = uuid.uuid4()
-
-    _jobs[job_id] = AnalysisResult(
-        job_id=job_id,
-        statut=AnalysisStatus.EN_ATTENTE,
+    async_result = classify_article_task.delay(
+        url=data.url,
+        texte=data.texte,
+        titre_override=None,
     )
-
-    background_tasks.add_task(_run_analysis, job_id, data.url, data.texte)
+    job_id = uuid.UUID(async_result.id)
 
     source = f"URL={data.url}" if data.url else f"texte ({len(data.texte or '')} chars)"
-    logger.info(f"Analyse soumise {job_id} : {source}")
+    logger.info(f"Analyse enqueueed (Celery) {job_id} : {source}")
 
     return AnalysisJobCreated(job_id=job_id)
 
@@ -527,27 +424,25 @@ async def create_analysis(
     summary="Lancer une analyse IA sur un fichier uploade",
 )
 async def create_analysis_from_file(
-    background_tasks: BackgroundTasks,
     fichier: UploadFile = File(..., description="Fichier a analyser"),
     _current_user: User = Depends(get_current_user),
 ) -> AnalysisJobCreated:
-    """Accepte un fichier uploade, extrait son texte et lance l'analyse IA.
+    """Accepte un fichier uploade, extrait son texte et enqueue l'analyse.
 
     Formats supportes : .txt, .md, .pdf, .docx, .html, .htm.
     La taille est plafonnee a 10 Mo. Les PDF scannes (images) ne sont pas
     lisibles sans OCR et seront rejetes avec une erreur 422.
 
-    Le pipeline applique ensuite est strictement le meme que pour une URL ou
-    un texte : classification via le modele Llama entraine, puis resume
-    generaliste via l'API HuggingFace Serverless, avant stockage en base.
+    L'extraction du texte se fait synchrone dans la requete HTTP (rapide,
+    sans GPU), puis le texte est envoye dans la queue Celery comme pour
+    le mode texte brut. Le client recoit immediatement un ``job_id``.
 
     Args:
-        background_tasks: Gestionnaire de taches en arriere-plan FastAPI.
         fichier: Fichier uploade (multipart/form-data).
         _current_user: Utilisateur authentifie (verification du token JWT).
 
     Returns:
-        Identifiant du job d'analyse pour suivre l'avancement via GET /analyze/{job_id}.
+        Identifiant du job d'analyse + statut initial.
 
     Raises:
         HTTPException: 413 si fichier trop gros, 415 si format non supporte,
@@ -555,22 +450,16 @@ async def create_analysis_from_file(
     """
     titre, contenu = await _extract_text_from_upload(fichier)
 
-    job_id = uuid.uuid4()
-    _jobs[job_id] = AnalysisResult(
-        job_id=job_id,
-        statut=AnalysisStatus.EN_ATTENTE,
+    async_result = classify_article_task.delay(
+        url=None,
+        texte=contenu,
+        titre_override=titre,
     )
-
-    background_tasks.add_task(
-        _run_analysis,
-        job_id,
-        None,
-        contenu,
-        titre,
-    )
+    job_id = uuid.UUID(async_result.id)
 
     logger.info(
-        f"Analyse fichier soumise {job_id} : nom='{fichier.filename}' taille={len(contenu)} chars"
+        f"Analyse fichier enqueueed (Celery) {job_id} : "
+        f"nom='{fichier.filename}' taille={len(contenu)} chars"
     )
     return AnalysisJobCreated(job_id=job_id)
 
@@ -586,22 +475,19 @@ async def get_analysis_status(
 ) -> AnalysisResult:
     """Retourne le statut et le resultat d'un job d'analyse.
 
+    Lit l'etat de la tache Celery via le result backend Redis :
+
+    * ``en_attente`` : tache dans la queue, pas encore prise par un worker.
+    * ``en_cours`` : worker en train d'executer le pipeline.
+    * ``termine`` : resultat disponible (id_article, est_green_it, resume...).
+    * ``erreur`` : exception levee pendant l'execution (champ erreur peuple).
+
     Args:
         job_id: Identifiant UUID du job retourne par POST /analyze.
         _current_user: Utilisateur authentifie.
 
     Returns:
         Statut courant et resultats (si termines).
-
-    Raises:
-        HTTPException: 404 si le job_id n'existe pas.
     """
-    result = _jobs.get(job_id)
-
-    if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job d'analyse {job_id} introuvable",
-        )
-
-    return result
+    async_result = AsyncResult(str(job_id), app=celery_app)
+    return _build_analysis_result(job_id, async_result)

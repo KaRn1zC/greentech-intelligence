@@ -45,7 +45,6 @@ import json
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -2448,7 +2447,17 @@ def _build_ensemble(
             fold_checkpoints=[Path(f["checkpoint_path"]) for f in folds_info],
             output_dir=merged_dir,
         )
-        strategy = "merge_lora"
+        # Copie la calibration K-fold (T moyen + seuil moyen) dans merged/ pour
+        # que get_classifier() l'applique automatiquement après la redirection
+        # ensemble_config → merged/. Sans cela, fallback T=1.0 seuil=0.5 et
+        # précision chute drastiquement (cf. P4.5 du 2026-05-17).
+        import shutil as _shutil
+        for _cfile in ("temperature.json", "optimal_threshold.json"):
+            _src = model_output_root / _cfile
+            if _src.exists():
+                _shutil.copy(_src, merged_dir / _cfile)
+                logger.info(f"Calibration copiée dans merged/ : {_cfile}")
+        strategy = "ties_manual"
         inference_key: dict[str, str | list[str]] = {"inference_model_path": str(merged_dir)}
     elif model_type == "mdeberta":
         strategy = "logit_average"
@@ -2488,41 +2497,59 @@ def _merge_lora_adapters(
     *,
     fold_checkpoints: list[Path],
     output_dir: Path,
-    combination_type: str = "ties",
     density: float = 0.5,
 ) -> None:
     """Fusionne K adapters LoRA dans un unique modele prod via TIES-merging.
 
-    Strategie par defaut : **TIES-merging** (Yadav et al. NeurIPS 2023,
-    arXiv:2306.01708) via ``PeftModel.add_weighted_adapter``. TIES applique
-    trois etapes : (1) ``trim`` ne garde que les ``density`` fraction des
-    parametres avec la plus forte magnitude par tenseur, (2) ``sign-elect``
-    resout les conflits de signe par vote majoritaire pondere, (3) ``merge``
-    moyenne les parametres survivants. Documente comme superieur a la
-    moyenne arithmetique naive sur des fold ensembles (gain typique
-    +1 a +3 MCC en classification, HF PEFT blog 2025).
+    Implementation **manuelle** de TIES (Yadav et al. NeurIPS 2023,
+    arXiv:2306.01708) directement sur les ``adapter_model.safetensors``,
+    contournant ``PeftModel.add_weighted_adapter`` qui refuse explicitement
+    la fusion TIES quand un adapter contient ``modules_to_save`` (tete de
+    classification ``Linear(hidden, num_labels)`` wrappee dans un
+    ``ModulesToSaveWrapper``). PEFT leve :
+    ``Cannot add weighted adapters if they target the same module with
+    modules_to_save`` des qu'il y a une tete entrainable, ce qui est le cas
+    de tous nos classifieurs de sequences.
 
-    En cas d'echec (lib PEFT incompatible ou autre), fallback automatique
-    sur la moyenne arithmetique des deltas A/B (``_average_lora_deltas``,
-    methode legacy "uniform soup" Wortsman et al. ICML 2022).
+    Algorithme TIES par tenseur (deltas LoRA A et B uniquement) :
+
+    1. **Trim** : par tenseur, ne garder que la fraction ``density`` des
+       parametres avec la plus grande magnitude. Le reste est mis a zero.
+    2. **Sign-elect** : par position scalaire, signe gagnant via somme
+       algebrique des K adapters trimmes (pondere naturellement par
+       magnitude).
+    3. **Disjoint merge** : moyenne arithmetique uniquement sur les
+       contributions d'adapters qui s'accordent avec le signe gagnant. Les
+       conflits de signe sont elimines.
+
+    La **tete de classification** (``base_model.model.score.weight`` ou
+    equivalent) est traitee a part : ce n'est pas un delta LoRA mais la
+    pleine valeur apprise. Lui appliquer le trim TIES la degraderait. On
+    fait donc une moyenne arithmetique simple des K tetes (equivalent
+    ``linear merge`` cohérent avec TIES sur cette couche).
+
+    Une fois le state dict TIES calcule, on le sauve dans un dossier
+    intermediaire ``output_dir/../adapter_ties/``, on recharge le base
+    model + cet adapter UNIQUE (donc pas de bug PEFT), on appelle
+    ``merge_and_unload()`` pour fusionner les deltas dans les poids du
+    base model, puis on sauve le tout dans ``output_dir``.
 
     Args:
         fold_checkpoints: Liste des dossiers de checkpoints LoRA (un par
             fold, issus de ``_select_best_seed_per_fold``).
         output_dir: Dossier destination pour le merged model (typiquement
             ``models/qwen3/merged/``). Sera cree si besoin.
-        combination_type: Strategie de fusion PEFT. Valeurs supportees :
-            ``"ties"`` (defaut, recommande 2026), ``"dare_ties"`` (TIES
-            avec drop+rescale stochastique), ``"linear"`` (moyenne ponderee
-            simple, equivalent a l'ancien comportement).
         density: Fraction des parametres conservee par le trim TIES (defaut
-            0.5 = 50%, valeur standard de la litterature).
+            0.5 = 50%, valeur standard de la litterature, Yadav 2023).
 
     Raises:
         FileNotFoundError: Si l'un des checkpoints n'existe pas.
         ValueError: Si la liste de checkpoints est vide.
     """
+    import shutil
+
     from peft import PeftModel
+    from safetensors.torch import load_file, save_file
     from transformers import AutoModelForSequenceClassification
 
     if not fold_checkpoints:
@@ -2543,109 +2570,115 @@ def _merge_lora_adapters(
         msg = f"adapter_config.json de {fold_checkpoints[0]} sans base_model_name_or_path"
         raise ValueError(msg)
 
-    logger.info(f"Chargement base model {base_model_name} pour fusion LoRA...")
-    base_model = AutoModelForSequenceClassification.from_pretrained(
-        base_model_name,
-        num_labels=2,
-        torch_dtype=torch.bfloat16,
-    )
-
-    # Charger le premier adapter sous un nom explicite pour permettre la
-    # combinaison avec add_weighted_adapter sur K adapters nommes.
-    peft_model = PeftModel.from_pretrained(
-        base_model, fold_checkpoints[0], adapter_name="adapter_0"
-    )
-
     if len(fold_checkpoints) == 1:
-        # Un seul fold : pas de fusion, juste merge_and_unload du seul adapter
-        logger.info("Un seul checkpoint : merge_and_unload direct sans fusion.")
+        logger.info(f"Un seul checkpoint : chargement base {base_model_name} + merge_and_unload direct")
+        base_model = AutoModelForSequenceClassification.from_pretrained(
+            base_model_name, num_labels=2, torch_dtype=torch.bfloat16
+        )
+        peft_model = PeftModel.from_pretrained(base_model, fold_checkpoints[0])
         merged_model = peft_model.merge_and_unload()
         merged_model.save_pretrained(output_dir, safe_serialization=True)
         _copy_tokenizer_artifacts(fold_checkpoints[0], output_dir)
         logger.info(f"Modele LoRA sauvegarde : {output_dir}")
         return
 
-    # Charger les K-1 adapters restants sous des noms distincts pour pouvoir
-    # invoquer add_weighted_adapter avec combination_type=ties.
-    for i, ckpt in enumerate(fold_checkpoints[1:], 1):
-        peft_model.load_adapter(str(ckpt), adapter_name=f"adapter_{i}")
+    logger.info(
+        f"TIES manuel (Yadav 2023) sur {len(fold_checkpoints)} adapters, density={density}"
+    )
+    state_dicts = [load_file(str(p / "adapter_model.safetensors")) for p in fold_checkpoints]
 
-    adapter_names = [f"adapter_{i}" for i in range(len(fold_checkpoints))]
-    weights = [1.0 / len(fold_checkpoints)] * len(fold_checkpoints)
+    keys = sorted(state_dicts[0].keys())
+    for idx, sd in enumerate(state_dicts[1:], 1):
+        if set(sd.keys()) != set(keys):
+            msg = f"Adapter {idx} a une structure de clés différente du premier adapter"
+            raise ValueError(msg)
 
-    try:
-        logger.info(
-            f"Fusion TIES ({len(fold_checkpoints)} adapters, "
-            f"combination_type={combination_type}, density={density})..."
-        )
-        kwargs: dict[str, Any] = {
-            "adapters": adapter_names,
-            "weights": weights,
-            "adapter_name": "merged",
-            "combination_type": combination_type,
-        }
-        if combination_type in ("ties", "dare_ties", "dare_linear", "magnitude_prune"):
-            kwargs["density"] = density
-        peft_model.add_weighted_adapter(**kwargs)
-        peft_model.set_adapter("merged")
-        # Liberer les K adapters source pour reduire la VRAM avant merge_and_unload
-        for name in adapter_names:
-            peft_model.delete_adapter(name)
-    except Exception as exc:
-        logger.warning(
-            f"add_weighted_adapter({combination_type}) echoue : {exc}. "
-            "Fallback sur moyenne arithmetique naive des deltas A/B (legacy)."
-        )
-        # Repartir d'un peft_model propre charge sur le premier adapter
-        del peft_model
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        peft_model = PeftModel.from_pretrained(base_model, fold_checkpoints[0])
-        _average_lora_deltas(peft_model, fold_checkpoints)
+    merged_state: dict[str, torch.Tensor] = {}
+    n_ties = 0
+    n_avg = 0
+    for key in keys:
+        tensors = [sd[key] for sd in state_dicts]
+        if "lora_A" in key or "lora_B" in key:
+            merged_state[key] = _ties_merge_tensor(tensors, density=density)
+            n_ties += 1
+        else:
+            merged_state[key] = _average_tensor(tensors)
+            n_avg += 1
+    logger.info(f"TIES applique sur {n_ties} tenseurs LoRA + moyenne sur {n_avg} tenseurs head")
 
-    logger.info("Fusion merge_and_unload() en cours...")
+    ties_adapter_dir = output_dir.parent / "folds_ties" / "adapter_ties"
+    if ties_adapter_dir.exists():
+        shutil.rmtree(ties_adapter_dir)
+    ties_adapter_dir.mkdir(parents=True, exist_ok=True)
+    save_file(merged_state, str(ties_adapter_dir / "adapter_model.safetensors"))
+    for fname in ("adapter_config.json", "tokenizer.json", "tokenizer_config.json",
+                  "chat_template.jinja", "README.md", "special_tokens_map.json"):
+        src = fold_checkpoints[0] / fname
+        if src.exists():
+            shutil.copy(src, ties_adapter_dir / fname)
+    logger.info(f"Adapter TIES intermediaire sauve : {ties_adapter_dir}")
+
+    logger.info(f"Chargement base {base_model_name} + adapter TIES pour merge final...")
+    base_model = AutoModelForSequenceClassification.from_pretrained(
+        base_model_name, num_labels=2, torch_dtype=torch.bfloat16
+    )
+    peft_model = PeftModel.from_pretrained(base_model, ties_adapter_dir)
     merged_model = peft_model.merge_and_unload()
+
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
     merged_model.save_pretrained(output_dir, safe_serialization=True)
-
-    # Copie du tokenizer et d'adapter_config.json depuis le premier checkpoint
-    # pour garder un format "chargeable comme LoRA" (meme si les poids sont
-    # deja fusionnes). Facilite le rechargement via `LoRAClassifier.load()`.
     _copy_tokenizer_artifacts(fold_checkpoints[0], output_dir)
-    logger.info(f"Modele LoRA fusionne sauvegarde : {output_dir}")
+    logger.info(f"Modele LoRA fusionne (TIES) sauvegarde : {output_dir}")
 
 
-def _average_lora_deltas(peft_model: Any, fold_checkpoints: list[Path]) -> None:
-    """Moyenne les tenseurs LoRA A et B sur les K adapters.
+def _ties_merge_tensor(tensors: list[torch.Tensor], density: float = 0.5) -> torch.Tensor:
+    """Applique TIES (trim + sign-elect + disjoint merge) sur K tenseurs.
 
-    Modifie ``peft_model`` en place : les poids actuellement charges
-    (depuis le premier checkpoint) sont remplaces par la moyenne
-    arithmetique des K. Appele uniquement si ``len(fold_checkpoints) >= 2``.
+    Implementation fidele a Yadav et al. NeurIPS 2023 (Algorithm 1) :
+
+    * Trim par adapter : ``top-k`` par magnitude absolue (k = density * numel).
+    * Sign-elect : signe gagnant par position via somme algebrique pondere
+      naturellement par magnitudes.
+    * Disjoint merge : moyenne arithmetique sur les seuls elements qui
+      s'accordent avec le signe gagnant. Evite les annulations destructives.
+
+    Args:
+        tensors: Liste de K tenseurs de meme shape (un par adapter).
+        density: Fraction conservee par le trim (0.5 = top 50% magnitudes).
+
+    Returns:
+        Tenseur fusionne de meme shape et dtype que l'entree.
     """
-    from safetensors.torch import load_file
+    target_dtype = tensors[0].dtype
+    tensors_f32 = [t.to(torch.float32) for t in tensors]
 
-    n = len(fold_checkpoints)
-    state_dict_avg: dict[str, torch.Tensor] = {}
+    trimmed = []
+    for t in tensors_f32:
+        flat_abs = t.flatten().abs()
+        k = max(1, int(density * flat_abs.numel()))
+        threshold = torch.topk(flat_abs, k, largest=True).values[-1]
+        mask = t.abs() >= threshold
+        trimmed.append(t * mask)
 
-    for ckpt in fold_checkpoints:
-        adapter_file = ckpt / "adapter_model.safetensors"
-        if not adapter_file.exists():
-            msg = f"adapter_model.safetensors manquant dans {ckpt}"
-            raise FileNotFoundError(msg)
-        state = load_file(str(adapter_file))
-        for key, tensor in state.items():
-            if key not in state_dict_avg:
-                state_dict_avg[key] = tensor.clone().to(torch.float32) / n
-            else:
-                state_dict_avg[key] = state_dict_avg[key] + tensor.to(torch.float32) / n
+    stacked = torch.stack(trimmed)
 
-    # Injecte la moyenne dans le peft_model charge. On caste en bfloat16
-    # pour rester coherent avec la precision d'entrainement.
-    peft_state = peft_model.state_dict()
-    for key, value in state_dict_avg.items():
-        if key in peft_state:
-            peft_state[key] = value.to(peft_state[key].dtype)
-    peft_model.load_state_dict(peft_state, strict=False)
-    logger.info(f"Deltas LoRA moyennes sur {n} checkpoints")
+    sign_sum = stacked.sum(dim=0)
+    sign = torch.sign(sign_sum)
+    sign = torch.where(sign == 0, torch.ones_like(sign), sign)
+
+    mask_agree = (torch.sign(stacked) == sign.unsqueeze(0)) & (stacked != 0)
+    count_agree = mask_agree.sum(dim=0).clamp(min=1).to(torch.float32)
+    merged = (stacked * mask_agree).sum(dim=0) / count_agree
+
+    return merged.to(target_dtype)
+
+
+def _average_tensor(tensors: list[torch.Tensor]) -> torch.Tensor:
+    """Moyenne arithmetique standard, conserve dtype et device."""
+    target_dtype = tensors[0].dtype
+    stacked_f32 = torch.stack([t.to(torch.float32) for t in tensors])
+    return stacked_f32.mean(dim=0).to(target_dtype)
 
 
 def _copy_tokenizer_artifacts(source: Path, destination: Path) -> None:

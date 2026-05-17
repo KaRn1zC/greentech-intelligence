@@ -44,14 +44,17 @@ RUN groupadd --gid 1000 appuser && \
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 
-# Copier les modeles de production (peut aussi etre monte en volume)
-COPY models/production/ ./models/production/
-
 # Copier les scripts SQL d'initialisation
 COPY scripts/ ./scripts/
 
-# Repertoire pour les logs
-RUN mkdir -p /app/logs && chown -R appuser:appuser /app
+# Le modele de production (models/production/, ~8 Go) n'est PAS copie dans
+# l'image : il est exclu du build context via .dockerignore (sinon le contexte
+# atteint 150+ Go a cause des checkpoints d'entrainement adjacents). A la
+# place, ``docker-compose.yml`` le monte au runtime en read-only :
+#   - ./models/production:/app/models/production:ro
+# On cree le dossier vide ici pour que ``mkdir -p`` reussisse et que la
+# vue de l'image soit propre meme sans volume monte (ex. tests legers).
+RUN mkdir -p /app/models/production && mkdir -p /app/logs && chown -R appuser:appuser /app
 
 # Variables d'environnement
 ENV PATH="/app/.venv/bin:$PATH" \

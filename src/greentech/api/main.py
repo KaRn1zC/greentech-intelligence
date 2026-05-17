@@ -139,6 +139,29 @@ app.add_middleware(
 )
 
 
+# === Instrumentation Prometheus (metriques HTTP automatiques) ===
+#
+# ``prometheus-fastapi-instrumentator`` ajoute automatiquement les metriques
+# standard a chaque requete HTTP :
+#
+# * ``http_requests_total{handler, method, status}`` : compteur de requetes
+# * ``http_request_duration_seconds_*`` : histogramme de latence p50/p95/p99
+# * ``http_request_size_bytes`` / ``http_response_size_bytes`` : taille payload
+#
+# Les metriques sont enregistrees dans le default registry de
+# ``prometheus_client``, donc elles sont automatiquement exposees par
+# l'endpoint ``/metrics`` defini plus bas (pas besoin de ``.expose()``).
+#
+# Les endpoints ``/health`` et ``/metrics`` sont exclus pour eviter du bruit
+# dans les dashboards (les checks Prometheus eux-memes generent des requetes).
+from prometheus_fastapi_instrumentator import Instrumentator  # noqa: E402
+
+Instrumentator(
+    excluded_handlers=["/health", "/metrics"],
+    should_group_status_codes=False,
+).instrument(app)
+
+
 # === Middleware de logging des requetes ===
 
 

@@ -1,3 +1,16 @@
+# =============================================================================
+# .dockerignore — exclut les artefacts lourds du build context Docker
+# =============================================================================
+#
+# REGLE D'OR : tout ce qui n'est pas necessaire pour compiler/installer l'app
+# doit etre exclu. Le contexte de build est envoye en entier au demon Docker,
+# donc un fichier de 8 GB dans le contexte = 8 GB transferes meme s'il ne va
+# pas dans l'image finale.
+#
+# Pour les artefacts qui DOIVENT etre accessibles au runtime (ex.
+# models/production/), on les exclut du build ET on les monte en volume dans
+# docker-compose.yml (cf. services api + celery-worker).
+
 # Git
 .git
 .gitignore
@@ -11,32 +24,49 @@ __pycache__
 .ruff_cache
 .pytest_cache
 htmlcov
+*.egg-info
 
 # IDE
 .vscode
 .idea
+.cursor
 
 # Environnement
 .env
 .env.local
 
-# Donnees locales
+# Donnees et resultats locaux (volumineux, montes en volume si necessaire)
 data/
 logs/
 mlruns/
+audit_greenit/
 
-# Modeles non-production (volumineux)
-models/champion-deberta/
-models/challenger-qwen/
-models/challenger-llama/
+# Modeles ML : exclus du build, montes en volume au runtime via docker-compose
+# (cf. mount ./models/production -> /app/models/production:ro). Si tu veux
+# embarquer un modele dans l'image plutot que le monter, retirer ces lignes
+# pour les dossiers concernes (impact : +N Go sur la taille de l'image).
+models/
 
-# DVC cache
+# DVC : cache et metadata internes
 .dvc/cache/
 .dvc/tmp/
+.dvcignore
 
-# Documentation build
+# Documentation buildee
 docs/_build/
 
-# Node (frontend)
+# Node (frontend) : node_modules sont reinstalles par le Dockerfile frontend
 frontend/node_modules/
 frontend/dist/
+frontend/.vite/
+
+# LLM / agents / outils dev
+.llm/
+
+# Tests et artefacts pytest
+.coverage
+coverage.xml
+
+# OS
+.DS_Store
+Thumbs.db
