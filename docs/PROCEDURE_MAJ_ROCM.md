@@ -229,7 +229,7 @@ Pour les migrations mineures, on peut s'en remettre au prochain entrainement de 
 
 ### Etape 8 - Mise a jour de la documentation
 
-- `documentation interne` section "Tech Stack" : mettre a jour la version ROCm
+- Documentation interne (section "Tech Stack") : mettre a jour la version ROCm
 - `docs/PLAN_ETAPES.md` section 1.1 : torch/torchvision/torchaudio versions
 - `docs/CHECKLIST_SUIVI.md` section bonus B1 : cocher les cases effectuees
 - `docs/ROCM_MIGRATION_LOG.md` : ajouter une entree datee avec le diff de versions

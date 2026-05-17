@@ -60,8 +60,11 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 
-# LLM / agents / outils dev
-.llm/
+# Dotfolders de tooling local (IDE, assistants, caches) - tous exclus
+# par defaut. Le builder Docker n'a besoin que de pyproject.toml, src/,
+# scripts/ et README.md (cf. Dockerfile.api), donc aucun dotfolder racine
+# n'a vocation a entrer dans le build context.
+.*/
 
 # Tests et artefacts pytest
 .coverage

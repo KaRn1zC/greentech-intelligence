@@ -364,7 +364,7 @@ uv run python scripts/train_p4_hybrid.py
 - `docs/PROCEDURE_MAJ_ROCM.md` : procédure de migration ROCm
 - `models/production/promotion_info.json` : métadonnées exhaustives de la promotion (métriques K-fold, hyperparams, références)
 - `models/p4_hybrid_summary.json` : bilan détaillé de l'entraînement P4.4 hybride
-- `documentation interne` section "Classifieur fine-tune (Qwen3-4B + LoRA)" : référence opérationnelle
+- Documentation interne (section "Classifieur fine-tune Qwen3-4B + LoRA") : référence opérationnelle
 
 ---
 

@@ -2,9 +2,9 @@
 
 > **Objectif** : migrer de ROCm HIP SDK 7.1 vers 7.2.1 (version stable recommandée production AMD, avril 2026).
 >
-> **Ce fichier est un journal persistant de l'avancement.** Il survit aux reboots PC et aux sessions tooling local.
+> **Ce fichier est un journal persistant de l'avancement.** Il survit aux reboots PC et aux sessions de travail.
 >
-> **Procédure de reprise post-reboot** : relancer tooling local, dire « on reprend la migration ROCm », je lis ce fichier + section B1 de `CHECKLIST_SUIVI.md` et je reprends à la dernière étape non cochée.
+> **Procédure de reprise post-reboot** : reprendre la migration ROCm en lisant ce fichier + section B1 de `CHECKLIST_SUIVI.md` puis enchaîner à la dernière étape non cochée.
 
 ---
 
@@ -178,7 +178,7 @@
 - **Terminée** : 2026-04-18
 - **Actions réalisées** :
   - [x] Créé `docs/PROCEDURE_MAJ_ROCM.md` (procédure wheels-only complète + leçons apprises + rollback)
-  - [x] Mis à jour `documentation interne` : section Tech Stack (ROCm 7.2.1) + dispatcher LLM local
+  - [x] Mis à jour la documentation interne : section Tech Stack (ROCm 7.2.1) + dispatcher LLM local
   - [x] Mis à jour `docs/PLAN_ETAPES.md` section 1.1 (wheels stables) + 1.5 (versions torch) + 7.1 (toutes cases cochées, migration TERMINE)
   - [x] Coché toutes les cases B1.1 à B1.7 dans `docs/CHECKLIST_SUIVI.md` (B1.4 marqué OBSOLETE avec justification)
   - [x] Mis à jour la ligne E3 "Modele IA" de la CHECKLIST avec la nouvelle version ROCm 7.2.1
@@ -206,7 +206,7 @@
 | 2026-04-18 | B1.6 Test 2 : Qwen2.5-1.5B inférence 23,8 tok/s | Session de travail |
 | 2026-04-18 | B1.6 Test 3 : Qwen3-4B charge 8,1 s, inférence 28,7 tok/s (VRAM 7,49 GB) | Session de travail |
 | 2026-04-18 | B1.6 Test 4 : LocalQwenClient dispatcher OK (Qwen2.5-3B, asyncio) | Session de travail |
-| 2026-04-18 | B1.7 : création PROCEDURE_MAJ_ROCM.md + mise à jour documentation interne / PLAN_ETAPES.md / CHECKLIST_SUIVI.md | Session de travail |
+| 2026-04-18 | B1.7 : création PROCEDURE_MAJ_ROCM.md + mise à jour doc interne / PLAN_ETAPES.md / CHECKLIST_SUIVI.md | Session de travail |
 | 2026-04-18 | **Migration B1 TERMINÉE** : ROCm 7.1 MSI + 7.2 pre-release → 7.2.1 stable wheels-only | Session de travail |
 
 ---

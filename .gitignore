@@ -198,5 +198,8 @@ dmypy.json
 emissions.csv
 codecarbon.log
 
-# === Plugins LLM-Code ===
+# === Hooks et scripts de tooling local ===
+# Scripts utilitaires generes par les outils de dev locaux. Les fichiers de
+# configuration plus larges (assistants IA, IDE) sont geres par le
+# .gitignore_global de chaque developpeur (voir core.excludesfile).
 scripts/_patch_security_hook.py

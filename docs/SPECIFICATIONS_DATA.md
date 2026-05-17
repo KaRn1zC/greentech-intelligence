@@ -338,7 +338,7 @@ Toutes les variables sont également documentées dans `.env.example` à la raci
 - `docs/SPECIFICATIONS_TECHNIQUES.md` : architecture technique détaillée du pipeline (flux Spark, schéma BDD, contraintes d'extraction historiques)
 - `docs/REGISTRE_RGPD.md` : traitement des données personnelles par source et règles d'anonymisation
 - `docs/PLAN_ETAPES.md` section 2 et section 7.2 : feuille de route de la collecte et de l'enrichissement
-- `documentation interne` section "Data (E1)" et "Commandes" : référence opérationnelle pour les commandes CLI
+- Documentation interne (sections "Data E1" et "Commandes") : référence opérationnelle pour les commandes CLI
 
 ---
 

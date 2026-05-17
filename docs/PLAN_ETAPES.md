@@ -520,7 +520,7 @@ Environnement Node.js (via npm) :
   - [x] Test de validation : import torch, detection GPU, inference rapide Qwen3-4B (28,7 tok/s en bf16)
   - [x] Test entrainement : reporte au re-entrainement effectif du modele de production (K-fold CV servira de validation finale sustained load)
 - [x] Documenter la procedure complete dans `docs/PROCEDURE_MAJ_ROCM.md`
-- [x] Mettre a jour `documentation interne` et la section 1.1 de ce plan avec la nouvelle version (7.2.1)
+- [x] Mettre a jour la documentation interne et la section 1.1 de ce plan avec la nouvelle version (7.2.1)
 
 ### 7.2 Enrichissement Dataset Green IT (correspond a B2)
 
@@ -570,7 +570,7 @@ Environnement Node.js (via npm) :
 - [ ] **Mise a jour documentation** :
   - [ ] `docs/SPECIFICATIONS_DATA.md` : nouvelles sources
   - [ ] `docs/REGISTRE_RGPD.md` : verifier nouvelles donnees personnelles
-  - [ ] `documentation interne` : sections Data et Commandes
+  - [ ] Documentation interne : sections Data et Commandes
   - [ ] Documentation Sphinx complete
 
 ### 7.3 Optimisation Pipeline d'Entrainement (correspond a B3)

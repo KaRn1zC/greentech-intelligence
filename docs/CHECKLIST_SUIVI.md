@@ -426,7 +426,7 @@
 #### B1.7 Documentation
 
 - [x] Creer `docs/PROCEDURE_MAJ_ROCM.md` documentant la procedure complete (wheels-only, pas de MSI)
-- [x] Mettre a jour `documentation interne` section "Tech Stack" : ROCm 7.2.1 stable
+- [x] Mettre a jour la documentation interne (section "Tech Stack") : ROCm 7.2.1 stable
 - [x] Mettre a jour `docs/PLAN_ETAPES.md` section 1.1 + section 7.1 : nouvelle version + migration terminee
 
 ---
@@ -434,7 +434,7 @@
 ### B2. Enrichissement Dataset Green IT
 
 > **Contrainte format absolue** : tout article ingere doit fournir soit `(titre + abstract)` soit `(titre + resume genere via classification_summarizer)`.
-> Le resume de classification reste plafonne a `CLASSIFICATION_MAX_TOKENS=450` (cf. `documentation interne`).
+> Le resume de classification reste plafonne a `CLASSIFICATION_MAX_TOKENS=450` (cf. documentation interne).
 > Toutes les sources doivent rester dans les 5 categories C1 deja validees (REST/JSON, scraping, fichiers, BDD, Big Data).
 
 #### B2.1 Phase de recherche & validation prealable des sources (TERMINEE 2026-04-19)
@@ -707,7 +707,7 @@
 - [ ] Mettre a jour `docs/REGISTRE_RGPD.md` :
   - [ ] Verifier si nouvelles sources contiennent des donnees personnelles (auteurs, emails)
   - [ ] Documenter les nouvelles regles d'anonymisation si necessaire
-- [ ] Mettre a jour `documentation interne` section "Data" et "Commandes" avec les nouveaux collecteurs
+- [ ] Mettre a jour la documentation interne (sections "Data" et "Commandes") avec les nouveaux collecteurs
 - [ ] Mettre a jour `docs/PLAN_ETAPES.md` section 2.3 (Programmation Collecte) avec les nouveaux modules
 - [ ] Documentation Sphinx complete : `cd docs && uv run sphinx-build -b html . _build/html`
 
@@ -890,7 +890,7 @@
 #### B4.7 Mise a jour documentation finale
 
 - [ ] Mettre a jour `docs/PLAN_ETAPES.md` section 3.3 avec les nouveaux entrainements
-- [ ] Mettre a jour `documentation interne` section "Classifieur fine-tune (Qwen3-4B + LoRA)" avec la nouvelle famille de modele de production
+- [ ] Mettre a jour la documentation interne (section "Classifieur fine-tune Qwen3-4B + LoRA") avec la nouvelle famille de modele de production
 - [ ] Mettre a jour la documentation Sphinx
 - [ ] Tag Git : `vX.Y.Z-prod-2026-04`
 
@@ -969,7 +969,7 @@
 
 - [ ] Documentation Sphinx complete du package `agents`
 - [ ] Demonstration interactive : notebook `notebooks/demo_agentic.ipynb` ou script `scripts/demo_agentic.py`
-- [ ] Mettre a jour `documentation interne` avec la nouvelle architecture
+- [ ] Mettre a jour la documentation interne avec la nouvelle architecture
 - [ ] Mettre a jour `docs/PLAN_ETAPES.md` avec une nouvelle section bonus 7
 - [ ] Tag Git : `vX.Y.Z-agentic`
 
