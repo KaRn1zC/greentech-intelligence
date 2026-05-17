@@ -430,6 +430,18 @@ services:
       - "worker"
       - "--concurrency=1"
       - "--loglevel=info"
+    # Override du healthcheck herite du Dockerfile.api (qui teste HTTP /health
+    # via httpx, inadapte pour un worker Celery qui n'expose aucun port HTTP).
+    # On utilise `celery inspect ping` qui verifie que le worker est connecte
+    # au broker Redis et capable de repondre. Le `$$HOSTNAME` (echappement
+    # docker-compose pour `$HOSTNAME`) cible le nom du worker courant (Celery
+    # nomme chaque worker `celery@<hostname>`).
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A greentech.api.celery_app inspect ping -d celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     volumes:
       - ./src:/app/src:ro
       # Modele de production (cf. note dans le service api). Le worker en a
