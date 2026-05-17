@@ -709,22 +709,30 @@ class LoRAClassifier(BaseClassifier):
         # Scheduler cosine (vs linear historique) : recommande par Unsloth
         # et Databricks pour 3 epochs sur LoRA, evite les oscillations en
         # fin d'entrainement sur des metriques imbalanced-sensitive comme MCC.
+        #
+        # Choix critiques pour Qwen3-4B + LoRA :
+        # - ``eval_strategy="no"`` : on n'evalue PAS a chaque epoch pendant
+        #   le training. Sur Qwen3-4B, l'eval avec gradient_checkpointing
+        #   actif prend ~10s/batch (vs 0.2s en training), ce qui exploserait
+        #   le temps total (~1h45 par eval x 3 epochs = inacceptable).
+        #   L'eval finale est faite manuellement APRES avoir desactive
+        #   gradient_checkpointing et reactive use_cache (cf. ci-dessous).
+        # - ``save_strategy="no"`` : pas de checkpoint a chaque epoch.
+        #   SWA + calibration finale remplacent ``load_best_model_at_end``.
+        # - ``per_device_eval_batch_size=8`` : 4x le batch train pour
+        #   accelerer l'eval finale (pas de backward = on peut tasser).
         training_args = TrainingArguments(
             output_dir=str(self.config.output_dir),
             num_train_epochs=self.config.epochs,
             per_device_train_batch_size=self.config.batch_size,
-            per_device_eval_batch_size=self.config.batch_size,
+            per_device_eval_batch_size=8,
             learning_rate=self.config.learning_rate,
             weight_decay=self.config.weight_decay,
             warmup_steps=warmup_steps,
             lr_scheduler_type="cosine",
-            eval_strategy="epoch",
-            save_strategy="epoch",
-            load_best_model_at_end=True,
-            # MCC comme metrique de selection (robuste au desequilibre ~1:10.5,
-            # la ou F1 peut masquer les faiblesses sur la classe minoritaire).
-            metric_for_best_model="matthews_correlation",
-            greater_is_better=True,
+            eval_strategy="no",
+            save_strategy="no",
+            load_best_model_at_end=False,
             seed=self.config.seed,
             bf16=True,
             gradient_accumulation_steps=16,
@@ -763,6 +771,15 @@ class LoRAClassifier(BaseClassifier):
         logger.info(f"Demarrage de l'entrainement Challenger ({self.config.nom_modele} + LoRA)...")
         train_result = trainer.train()
 
+        # Eval finale : reactiver KV cache et desactiver gradient_checkpointing
+        # pour eviter le slowdown 30-50x observe sur Qwen3-4B (10s/batch ->
+        # < 0.5s/batch). Le SWA a deja moyenne les poids finaux, c'est cet
+        # etat qu'on evalue.
+        self.model.config.use_cache = True
+        if hasattr(self.model, "gradient_checkpointing_disable"):
+            self.model.gradient_checkpointing_disable()
+
+        logger.info("Eval finale (use_cache=True, gradient_checkpointing=False)...")
         eval_result = trainer.evaluate()
         logger.info(f"Challenger — Résultats : {eval_result}")
 
@@ -909,7 +926,15 @@ class Qwen3Classifier(LoRAClassifier):
             config = TrainingConfig(
                 nom_modele=settings.huggingface_model_trainer_base,
                 output_dir=BASE_DIR / "models" / "qwen3",
-                epochs=3,
+                # epochs=2 : reduit de 3 a 2 le 2026-05-17 apres benchmark de
+                # vitesse sur RX 7900 XTX. Qwen3-4B + LoRA all-linear + GC
+                # tourne a ~10 sec/optimizer-step (50x plus lent que mDeBERTa)
+                # ce qui rend K=5x3 = 15 trainings irrealiste (~30h). Avec
+                # K=3x2 + 2 epochs = ~6-8h, on conserve la rigueur du
+                # benchmark equitable. 2 epochs reste suffisant pour LoRA
+                # (Unsloth recommande 1-3 epochs), surtout avec rsLoRA +
+                # SWA en fin qui stabilise la convergence.
+                epochs=2,
                 batch_size=2,
                 # lr=1e-4 (baisse vs 2e-4 historique) : avec target_modules
                 # etendu a all-linear, la norme des gradients augmente -
@@ -918,18 +943,19 @@ class Qwen3Classifier(LoRAClassifier):
                 max_length=settings.trainer_max_length,
             )
         if lora_config is None:
-            # r=32 (x2 vs r=16 historique) + target_modules all-linear
-            # (attention + MLP SwiGLU) : configuration recommandee apres
-            # l'agent de recherche B (2026-04-21), reproduit la SOTA
-            # Unsloth/Databricks pour classification fine-tune Qwen3.
-            # alpha=64 (ratio 2:1 avec r).
-            # Dropout 0.05 standard PEFT, equilibre regularisation / capacite.
-            # use_rslora=True : rank-stabilized LoRA (Kalajdzievski 2023)
-            # essentiel a r=32 pour eviter l'instabilite des gradients sur
-            # all-linear (recommandation agents SOTA 2026-05-17, ICLR 2025).
+            # r=16 (reduit de 32 le 2026-05-17 pour gagner du temps de
+            # training, cf. commentaire epochs ci-dessus). Avec r=16 +
+            # rsLoRA, la stabilite est preservee selon Unsloth's
+            # "LoRA Hyperparameters Guide" qui considere r=16 alpha=16 ou
+            # alpha=32 (ratio 1:1 ou 1:2) comme le sweet spot par defaut.
+            # Gain training : ~10-15 % plus rapide vs r=32 + qualite quasi
+            # identique sur classification simple (2 classes).
+            # alpha=32 (ratio 2:1 maintenu).
+            # use_rslora=True : essentiel pour preserver les gradients
+            # avec target_modules="all-linear" (recommandation SOTA 2026).
             lora_config = LoraConfig(
-                r=32,
-                alpha=64,
+                r=16,
+                alpha=32,
                 dropout=0.05,
                 target_modules=list(QWEN3_LORA_TARGET_MODULES),
                 use_rslora=True,
@@ -2079,15 +2105,31 @@ def _collect_variants_for_train(
     return np.array(variants, dtype=int)
 
 
-# Distribution cible du dataset final (cf. B2.9 CHECKLIST_SUIVI) : un fold bien
-# stratifie doit rester dans une fenetre de +/- 2 points de pourcentage autour
-# de ces valeurs. Au-dela, la variance inter-fold du MCC peut exploser.
+# Distribution cible du dataset final : un fold bien stratifie doit rester
+# dans une fenetre de +/- 2 points de pourcentage autour de ces valeurs.
+# Au-dela, la variance inter-fold du MCC peut exploser.
+#
+# Calibre le 2026-05-17 sur le dataset post-Phase 2 (11 664 articles dont
+# 2 124 Green IT). La Phase 2 (auto-correction sources pures + LLM judge v2
+# + audit multi-agents + annotation manuelle ciblee) a fait passer le
+# nombre de Green IT confirmes de 1 018 (8.73 %) a 2 124 (18.21 %).
+# Le ratio_green_fr atteint 51.95 % car GreenIT.fr est massivement
+# represente en FR et est 100 % Green IT par construction.
+#
+# Calculs exacts (cf. scripts/_recalc_stratification_targets.py si besoin
+# de regenerer apres futur enrichissement) :
+#   Total                : 11 664 articles
+#   EN                   : 8 719 (74.75 %)
+#   FR                   : 2 945 (25.25 %)
+#   Green IT total       : 2 124 (18.21 %)
+#   Green IT EN          : 594 (6.81 % des EN)
+#   Green IT FR          : 1 530 (51.95 % des FR)
 _STRATIFICATION_TARGET_RATIOS: dict[str, float] = {
     "ratio_en": 0.7475,
     "ratio_fr": 0.2525,
-    "ratio_green_global": 0.0873,
-    "ratio_green_en": 0.0480,
-    "ratio_green_fr": 0.2037,
+    "ratio_green_global": 0.1821,
+    "ratio_green_en": 0.0681,
+    "ratio_green_fr": 0.5195,
 }
 _STRATIFICATION_TOLERANCE_PP: float = 0.02
 

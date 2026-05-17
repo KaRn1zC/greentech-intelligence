@@ -76,6 +76,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO
 
+# Force stdout/stderr en UTF-8 sur Windows pour eviter UnicodeEncodeError sur
+# les emojis que MLflow imprime (ex. \U0001f3c3 = 🏃 dans "View run ..."). Sans
+# cela, le codec charmap (cp1252) Windows crashe a la fin de chaque run MLflow,
+# ce qui ferait crasher P4.4 train-cv-both 14 fois (1 par run termine).
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
 from loguru import logger
 
 # Force UTF-8 sur stdout/stderr du processus courant. Sur Windows, Python 3.12
