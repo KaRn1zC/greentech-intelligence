@@ -209,3 +209,4 @@ scripts/_patch_security_hook.py
 
 # === Rédaction Mémoire ===
 docs/Mémoire
+scripts/redaction/
