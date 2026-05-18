@@ -9,7 +9,7 @@
 
 Ce document capture la procedure complete de mise a jour de la stack ROCm sur un poste de developpement Windows 11 equipe d'une GPU AMD Radeon RX 7900 XTX (architecture RDNA3, gfx1100). Il a ete redige a l'issue de la migration vers ROCm 7.2.1 et contient les lecons apprises, notamment la transition majeure d'AMD vers une distribution Windows **wheels-only** (sans installeur MSI natif).
 
-Le journal horodate de la migration est conserve dans `docs/ROCM_MIGRATION_LOG.md`. Le present document est la procedure reutilisable pour les migrations futures.
+Le present document est la procedure reutilisable pour les migrations futures.
 
 ---
 
@@ -232,7 +232,6 @@ Pour les migrations mineures, on peut s'en remettre au prochain entrainement de 
 - Documentation interne (section "Tech Stack") : mettre a jour la version ROCm
 - `docs/PLAN_ETAPES.md` section 1.1 : torch/torchvision/torchaudio versions
 - `docs/CHECKLIST_SUIVI.md` section bonus B1 : cocher les cases effectuees
-- `docs/ROCM_MIGRATION_LOG.md` : ajouter une entree datee avec le diff de versions
 
 ---
 

@@ -161,7 +161,7 @@ def main() -> int:
         print("-" * 110)
         ok = 0
         ko = 0
-        for label, job_id, t_submit in jobs:
+        for label, job_id, _t_submit in jobs:
             r = results.get(job_id)
             if not r:
                 print(f"  {label:35s} {'TIMEOUT':10s}")

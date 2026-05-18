@@ -53,11 +53,8 @@ from greentech.ai.mlops.tracking import ExperimentConfig, tracked_experiment  # 
 from greentech.ai.models.classifier import (  # noqa: E402
     BaseClassifier,
     LabelGreenIT,
-    TrainingConfig,
 )
 from greentech.ai.models.training import (  # noqa: E402
-    MDeBERTaClassifier,
-    Qwen3Classifier,
     _compute_fold_metrics,
     load_full_dataset_with_language,
 )

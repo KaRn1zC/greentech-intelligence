@@ -1080,8 +1080,7 @@ async def step_train_cv(
 ) -> dict | None:
     """Entraine un modele via le protocole unifie B3 (avril 2026).
 
-    Remplace l'ancien K-fold base sur ``train_with_legacy_cv`` par
-    ``train_with_unified_protocol`` qui implemente :
+    S'appuie sur ``train_with_unified_protocol`` qui implemente :
 
     - Stratification croisee ``(langue x label)`` via MultilabelStratifiedKFold
     - 3 seeds par fold (15 trainings total) pour stabiliser sigma MCC < 0.10
@@ -1295,7 +1294,7 @@ def _log_cv_report(rapport: dict) -> None:
 
     - **Nouveau** (protocole unifie B3) : clef ``runs`` avec un dict par
       (fold, seed), clef ``calibration`` pour T et threshold moyens.
-    - **Legacy** (``train_with_legacy_cv``) : clef ``folds``, clef
+    - **Legacy** (anciens rapports K-fold) : clef ``folds``, clef
       ``global`` pour metriques concatenees.
 
     L'autodetection se fait sur la presence de ``runs``.

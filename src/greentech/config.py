@@ -76,7 +76,6 @@ class Settings(BaseSettings):
     # robuste aux erreurs individuelles (si un prompt echoue, l'autre sort
     # quand meme un resume).
     huggingface_model_green_summarizer: str = "Qwen/Qwen3-4B-Instruct-2507"
-    huggingface_model_classifier: str = "microsoft/deberta-v3-base"
     # LLM judge pour l'etage 2 de classification Green IT : verifie les
     # articles marques CANDIDATE par le pre-filtre mots-cles. Meme modele
     # Qwen3-4B que les summarizers : un seul service HF a maintenir.
@@ -179,10 +178,6 @@ class Settings(BaseSettings):
     # --- Data Collection ---
     scraping_user_agent: str = "GreenTech-Bot/1.0"
     scraping_delay_seconds: int = 2
-    # Legacy : cle NewsData.io, conservee pour historique mais la source est
-    # desactivee depuis le 16 avril 2026 (contenu tronque "ONLY AVAILABLE IN
-    # PAID PLANS" en free tier, dataset pourri).
-    api_news_key: str = ""
     # Cle API The Guardian Open Platform (tier Developer : 5000 req/jour,
     # 12 req/s, non-commercial). Remplace NewsData.io comme source REST/JSON
     # principale. Obtention gratuite et immediate sur

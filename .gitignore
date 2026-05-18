@@ -198,6 +198,9 @@ dmypy.json
 emissions.csv
 codecarbon.log
 
+# === Playwright MCP (logs et snapshots ad-hoc) ===
+.playwright-mcp/
+
 # === Hooks et scripts de tooling local ===
 # Scripts utilitaires generes par les outils de dev locaux. Les fichiers de
 # configuration plus larges (assistants IA, IDE) sont geres par le
