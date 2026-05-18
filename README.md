@@ -1,944 +1,295 @@
+<div align="center">
+
+<img src="frontend/public/og-image.png" alt="GreenTech Intelligence" width="100%" />
+
 # GreenTech Intelligence
 
-[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green.svg)](https://fastapi.tiangolo.com/)
-[![React 19](https://img.shields.io/badge/React-19-blue.svg)](https://react.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+**Plateforme web d'analyse et de classification automatique d'articles tech selon leur pertinence Green IT.**
 
-Plateforme web d'analyse et classification automatique d'articles technologiques selon leur pertinence **Green IT** (informatique durable, eco-responsable).
+[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI 0.109+](https://img.shields.io/badge/FastAPI-0.109+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![PyTorch ROCm](https://img.shields.io/badge/PyTorch-2.9+ROCm-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![License MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-Le systeme collecte des articles depuis plusieurs sources (API, scraping, fichiers), les nettoie via Apache Spark, puis applique une **classification hybride en deux etages** :
-
-1. **Pre-filtre mots-cles permissif** (etage 1) : scoring multi-criteres qui distingue les articles manifestement Non Green IT (rejet direct) des **candidats** qui meritent une verification plus fine.
-2. **LLM judge** (etage 2) : les candidats passent par un LLM instructif (`Qwen/Qwen3-4B-Instruct-2507`) qui tranche en zero-shot avec un prompt specialise. L'appel se fait via l'API Hugging Face Serverless, avec un **fallback automatique sur GPU AMD local** (`Qwen/Qwen2.5-3B-Instruct` via ROCm) si le quota mensuel HF est epuise (HTTP 402).
-
-Un **classifieur de production** supplementaire (`Qwen/Qwen3-4B + LoRA`, Apache-2.0, multilingue natif FR/EN/DE/ES/ZH) fine-tune sur le golden dataset produit par cette classification hybride est utilise pour l'inference temps reel via l'endpoint `/analyze`. Il remplace depuis avril 2026 l'ancien modele `meta-llama/Llama-3.2-3B` (gated) et permet de classifier directement des articles dans plusieurs langues sans etape de traduction prealable.
-
-Pour les articles confirmes Green IT, deux resumes sont generes via le meme LLM instructif Qwen : un resume general et un resume centre sur les aspects ecologiques.
+</div>
 
 ---
 
-## Table des matieres
+## ✨ En bref
 
-1. [Prerequis](#1-prerequis)
-2. [Cloner le projet](#2-cloner-le-projet)
-3. [Configurer les secrets (.env)](#3-configurer-les-secrets-env)
-4. [Installer les dependances](#4-installer-les-dependances)
-5. [Lancer l'infrastructure Docker](#5-lancer-linfrastructure-docker)
-6. [Recuperer le modele IA](#6-recuperer-le-modele-ia)
-7. [Lancer l'application](#7-lancer-lapplication)
-8. [Utiliser l'application](#8-utiliser-lapplication)
-9. [Re-entrainement du modele](#9-re-entrainement-du-modele)
-10. [Tests](#10-tests)
-11. [Architecture technique](#11-architecture-technique)
-12. [Deploiement production (Render)](#12-deploiement-production-render)
+GreenTech Intelligence collecte des articles tech depuis **6 sources actives** (Guardian, Dev.to, arXiv, Crossref, TechCrunch Climate, 4 sites Green IT FR), les nettoie via Spark, et applique une **classification hybride à deux étages** :
 
----
+1. **Pré-filtre mots-clés permissif** → écarte les articles manifestement non-Green
+2. **LLM judge** (`Qwen3-4B-Instruct-2507` via API HuggingFace, fallback local sur GPU AMD ROCm) → tranche les borderline
 
-## 1. Prerequis
+Un **classifieur Qwen3-4B + LoRA TIES** fine-tuné sur le golden dataset (13 111 articles bilingues EN/FR) sert ensuite l'inférence temps-réel via une **file d'attente Celery + Redis**.
 
-Logiciels a installer sur votre machine avant de commencer :
+### Champion de production
 
-| Logiciel | Version minimum | Installation |
-|----------|----------------|-------------|
-| **Git** | 2.40+ | https://git-scm.com/downloads |
-| **Python** | 3.12 | https://www.python.org/downloads/ |
-| **Node.js** | 20 LTS | https://nodejs.org/ |
-| **Docker Desktop** | 4.x | https://www.docker.com/products/docker-desktop/ |
-| **UV** (gestionnaire Python) | latest | `irm https://astral.sh/uv/install.ps1 \| iex` (Windows) ou `curl -LsSf https://astral.sh/uv/install.sh \| sh` (Linux/Mac) |
+| Métrique (K-fold honnête, σ MCC = 0.010) | Valeur |
+|---|---|
+| **MCC** | **0.6238** |
+| F1 / Recall / Precision | 0.6861 / 0.8913 / 0.5573 |
+| Latence p50 (GPU ROCm) | **60 ms** |
+| Latence p50 (CPU Docker) | ~13 s |
+| VRAM peak | 7.7 GB |
+| Modèle | `Qwen/Qwen3-4B` (Apache-2.0) + LoRA all-linear, r=16, α=32 |
+| Ensemble | TIES (Yadav NeurIPS 2023) sur 3 folds top-1 K=3×2 |
 
-**Optionnel (pour entrainer les modeles)** :
-- GPU AMD + ROCm/HIP SDK 7.1+ **ou** GPU NVIDIA + CUDA 12+
-- Sans GPU, l'inference fonctionne en CPU (plus lent, ~5-15s par article)
+Détail complet → [`docs/MODEL_CARD.md`](docs/MODEL_CARD.md) · [`docs/SELECTION_CHAMPION_2026-04.md`](docs/SELECTION_CHAMPION_2026-04.md)
 
 ---
 
-## 2. Cloner le projet
+## 🧱 Stack technique
+
+| Couche | Outils |
+|---|---|
+| **Data (E1)** | httpx · feedparser · Scrapy 2.11+ · Playwright 1.40+ · PySpark 3.5+ · SQLAlchemy 2.0 async · asyncpg · PostgreSQL 15 · MinIO (S3) |
+| **IA (E2/E3)** | PyTorch 2.9 + ROCm 7.2.1 · Transformers 4.36+ · PEFT 0.7+ · scikit-learn · Deepchecks · CodeCarbon · MLflow 2.10+ · DVC 3.40+ |
+| **Backend (E4)** | FastAPI 0.109+ · Uvicorn · Pydantic 2.5+ · fastapi-users · Loguru · prometheus-client · pypdf · python-docx |
+| **Queue** | Celery 5.4+ (broker + result backend Redis 5.0+) |
+| **Frontend (E4)** | React 19 · Vite 8 · TypeScript 6 · Tailwind CSS v4 · shadcn/ui · Recharts · Motion · Lucide |
+| **Observabilité (E5)** | Prometheus · Alertmanager · Loki + Promtail · Grafana · Pushgateway · cAdvisor |
+| **DevOps** | Docker Compose · GitHub Actions · Render |
+
+---
+
+## 🏗️ Architecture
+
+```
+┌──────────┐   POST /analyze    ┌────────┐    consume    ┌─────────────┐
+│ Frontend │ ─────────────────▶ │ API    │ ────────────▶ │ Worker      │
+│ React    │                    │FastAPI │   (Redis)     │ Celery+GPU  │
+└────┬─────┘ ◀── GET /{job_id} ─┴────────┘ ◀────────────┴──────┬──────┘
+     │                                                          │
+     │            ┌──────────────────────────────────┐          │
+     └───────────▶│ Postgres · MinIO · MLflow        │◀─────────┘
+                  │ Prometheus · Loki · Grafana      │
+                  └──────────────────────────────────┘
+```
+
+Trois modes d'exécution :
+
+| Mode | Usage cible | Performance |
+|---|---|---|
+| **Full Docker** (`--profile full`) | Démo / soutenance / CI | ~13 s/article (CPU) |
+| **Hybride** (infra Docker + worker local) | Dev quotidien Windows + GPU AMD | **~800 ms/article (ROCm)** |
+| **Tout local** | Dev pur sans Docker | identique au hybride |
+
+> Le passthrough GPU AMD n'est **pas supporté par WSL2/Docker Desktop Windows** : utiliser le mode hybride pour bénéficier de la RX 7900 XTX.
+
+---
+
+## 🚀 Quick start
+
+### Prérequis
+
+| Outil | Version | |
+|---|---|---|
+| Python | **3.12** | <https://www.python.org/downloads/> |
+| Node.js | 20 LTS | <https://nodejs.org/> |
+| UV (Astral) | latest | `irm https://astral.sh/uv/install.ps1 \| iex` (Windows) |
+| Docker Desktop | 4.x | <https://www.docker.com/products/docker-desktop/> |
+| Git | 2.40+ | <https://git-scm.com/downloads> |
+
+### 1. Cloner + configurer
 
 ```bash
 git clone https://github.com/KaRn1zC/greentech-intelligence.git
 cd greentech-intelligence
+cp .env.example .env  # remplir HUGGINGFACE_TOKEN, GUARDIAN_API_KEY, JWT_SECRET_KEY
+uv sync                       # backend (deps Python)
+cd frontend && npm install    # frontend
 ```
 
----
+### 2. Démarrer
 
-## 3. Configurer les secrets (.env)
-
-Le fichier `.env` contient les secrets et parametres locaux. Il n'est pas versionne dans Git.
-
-```bash
-# Copier le template
-cp .env.example .env
-```
-
-Ouvrez `.env` dans votre editeur et **remplacez les valeurs suivantes** :
-
-### Secrets obligatoires a modifier
-
-| Variable | Description | Ou l'obtenir |
-|----------|-------------|-------------|
-| `SECRET_KEY` | Cle de chiffrement de l'application | Generez une chaine aleatoire : `python -c "import secrets; print(secrets.token_hex(32))"` |
-| `JWT_SECRET_KEY` | Cle de signature des tokens JWT | Generez une chaine aleatoire (meme commande que ci-dessus) |
-| `HUGGINGFACE_TOKEN` | Token API Hugging Face pour le LLM judge et les resumes (ainsi que le telechargement du modele local en fallback) | Creez un compte sur https://huggingface.co, puis allez dans Settings > Access Tokens > New token (scope `read`) |
-
-### Secrets optionnels
-
-| Variable | Description | Quand la modifier |
-|----------|-------------|------------------|
-| `POSTGRES_PASSWORD` | Mot de passe PostgreSQL admin | Uniquement si vous changez la config Docker |
-| `POSTGRES_APP_PASSWORD` | Mot de passe PostgreSQL applicatif | Uniquement si vous changez la config Docker |
-| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | Identifiants MinIO | Uniquement si vous changez la config Docker |
-| `API_NEWS_KEY` | Cle API NewsData.io pour la collecte | Uniquement si vous voulez relancer la collecte de donnees (https://newsdata.io) |
-| `SCRAPING_USER_AGENT` | User-Agent pour le scraping | Remplacez `YOUR_USERNAME` par votre pseudo GitHub |
-
-### Valeurs par defaut (ne pas modifier sauf besoin)
-
-Les variables suivantes ont des valeurs par defaut fonctionnelles pour le developpement local. Ne les modifiez que si vous savez ce que vous faites :
-
-```
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-MINIO_ENDPOINT=localhost:9000
-MLFLOW_TRACKING_URI=http://localhost:5000
-API_PORT=8000
-CORS_ORIGINS=["http://localhost:5173","http://localhost:3000"]
-```
-
----
-
-## 4. Installer les dependances
-
-### Backend (Python)
-
-```bash
-# Installer toutes les dependances (dev inclus)
-uv sync
-
-# Verifier que l'installation fonctionne
-uv run python -c "from greentech.config import get_settings; print(get_settings().app_name)"
-```
-
-Vous devriez voir : `GreenTech Intelligence`
-
-### Frontend (Node.js)
-
-```bash
-cd frontend
-npm install
-cd ..
-```
-
----
-
-## 5. Lancer l'infrastructure Docker
-
-Docker fournit PostgreSQL, MinIO, MLflow, Prometheus, Loki, Grafana, **Redis** (broker + result backend Celery) et optionnellement l'API/Frontend/Worker (profil `full`).
-
-### Etape 1 : Lancer les services de base (Postgres + MinIO + MLflow + Redis + monitoring)
-
-```bash
-# Demarrer PostgreSQL, MinIO, MLflow, Prometheus, Loki, Grafana, Redis
-docker compose up -d
-```
-
-Attendez environ 30 secondes que tous les services demarrent. Verifiez :
-
-```bash
-docker compose ps
-```
-
-Tous les conteneurs doivent etre en status `Up` ou `healthy`. Services lances :
-
-| Service | Port | Role |
-|---------|------|------|
-| `greentech-postgres` | 5432 | Base de donnees (articles, users, logs) |
-| `greentech-minio` | 9000 (API) / 9001 (UI) | Stockage objet (modeles DVC, MLflow artefacts) |
-| `greentech-mlflow` | 5000 | Tracking experiences ML |
-| `greentech-redis` | 6379 | Broker + result backend Celery (queue `/analyze`) |
-| `greentech-prometheus` | 9090 | Metriques |
-| `greentech-alertmanager` | 9093 | Alertes |
-| `greentech-loki` | 3100 | Logs centralises |
-| `greentech-grafana` | 3000 | Dashboards |
-| `greentech-pushgateway` | 9091 | Metriques jobs ephemeres |
-| `greentech-cadvisor` | 8090 | Metriques par conteneur |
-
-### Etape 2 : Verifier que la base est initialisee
-
-Le script `scripts/sql/init.sql` est execute automatiquement au premier demarrage de PostgreSQL via le volume Docker. Les tables, index et donnees de reference sont crees.
-
-Pour verifier :
-
-```bash
-docker exec greentech-postgres psql -U greentech -d greentech_db -c "\dt"
-```
-
-Vous devriez voir les tables : `search_config`, `sources`, `articles`, `users`, `analysis_logs`, `daily_stats`.
-
-### Etape 3 (optionnel) : Lancer la stack complete (profil `full`)
-
-Le profil `full` ajoute trois conteneurs supplementaires en plus des services de base :
-
-| Service | Port | Role |
-|---------|------|------|
-| `greentech-api` | 8000 | API FastAPI (producteur de la queue Celery) |
-| `greentech-celery-worker` | — | Worker Celery (consommateur, execute les analyses) |
-| `greentech-frontend` | 80 | Frontend React/NGINX (build de prod) |
-
-```bash
-docker compose --profile full up -d
-```
-
-> **Pour quel usage utiliser ce mode ?** Voir la section [7. Lancer l'application](#7-lancer-lapplication) qui detaille **trois modes** : full Docker (demo), **hybride** (recommande sur Windows + GPU AMD), et tout local.
-
-### Etape 4 : Arreter l'infrastructure
-
-```bash
-docker compose --profile "*" down
-```
-
-Le wildcard `--profile "*"` active tous les profils declares dans `docker-compose.yml` et garantit que les conteneurs `greentech-api`, `greentech-celery-worker` et `greentech-frontend` (profil `full`) sont bien supprimes avec les services de base. Sans ce flag, `docker compose down` ignore les services du profil `full` et laisse le reseau `greentech-network` en etat `still in use`.
-
----
-
-## 6. Recuperer le modele IA
-
-Le modele entraine (Qwen3-4B + LoRA, ~30 Mo) est versionne via DVC et stocke dans MinIO. Les fichiers du modele dans `models/production/` sont inclus dans le depot Git pour simplifier l'utilisation.
-
-### Option A : Utiliser les fichiers deja presents (recommande)
-
-Les fichiers suivants sont deja dans `models/production/` :
-
-```
-models/production/
-  adapter_config.json       # Configuration LoRA (r=16, alpha=32, target: attention + MLP)
-  adapter_model.safetensors # Poids du modele fine-tune (~30 Mo)
-  tokenizer.json            # Tokenizer du modele de base
-  tokenizer_config.json     # Configuration du tokenizer
-  README.md                 # Model Card (metriques, hyperparametres)
-```
-
-Au premier appel d'inference, le systeme :
-1. Telecharge automatiquement le modele de base `Qwen/Qwen3-4B` depuis Hugging Face (~8 Go en BF16, cache local)
-2. Charge les poids LoRA depuis `models/production/adapter_model.safetensors`
-3. Met le modele en memoire pour les requetes suivantes
-
-> **Important** : `Qwen/Qwen3-4B` est sous licence **Apache-2.0**, librement
-> accessible sans demande d'acces. Il suffit d'un `HUGGINGFACE_TOKEN` valide
-> dans `.env` (scope `read`) pour beneficier d'un debit de telechargement
-> correct. Aucune acceptation de licence n'est requise.
-
-### Option B : Recuperer via DVC (si les fichiers ne sont pas presents)
-
-Si le dossier `models/production/` est vide (par exemple apres un clone partiel) :
-
-```bash
-# S'assurer que MinIO tourne
-docker compose up -d minio
-
-# Configurer les credentials DVC pour MinIO
-export AWS_ACCESS_KEY_ID=minioadmin
-export AWS_SECRET_ACCESS_KEY=minioadmin123
-
-# Telecharger les artefacts du modele
-dvc pull
-```
-
-Cela telecharge les 5 fichiers depuis le bucket MinIO `s3://models/dvc`.
-
-### Parametres du modele de production
-
-| Parametre | Valeur |
-|-----------|--------|
-| **Modele de base** | `Qwen/Qwen3-4B` (~4 milliards de parametres, dense transformer, multilingue natif) |
-| **Licence** | Apache-2.0 (librement accessible, pas de gated access) |
-| **Methode** | LoRA (Low-Rank Adaptation) via PEFT |
-| **Rang LoRA (r)** | 16 |
-| **Alpha LoRA** | 32 |
-| **Dropout LoRA** | 0.05 |
-| **Modules cibles** | `q_proj`, `k_proj`, `v_proj`, `o_proj` (attention uniquement, MLP exclu pour garder la VRAM sous 24 Go avec gradient checkpointing) |
-| **Parametres entrainables** | ~20 M / 4 000 M (~0.5%) |
-| **Taille des poids LoRA** | ~80 Mo (`adapter_model.safetensors`) |
-| **Epochs** | 3 |
-| **Learning rate** | 2e-4 |
-| **Batch effectif** | 8 (batch 2 x gradient accumulation 4) |
-| **Precision** | bf16 |
-| **Max tokens** | 1024 |
-
-### Benchmark historique inter-architectures
-
-Les 3 architectures comparees lors du benchmark initial (septembre 2025 a fevrier 2026) :
-
-| Metrique | DeBERTa-v3-base | Qwen2.5-3B + LoRA | Llama 3.2 3B + LoRA |
-|----------|----------------|-------------------|----------------------|
-| **F1** | 0.444 | 0.400 | 0.667 |
-| **Accuracy** | 99.57% | 99.74% | 99.83% |
-| **Precision** | 0.40 | 1.00 | 1.00 |
-| **Recall** | 0.50 | 0.25 | 0.50 |
-| **CO2** | 97.8 g | 108.8 g | 112.0 g |
-
-Llama 3.2 3B + LoRA a ete le modele de production jusqu'en avril 2026.
-Il est remplace par **Qwen3-4B + LoRA** pour trois raisons :
-- **Multilinguisme natif** (FR/EN/DE/ES/ZH) : traitement direct d'articles
-  non anglophones, sans etape de traduction.
-- **Licence Apache-2.0** : pas de demande d'acces gated Meta.
-- **Homogeneite du stack** : meme famille de tokenizer/chat template que le
-  LLM judge et les summarizers deja en place (`Qwen/Qwen3-4B-Instruct-2507`).
-
-Un benchmark **B4** est en cours pour comparer Qwen3-4B avec **mDeBERTa-v3-base**
-(encoder multilingue 278M params) selon le **protocole unifie B3** (stratification
-croisee `(langue x label)`, 3 seeds par fold, class_weight, back-translation
-EN<->FR, calibration). Les metriques precises du modele actuellement en production
-sont mises a jour dans `models/production/README.md` apres chaque promotion via
-`scripts/retrain_pipeline.py auto-promote`.
-
----
-
-## 7. Lancer l'application
-
-L'architecture supporte **trois modes d'execution** selon le contexte d'usage. Choisissez en fonction de votre setup et de vos besoins.
-
-### Tableau comparatif des modes
-
-| Critere | Mode A : Full Docker | Mode B : **Hybride (recommande Windows + GPU AMD)** | Mode C : Tout local |
-|---------|----------------------|----------------------------------------------------|---------------------|
-| **Infra (Postgres, Redis, MinIO, MLflow, Grafana, ...)** | Docker | Docker | Manuel (a eviter) |
-| **API FastAPI** | Docker | **Local (venv)** | Local (venv) |
-| **Worker Celery** | Docker (CPU) | **Local (venv, GPU ROCm/CUDA)** | Local (venv) |
-| **Frontend React** | Docker (NGINX build prod) | Local (Vite dev server, HMR) | Local (Vite) |
-| **Performance classification** | ~5-30 s/article (CPU) | **~0.8 s/article (GPU)** | Idem mode B |
-| **Reproductibilite / portabilite** | **Maximale** (tout dans des images) | Bonne (infra dockerisee) | Faible |
-| **Hot reload du code** | Non (rebuild image) | **Oui** (uvicorn --reload, Vite HMR) | Oui |
-| **Usage cible** | **Demo, CI, evaluation diplome** | **Developpement quotidien, usage perso GPU** | Dev pur sans Docker |
-
-### Pourquoi le mode hybride existe
-
-Docker Desktop sur **Windows** utilise WSL2 (VM Linux). Or :
-
-- **GPU AMD + WSL2** : pas de passthrough ROCm officiel (mai 2026). Le `/dev/kfd` et `/dev/dri` ne sont pas exposes au conteneur.
-- **GPU NVIDIA + WSL2** : passthrough CUDA OK avec `--gpus all`.
-- **Linux natif + GPU AMD** : passthrough ROCm OK avec `--device=/dev/kfd --device=/dev/dri --group-add video`.
-
-Conclusion sur ton setup **Windows + RX 7900 XTX** : le worker Celery dans Docker tombera en **CPU** (~5-30 s par classification au lieu de ~800 ms sur GPU). C'est inacceptable pour un usage quotidien, d'ou le mode hybride.
-
-Pour la **demo / soutenance**, le mode full Docker reste pertinent : portable, autonome, fonctionnel meme en CPU (juste plus lent). Pour ton **usage local quotidien**, le mode hybride est l'optimum.
-
----
-
-### Mode A : Full Docker (demo / soutenance / evaluation)
-
-Lance la stack complete (infra + API + worker + frontend) en conteneurs. Tout est autonome, accessible via les URLs `localhost`.
-
+**Mode Full Docker** (le plus simple) :
 ```bash
 docker compose --profile full up -d --build
 ```
-
 | Service | URL |
-|---------|-----|
-| Frontend | http://localhost:80 |
-| API | http://localhost:8000 |
-| Swagger | http://localhost:8000/docs |
-| Grafana | http://localhost:3000 (admin/admin123) |
-| MLflow | http://localhost:5000 |
-| MinIO console | http://localhost:9001 |
+|---|---|
+| Frontend | <http://localhost:80> |
+| API Swagger | <http://localhost:8000/docs> |
+| Grafana (admin/admin123) | <http://localhost:3000> |
+| MLflow | <http://localhost:5000> |
+| MinIO Console (minioadmin/minioadmin123) | <http://localhost:9001> |
 
-**Limites a connaitre** :
-- Classification IA en CPU (Qwen3-4B fp32 dans un conteneur sans GPU passthrough) : ~5-30 s par article
-- Pas de hot reload : tout changement de code Python necessite `docker compose build api celery-worker && docker compose --profile full up -d`
-- Build initial long (~5-10 min) : telechargement de ~3 GB de wheels Python (torch + nvidia-* + autres)
-- VRAM/RAM : le conteneur worker est plafonne a 8 GB RAM par defaut, ajustable via `CELERY_WORKER_MEM_LIMIT` dans `.env`
-
-> **Note construction d'image** : `models/production/` (~8 GB) est exclu du build context (`.dockerignore`) puis monte en volume read-only dans les services `api` et `celery-worker` (cf. `docker-compose.yml`). Sans cette exclusion, le build context atteindrait ~150 GB a cause des checkpoints d'entrainement adjacents dans `models/qwen3/`.
-
----
-
-### Mode B : Hybride (recommande pour usage local sur Windows + GPU AMD)
-
-Lance l'infra en Docker (Postgres, Redis, MinIO, MLflow, monitoring), mais **API + worker + frontend tournent en local** dans ton environnement Python/Node pour beneficier du GPU AMD via ROCm et du hot reload.
-
-#### Etape 1 : Lancer uniquement l'infra (sans API ni worker)
-
-```powershell
-# Demarre tous les services hors API/worker/frontend
-docker compose up -d
+**Mode Hybride** (recommandé pour GPU AMD ROCm) :
+```bash
+docker compose up -d                                                     # infra seule
+uv run uvicorn src.greentech.api.main:app --reload --port 8000          # API locale
+uv run celery -A greentech.api.celery_app worker --pool=solo            # worker GPU
+cd frontend && npm run dev                                               # frontend Vite HMR
 ```
 
-Tous les services de la section 5 (Postgres, Redis, MinIO, MLflow, Grafana, ...) sont disponibles sur `localhost`.
+### 3. Récupérer le modèle de production
 
-#### Etape 2 : Lancer le worker Celery en local (GPU ROCm)
-
-Dans un terminal PowerShell dedie :
-
-```powershell
-# Vars d'env optionnelles (les defauts de .env conviennent si Redis tourne sur localhost:6379)
-$env:CELERY_BROKER_URL = "redis://localhost:6379/0"
-$env:CELERY_RESULT_BACKEND = "redis://localhost:6379/1"
-
-uv run celery -A greentech.api.celery_app worker --pool=solo --loglevel=info
-```
-
-Le worker :
-- Charge `Qwen3-4B + LoRA TIES` depuis `models/production/` (8 GB sur GPU ROCm)
-- Consomme les taches `classify_article` enqueueed par l'API
-- Traite **une analyse a la fois** (`--pool=solo`, ~800 ms par article sur RX 7900 XTX)
-
-> **Pourquoi `--pool=solo` ?** Avec un seul GPU 24 GB et un classifieur 7.7 GB VRAM, plusieurs workers paralleles provoqueraient un OOM. `solo` garantit qu'une seule inference s'execute a la fois. Pour scaler horizontalement : lancer un worker par GPU sur N machines distinctes pointant vers le meme broker Redis.
-
-#### Etape 3 : Lancer l'API FastAPI en local (avec hot reload)
-
-Dans un deuxieme terminal :
-
-```powershell
-uv run uvicorn src.greentech.api.main:app --reload --port 8000
-```
-
-L'API est accessible sur http://localhost:8000 (Swagger sur `/docs`). Le `--reload` redemarre automatiquement le serveur a chaque modification de fichier Python dans `src/`.
-
-#### Etape 4 : Lancer le frontend Vite (hot reload)
-
-Dans un troisieme terminal :
-
-```powershell
-cd frontend
-npm run dev
-```
-
-Frontend accessible sur http://localhost:5173 avec hot module replacement (HMR Vite).
-
-#### Verification rapide du mode hybride
-
-```powershell
-# Test E2E : soumettre une analyse et observer la latence (~800 ms si GPU OK)
-uv run python -c "
-import time
-from greentech.api.tasks import classify_article
-t0 = time.time()
-ar = classify_article.delay(url=None, texte='Article de test sur la reduction d empreinte energetique des datacenters via scheduling dynamique', titre_override='Smoke test GPU')
-ar.get(timeout=120)
-print(f'Total : {time.time()-t0:.1f}s, modele : {ar.result.get(\"modele_classification\")}, temps_inf : {ar.result.get(\"temps_inference_ms\")}ms')
-"
-```
-
-Si `temps_inference_ms` est entre 500 et 1500 ms, le worker tourne bien sur le GPU. S'il depasse 5000 ms, le fallback CPU est actif (verifier `import torch; torch.cuda.is_available()` dans le venv).
-
----
-
-### Mode C : Tout local (sans Docker du tout)
-
-Pour le dev pur sans aucun conteneur. Necessite d'installer manuellement PostgreSQL 15, Redis 7, MinIO, etc. **Deconseille** sauf si tu as deja ces services tournant pour d'autres projets — sinon utilise le mode hybride.
-
-```powershell
-# Prerequis : Postgres + Redis installes localement et configures comme dans .env
-uv run uvicorn src.greentech.api.main:app --reload --port 8000   # Terminal 1
-uv run celery -A greentech.api.celery_app worker --pool=solo --loglevel=info   # Terminal 2
-cd frontend && npm run dev   # Terminal 3
+Le modèle Qwen3-4B TIES merged (8 GB) est versionné via DVC vers MinIO :
+```bash
+uv run dvc pull models/production.dvc
 ```
 
 ---
 
-### Choisir le bon mode rapidement
+## 🌐 API REST
 
-- **Soutenance / demo a un public** → Mode A (full Docker)
-- **Developpement quotidien sur Windows + AMD** → **Mode B (hybride)**
-- **CI/CD GitHub Actions** → Mode A (l'image API est construite et testee en CPU)
-- **Deploiement prod cloud (Render, AWS, GCP)** → Mode A adapte (avec ou sans GPU selon le tier)
+| Méthode | Endpoint | Auth | Description |
+|---|---|---|---|
+| `POST` | `/auth/register` | ❌ | Créer un compte |
+| `POST` | `/auth/login` | ❌ | Login (retourne JWT) |
+| `POST` | `/auth/logout` | ✅ | Déconnexion |
+| `GET` | `/auth/me` | ✅ | Profil utilisateur |
+| `POST` | `/analyze` | ✅ | Analyser une URL ou un texte → `job_id` (202 immédiat) |
+| `POST` | `/analyze/file` | ✅ | Analyser un fichier (.txt/.md/.pdf/.docx/.html, ≤10 Mo) |
+| `GET` | `/analyze/{job_id}` | ✅ | Statut & résultat du job |
+| `GET` | `/articles` | ❌ | Liste paginée (filtres : `page`, `limit`, `is_green_it`, `source_id`, `date_from/to`) |
+| `GET` | `/articles/search` | ❌ | Recherche full-text |
+| `GET` | `/articles/{id}` | ❌ | Détail article |
+| `GET` | `/stats` | ❌ | Statistiques globales |
+| `GET` | `/stats/daily` | ❌ | Statistiques quotidiennes |
+| `GET` | `/stats/sources` | ❌ | Statistiques par source |
+| `GET` | `/health` | ❌ | Health check |
+| `GET` | `/metrics` | ❌ | Métriques Prometheus (HTTP + métier) |
 
----
-
-## 8. Utiliser l'application
-
-### 8.1 Interfaces disponibles
-
-| Interface | URL | Description |
-|-----------|-----|-------------|
-| **Frontend React** | http://localhost:5173 (dev) ou http://localhost:80 (Docker) | Interface utilisateur principale |
-| **API Swagger** | http://localhost:8000/docs | Documentation interactive de l'API (tester les endpoints) |
-| **API ReDoc** | http://localhost:8000/redoc | Documentation API en lecture seule |
-| **MLflow** | http://localhost:5000 | Tracking des experiences ML (metriques, artefacts) |
-| **Grafana** | http://localhost:3000 | Dashboards de monitoring (login : `admin` / `admin123`) |
-| **Prometheus** | http://localhost:9090 | Metriques brutes de l'application |
-| **MinIO Console** | http://localhost:9001 | Gestion du stockage objet (login : `minioadmin` / `minioadmin123`) |
-
-### 8.2 Parcours utilisateur (Frontend)
-
-#### Creer un compte
-
-1. Ouvrez http://localhost:5173
-2. Cliquez sur **"S'inscrire"** en bas du formulaire
-3. Renseignez votre email et un mot de passe (8 caracteres minimum)
-4. Cliquez sur **"S'inscrire"**
-5. Vous etes automatiquement connecte et redirige vers le Dashboard
-
-#### Analyser un article
-
-Trois modes d'entree sont disponibles sur le **Dashboard** :
-
-1. **URL** : collez un lien `http://` ou `https://` — le contenu de la page est extrait automatiquement
-2. **Texte** : collez directement un extrait d'article (50 caracteres minimum)
-3. **Fichier** : cliquez sur l'icone d'upload a cote du champ de saisie et choisissez
-   un fichier local (formats supportes : `.txt`, `.md`, `.pdf`, `.docx`, `.html`, max 10 Mo)
-
-Cliquez ensuite sur le bouton d'envoi (ou appuyez sur Entree). L'analyse se deroule
-en arriere-plan (~1-30s selon que le modele est deja charge ou non) :
-
-- Le LLM instructif **`Qwen/Qwen3-4B-Instruct-2507`** genere un **resume de classification** (style abstract scientifique, 150-220 mots) qui sert de feature d'entree au classifieur.
-  - L'appel passe d'abord par l'API Hugging Face Serverless Inference (gratuit, fair-use).
-  - En cas de quota mensuel epuise (HTTP 402), le dispatcher bascule automatiquement sur **`Qwen/Qwen2.5-3B-Instruct`** execute en local sur le GPU AMD RX 7900 XTX via ROCm 7.2, sans interruption du service.
-- Le modele IA fine-tune (**Qwen3-4B + LoRA**) classifie l'article comme **Green IT** ou **Non Green IT** a partir du resume.
-- Si l'article est classe Green IT, un second appel au meme LLM avec un prompt specifique genere un **resume des aspects ecologiques**, egalement en francais.
-
-Le resultat s'affiche avec :
-- Le statut Green IT (badge vert) ou Non Green IT (badge rouge)
-- Le score de confiance du modele
-- Le resume general de l'article
-- Si Green IT : un bloc vert distinct avec les aspects ecologiques identifies
-- Un lien vers la page de detail
-
-#### Consulter les statistiques
-
-Le Dashboard affiche un **camembert** avec la repartition :
-- Articles Green IT (vert)
-- Articles Non Green IT (rouge)
-- Articles en attente d'analyse (gris)
-
-#### Page de detail d'un article
-
-Cliquez sur n'importe quel article dans la liste pour voir :
-- Le titre, l'auteur, la date, la source
-- Le badge de classification (Green IT / Non Green IT)
-- La barre de score de confiance (pourcentage)
-- Le modele utilise pour la classification
-- Le resume IA
-- Le contenu de l'article
-
-### 8.3 Utiliser l'API directement (Swagger)
-
-1. Ouvrez http://localhost:8000/docs
-2. **Creer un compte** : POST `/auth/register` avec `{ "email": "...", "password": "..." }`
-3. **Se connecter** : POST `/auth/login` — recuperez le `access_token`
-4. **Autoriser** : Cliquez sur le bouton "Authorize" en haut a droite, collez le token
-5. **Analyser par URL ou texte** : POST `/analyze` avec `{ "url": "https://..." }` ou `{ "texte": "..." }`
-6. **Analyser par fichier** : POST `/analyze/file` en `multipart/form-data` avec le champ `fichier`
-   (formats acceptes : .txt, .md, .pdf, .docx, .html ; max 10 Mo)
-7. **Suivre l'analyse** : GET `/analyze/{job_id}` (le job_id est retourne par les etapes 5 ou 6)
-8. **Lister les articles** : GET `/articles?page=1&limit=10&is_green_it=true`
-9. **Statistiques** : GET `/stats`
-
-### 8.4 Monitoring (Grafana)
-
-1. Ouvrez http://localhost:3000 (login : `admin` / `admin123`)
-2. Deux dashboards sont pre-configures :
-   - **Performance Systeme** : latence HTTP, taux d'erreurs, etat des services
-   - **Metier GreenTech** : nombre d'articles analyses, ratio Green IT, temps d'inference
-3. Pour consulter les logs : allez dans **Explore** > selectionnez **Loki** > tapez `{container="greentech-api"}`
-
-### 8.5 MLflow (suivi des experiences)
-
-1. Ouvrez http://localhost:5000
-2. L'experience `greentech-classification` contient les runs d'entrainement :
-   - **Metriques** : F1, accuracy, precision, recall, loss
-   - **Parametres** : hyperparametres de chaque run
-   - **Artefacts** : modeles, tokenizers, rapports
-   - **CodeCarbon** : empreinte CO2 de chaque entrainement
+Documentation interactive : `/docs` (Swagger) · `/redoc` (ReDoc).
 
 ---
 
-## 9. Re-entrainement du modele
+## 🧠 Pipeline d'entraînement
 
-### Comment ca fonctionne
-
-Le corpus contient ~5 730 articles provenant de 4 sources actives, stockes dans PostgreSQL :
-- **arXiv** (~5 000 articles) — ingere depuis un dump Kaggle (dataset Cornell University)
-- **The Guardian** (~500 articles) — collecte via API REST/JSON (section environment + technology)
-- **Dev.to** (~120 articles) — collecte via API REST/JSON (tags greenit, sustainability, etc.)
-- **TechCrunch Climate** (~100 articles) — collecte via scraping hybride RSS + Playwright
-
-> **Historique** : la source API initiale etait NewsData.io, desactivee en avril 2026 car son free tier tronquait le contenu au placeholder "ONLY AVAILABLE IN PAID PLANS". Remplacee par The Guardian + Dev.to qui fournissent le contenu integral.
-
-Le pipeline de re-entrainement sert a **ajouter de nouveaux articles** depuis les sources en ligne, puis a re-entrainer le modele sur le corpus elargi (anciens + nouveaux). Les articles deja en base ne sont jamais perdus ni re-ingeres (deduplication par URL). Une etape `clean` supprime les articles inexploitables (contenu < 50 chars, placeholder NewsData) avant la generation des resumes.
-
-Le modele est toujours re-entraine **depuis le modele de base** Qwen3-4B (pas depuis la version precedemment fine-tunee). Les poids LoRA sont recalcules entierement a chaque entrainement sur le dataset complet. La feature d'entrainement est `titre + resume_classification` (resume LLM style abstract scientifique) et non le contenu brut tronque.
-
-La promotion en production est **conditionnelle** : le nouveau modele ne remplace l'ancien que s'il satisfait 4 criteres composites (MCC >= seuil, Recall Green IT >= 0.5, F1 non-regression, stabilite CV). L'application utilise donc toujours la meilleure version jamais entrainee.
-
-### Pipeline complet (une seule commande)
+Le pipeline complet (collecte → annotation → classification → résumés → K-fold → promotion) est orchestré par un script unique :
 
 ```bash
 uv run python scripts/retrain_pipeline.py
 ```
 
-Cette commande execute **9 etapes dans l'ordre** (pipeline complet : collecte, nettoyage, resume, classification hybride, Golden Dataset et K-fold robuste) :
-
-| Etape | Ce qui se passe |
-|-------|----------------|
-| **1. collect** | Interroge les 3 sources actives : **The Guardian** (API REST/JSON, 15 mots-cles Green IT, 5000 req/jour), **Dev.to** (tags `greenit`, `sustainability`, `climatechange`..., pas de cle), **TechCrunch Climate** (scraping hybride RSS pagine + Playwright headless, 100 articles max par session avec blacklist promos et fallback selecteurs + trafilatura). Nettoie via Spark et ingere dans PostgreSQL. Les doublons sont ignores (`ON CONFLICT (url) DO NOTHING`). |
-| **2. clean** | **Supprime les articles inexploitables** de la base : contenu NULL, contenu < 50 caracteres (abstracts arXiv corrompus/tronques), et articles avec le placeholder NewsData `"ONLY AVAILABLE IN PAID PLANS"`. Idempotent et rapide (~1 s). Evite que ces articles polluent le dataset et fassent gonfler le compteur d'echecs du resume. |
-| **3. summarize-classif** | Genere un **resume de classification** (style abstract scientifique, 150-220 mots, prompt centralise dans `classification_summarizer.py`) pour **chaque article** ayant `resume IS NULL`. Ce resume est la feature d'entree canonique du classifieur Qwen3-4B + LoRA et sert aussi d'affichage UI. Utilise le dispatcher HF Serverless avec fallback automatique sur Qwen2.5-3B local (GPU AMD ROCm) si le quota HF est epuise. |
-| **4. annotate** (etage 1) | **Pre-filtre mots-cles permissif** : scoring multi-criteres sur les articles non encore classifies (`modele_classification IS NULL`). Chaque article est classe `NON_GREEN` (rejet direct, `est_green_it=false`) ou `CANDIDATE` (`est_green_it=NULL`, en attente du LLM judge). Marque `modele_classification='keyword_filter'`. |
-| **5. classify** (etage 2) | **LLM judge** : envoie les articles `CANDIDATE` a `Qwen/Qwen3-4B-Instruct-2507` via l'API HF Serverless (fallback automatique sur Qwen2.5-3B local si quota HF epuise). Le LLM tranche avec un prompt zero-shot sur le **contenu brut de l'article** (pas le resume) pour maximiser la qualite du ground truth. Ecrit le verdict final (`est_green_it=true/false`, `score_confiance`, `modele_classification='keyword_filter+qwen_llm_judge'`). |
-| **6. summarize-green** | Genere un **resume ecologique** specifique uniquement pour les articles confirmes Green IT (`est_green_it=true` + `resume_ecologique IS NULL`). Ce resume specialise est distinct du resume de classification et alimente la section "aspects ecologiques" dans la page detail de l'UI. |
-| **7. export-golden** | Regenere `data/golden_dataset.csv` a partir de l'etat final de la DB. Exporte la colonne `articles.resume` comme `resume_classification` (feature d'entrainement). Les articles sans resume ou sans label sont exclus. |
-| **8. train-cv** | Re-entraine **Qwen3-4B + LoRA** en **K-fold stratifie (K=5)** sur la feature `titre + resume_classification`, puis entraine un modele final sur l'integralite des donnees. Les metriques par fold et agregees sont trackees dans MLflow + `models/cv_report.json`. L'empreinte CO2 est mesuree par CodeCarbon. |
-| **9. auto-promote** | Benchmark le nouveau modele vs le meilleur historique vs la baseline. Evalue 4 criteres composites : MCC >= seuil, Recall Green IT >= 0.5, F1 non-regression, stabilite CV. Si tous OK : archive l'ancien, copie le nouveau en production, enregistre ses metriques. Sinon : rien ne change, l'ancien reste en production. |
-
-> **Note technique** : les etapes 2 a 6 (summarize-classif, annotate, classify, summarize-green, export-golden) s'executent en **appel Python direct** (async/await dans le meme process) plutot qu'en subprocess. Cette architecture evite la saturation du buffer PIPE stdout sous Windows qui causait des freezes systematiques avec les logs SQLAlchemy verbose. L'etape `collect` reste en subprocess car Spark necessite un process Python dedie pour sa JVM.
-
-### Ajouter des fichiers manuellement
-
-Si vous avez un fichier de donnees supplementaire (export JSON Lines, nouveau dump arXiv, etc.), deposez-le dans le dossier `data/` puis lancez :
-
+Étapes individuelles :
 ```bash
-# Ingere le fichier, resume, classifie (etages 1+2), resume eco, exporte le golden, re-entraine, promote
-uv run python scripts/retrain_pipeline.py ingest-file data/mon_fichier.json summarize-classif annotate classify summarize-green export-golden train-cv auto-promote
+uv run python scripts/retrain_pipeline.py collect       # 6 sources : Guardian, Dev.to, arXiv, Crossref, TechCrunch, sites Green IT FR
+uv run python scripts/retrain_pipeline.py clean         # supprime contenus < 50 chars
+uv run python scripts/retrain_pipeline.py summarize-classif   # résumé feature d'entraînement (450 tokens)
+uv run python scripts/retrain_pipeline.py annotate      # étage 1 : pré-filtre mots-clés
+uv run python scripts/retrain_pipeline.py classify      # étage 2 : LLM judge Qwen
+uv run python scripts/retrain_pipeline.py summarize-green     # résumé écologique (Green IT confirmés)
+uv run python scripts/retrain_pipeline.py export-golden       # data/golden_dataset.csv
+uv run python scripts/retrain_pipeline.py augment       # back-translation EN↔FR (opus-mt)
+uv run python scripts/retrain_pipeline.py train-cv --model=qwen3      # K=3×2 ~6h sur RX 7900 XTX
+uv run python scripts/retrain_pipeline.py train-cv --model=mdeberta   # K=5×3 challenger
+uv run python scripts/retrain_pipeline.py benchmark-models            # comparatif champion vs challenger
+uv run python scripts/retrain_pipeline.py auto-promote                # promotion conditionnelle
 ```
 
-Le fichier doit etre au format JSON Lines (une entree JSON par ligne, avec au minimum les champs `title` et `abstract` ou `content`). L'ingestion est idempotente : relancer sur le meme fichier ne cree pas de doublons.
-
-### Etapes individuelles
-
-Chaque etape peut etre lancee separement :
-
-```bash
-# Collecte seule (Guardian + Dev.to + TechCrunch + Spark cleaner + SQL ingester)
-uv run python scripts/retrain_pipeline.py collect
-
-# Nettoyage des articles inexploitables (contenu NULL, < 50 chars, placeholder NewsData)
-uv run python scripts/retrain_pipeline.py clean
-
-# Resume de classification pour tous les articles sans resume
-uv run python scripts/retrain_pipeline.py summarize-classif
-
-# Pre-filtre mots-cles seul (etage 1 : NON_GREEN ou CANDIDATE)
-uv run python scripts/retrain_pipeline.py annotate
-
-# LLM judge seul (etage 2 : classifie les CANDIDATE via Qwen + fallback local)
-uv run python scripts/retrain_pipeline.py classify
-
-# Resume ecologique pour les Green IT confirmes
-uv run python scripts/retrain_pipeline.py summarize-green
-
-# Alias : enchaine summarize-classif puis summarize-green
-uv run python scripts/retrain_pipeline.py summarize
-
-# Regenere golden_dataset.csv depuis l'etat final de la DB
-uv run python scripts/retrain_pipeline.py export-golden
-
-# Re-entrainement rapide (split 80/20 stratifie)
-uv run python scripts/retrain_pipeline.py train
-
-# Re-entrainement robuste (protocole unifie B3 : K=5 folds x 3 seeds, stratif (langue x label),
-# class_weight, calibration post-fold, ~4-6h pour Qwen3 sur RX 7900 XTX)
-uv run python scripts/retrain_pipeline.py train-cv
-
-# Cibler un modele specifique
-uv run python scripts/retrain_pipeline.py train-cv --model=mdeberta
-
-# Augmentation par back-translation EN<->FR (opus-mt) sur les positifs (~5 min)
-uv run python scripts/retrain_pipeline.py augment
-
-# Benchmark seul (nouveau vs meilleur historique vs baseline)
-uv run python scripts/retrain_pipeline.py benchmark
-
-# Benchmark + promotion conditionnelle
-uv run python scripts/retrain_pipeline.py auto-promote
-
-# Promotion forcee (sans benchmark, a eviter sauf premier entrainement)
-uv run python scripts/retrain_pipeline.py promote
-
-# Baseline du modele brut (evaluation sans fine-tuning)
-uv run python scripts/retrain_pipeline.py baseline
-uv run python scripts/retrain_pipeline.py baseline --model=mdeberta  # Ciblee mDeBERTa
-```
-
-### Commandes B4 (benchmark equitable Qwen3 vs mDeBERTa)
-
-```bash
-# Baseline brute des 2 modeles cibles (~10 min cumulees)
-uv run python scripts/retrain_pipeline.py baseline-both
-
-# K-fold protocole unifie B3 sur Qwen3-4B PUIS mDeBERTa-v3-base (~6-8h cumulees)
-uv run python scripts/retrain_pipeline.py train-cv-both
-
-# Benchmark final B4.4 : compare les 2 modeles entraines, produit
-# docs/BENCHMARK_FINAL_2026-04.md avec MCC/F1/latence p50-p95-p99/VRAM/CO2
-uv run python scripts/retrain_pipeline.py benchmark-models
-```
-
-### Combiner des etapes
-
-```bash
-# Alimenter le dataset sans re-entrainer
-uv run python scripts/retrain_pipeline.py collect clean summarize-classif annotate classify summarize-green export-golden
-
-# Reprendre les articles en attente de LLM judge (apres reset quota HF)
-uv run python scripts/retrain_pipeline.py classify
-
-# Re-entrainer + benchmarker sans promouvoir
-uv run python scripts/retrain_pipeline.py train benchmark
-
-# Ingerer un fichier + pipeline complet
-uv run python scripts/retrain_pipeline.py ingest-file data/export.json clean summarize-classif annotate classify summarize-green export-golden train-cv auto-promote
-```
-
-### Systeme de selection du meilleur modele
-
-Le pipeline maintient 4 fichiers de reference :
-
-| Fichier | Contenu | Quand il est mis a jour |
-|---------|---------|------------------------|
-| `models/best_metrics.json` | Metriques completes (MCC, F1, accuracy, balanced_accuracy, precision, recall, specificite, matrice de confusion, distribution des predictions) de la **meilleure version jamais entrainee**. | Uniquement quand un nouveau modele satisfait tous les criteres de promotion |
-| `models/baseline_metrics.json` | Metriques du modele brut **sans fine-tuning**, evalue sur l'integralite du dataset (5730+ articles). Sert de reference permanente pour mesurer le gain du fine-tuning. | Une seule fois, via `baseline` (ou automatiquement si legacy format detecte) |
-| `models/cv_report.json` | Rapport du dernier K-fold : metriques par fold (MCC, F1, recall, etc.), agregees (moyenne + ecart-type + min/max), et globales (sur concatenation des predictions). | A chaque execution de `train-cv` |
-| `data/benchmark_versions.json` | Rapport du dernier benchmark (nouveau vs meilleur vs baseline + verdict + detail des 4 criteres). | A chaque benchmark |
-
-**Logique de promotion composite** (4 criteres cumulatifs) :
-
-| # | Critere | Constante (modifiable) | Raison |
-|---|---------|------------------------|--------|
-| 1 | `MCC_nouveau >= MCC_ancien - epsilon` | `MCC_EPSILON = 0.01` | **Metrique principale** : MCC est robuste au desequilibre (~0.4% de Green IT). |
-| 2 | `Recall_Green_IT >= 0.5` | `MIN_RECALL_GREEN_IT = 0.5` | **Garde-fou metier** : empeche la promotion d'un modele qui "triche" en predisant tout en Non Green IT. |
-| 3 | `F1_nouveau >= F1_ancien * 0.95` | `F1_REGRESSION_TOLERANCE = 0.95` | **Non-regression F1** : tolerance de 5% pour absorber le bruit statistique. |
-| 4 | `std(MCC) entre folds <= 0.15` | `MAX_MCC_STD = 0.15` | **Stabilite CV** : applique uniquement si un rapport K-fold est utilise. |
-
-Si **tous** les criteres passent → promotion. Si **un seul** echoue → l'ancien est conserve.
-
-Pour le **premier modele** (pas de `best_metrics.json`) : les criteres 1 et 3 sont assouplis
-(MCC > 0 au lieu de >= ancien), le critere 2 reste applique.
-
-### Versioning des modeles
-
-Chaque promotion archive automatiquement l'ancien modele :
-
-```
-models/
-  production/              # Modele actif (utilise par l'API)
-  qwen3/                   # Derniere version entrainee (Qwen3-4B + LoRA, modele actif)
-    folds/                 # Adapters LoRA des 5 folds x 3 seeds (protocole unifie B3)
-      fold_1_seed_1/ ...
-    temperature.json       # Calibration : T optimal moyen (post-fold)
-    optimal_threshold.json # Seuil de decision optimal (argmax MCC sur val)
-  mdeberta/                # mDeBERTa-v3-base entraine pour le benchmark B4 (encoder)
-    folds/                 # 5 folds x 3 seeds + temperature.json + optimal_threshold.json
-  qwen2.5/                 # Legacy : Qwen2.5-3B + LoRA (archive)
-  llama3.2/                # Legacy : Llama 3.2 3B + LoRA (archive)
-  deberta-legacy/          # Legacy : DeBERTa-v3-base EN-only (archive)
-  best_metrics.json        # Metriques completes du meilleur modele promu
-  baseline_metrics.json    # Metriques zero-shot Qwen3-4B (defaut)
-  baseline_metrics_mdeberta-v3-base.json  # Metriques zero-shot mDeBERTa
-  cv_report.json           # Rapport K-fold complet (par defaut, dernier run)
-  cv_report_qwen3.json     # Rapport K-fold Qwen3 (apres train-cv-both)
-  cv_report_mdeberta.json  # Rapport K-fold mDeBERTa (apres train-cv-both)
-  benchmark_final_metrics.json  # Comparatif B4.4 (apres benchmark-models)
-  versions/
-    v20260411_143022/      # Archive avec metadata.json + poids
-    v20260415_091500/      # Archive suivante
-```
-
-Apres promotion, **redemarrez l'API** pour que le nouveau modele soit charge :
-
-```bash
-# En mode dev
-# Ctrl+C dans le terminal de l'API, puis relancer :
-uv run uvicorn src.greentech.api.main:app --reload --port 8000
-
-# En mode Docker
-docker compose restart api
-```
-
-### Entrainer les modeles individuellement (benchmark inter-architectures)
-
-Pour relancer un entrainement isole d'une architecture (sans le pipeline B3
-complet `retrain_pipeline.py`) :
-
-```bash
-# Entraine tous les modeles sequentiellement (les 5 du registre historique)
-uv run python -m greentech.ai.models.training
-
-# Ou entraine un modele specifique (identifiants courts depuis avril 2026)
-uv run python -m greentech.ai.models.training qwen3       # Modele de production actuel (Qwen3-4B + LoRA)
-uv run python -m greentech.ai.models.training mdeberta    # mDeBERTa-v3-base (encoder concurrent du benchmark B4)
-uv run python -m greentech.ai.models.training llama3.2    # Legacy
-uv run python -m greentech.ai.models.training qwen2.5     # Legacy
-uv run python -m greentech.ai.models.training deberta     # DeBERTa-v3-base EN-only (legacy)
-
-# Benchmark comparatif sur le test set commun
-uv run python -m greentech.ai.models.training benchmark
-
-# Evaluation zero-shot (baseline) isolee avec run MLflow dedie
-uv run python scripts/benchmark_baseline.py
-```
-
-Ce workflow est independant du pipeline de re-entrainement et sert a verifier si une autre architecture serait plus performante sur le dataset actuel.
+**Critères de promotion composites** (`models/best_metrics.json`) :
+1. `MCC_nouveau >= MCC_ancien - 0.01` (métrique principale, robuste au déséquilibre)
+2. `Recall_Green_IT >= 0.5` (garde-fou métier)
+3. `F1_nouveau >= F1_ancien × 0.95` (non-régression)
+4. `σ(MCC) entre folds <= 0.15` (stabilité K-fold)
 
 ---
 
-## 10. Tests
-
-### Tests backend (Python)
+## 🧪 Tests & qualité
 
 ```bash
-# Tous les tests avec couverture
+# Backend
 uv run pytest tests/ -v --cov=src/greentech
+uv run ruff check src/ scripts/ tests/ --fix
+uv run ruff format src/ scripts/ tests/
 
-# Tests API uniquement
-uv run pytest tests/api/ -v
-
-# Tests modele IA (Deepchecks)
-uv run pytest tests/ai/ -v
-```
-
-### Tests frontend (TypeScript)
-
-```bash
+# Frontend
 cd frontend
+npm run type-check        # TypeScript strict
+npm run lint              # ESLint v9
+npm run test:a11y         # Playwright + Axe-core (WCAG 2.1 AA)
+npm run build             # build prod Vite
 
-# Verification TypeScript
-npm run type-check
+# Documentation Sphinx
+cd docs && uv run sphinx-build -b html . _build/html
 
-# Linting ESLint
-npm run lint
-
-# Tests accessibilite (necessite Playwright installe)
-npx playwright install chromium
-npm run test:a11y
+# Smoke tests
+uv run python scripts/smoke_e2e_analyze.py    # API + Celery + 10 analyses
+uv run python scripts/smoke_train_cv.py --model qwen3   # mini K=2×1 (20 min)
 ```
 
-### Qualite du code Python
-
-```bash
-# Linting + formatage
-uv run ruff check src/ tests/ --fix
-uv run ruff format src/ tests/
-```
-
-### Documentation Sphinx
-
-La documentation du projet est generee avec Sphinx, MyST-Parser (Markdown) et le theme Furo.
-
-```bash
-# Generer la documentation HTML
-cd docs
-uv run sphinx-build -b html . _build/html
-```
-
-Pour la consulter, ouvrez directement le fichier dans votre navigateur :
-
-```bash
-# Windows
-start docs/_build/html/index.html
-
-# Linux / Mac
-open docs/_build/html/index.html
-```
-
-Ou lancez un serveur local :
-
-```bash
-cd docs/_build/html
-python -m http.server 8080
-```
-
-Puis ouvrez http://localhost:8080.
+CI/CD GitHub Actions : [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (lint + tests + pip-audit) · [`.github/workflows/cd.yml`](.github/workflows/cd.yml) (déploiement Render).
 
 ---
 
-## 11. Architecture technique
+## 📚 Documentation
+
+| Document | Contenu |
+|---|---|
+| [`docs/MODEL_CARD.md`](docs/MODEL_CARD.md) | Carte modèle Qwen3-4B TIES v2.0 (méthodologie, métriques, limites, biais) |
+| [`docs/BENCHMARK_BRUT_2026-04.md`](docs/BENCHMARK_BRUT_2026-04.md) | Baseline rigoureuse pré-entraînement (linear probing + zero-shot NLI) |
+| [`docs/BENCHMARK_FINAL_2026-04.md`](docs/BENCHMARK_FINAL_2026-04.md) | Benchmark post-entraînement Qwen3-4B vs mDeBERTa-v3-base |
+| [`docs/CHOIX_DEBERTA.md`](docs/CHOIX_DEBERTA.md) | Justification du challenger mDeBERTa-v3-base |
+| [`docs/SELECTION_CHAMPION_2026-04.md`](docs/SELECTION_CHAMPION_2026-04.md) | Critères de sélection + verdict champion |
+| [`docs/SPECIFICATIONS_DATA.md`](docs/SPECIFICATIONS_DATA.md) | Inventaire 6 sources + pipeline collecte |
+| [`docs/SPECIFICATIONS_TECHNIQUES.md`](docs/SPECIFICATIONS_TECHNIQUES.md) | Architecture technique détaillée |
+| [`docs/REGISTRE_RGPD.md`](docs/REGISTRE_RGPD.md) | Traitement données personnelles (RGPD Art. 30) |
+| [`docs/PLAYBOOK_MAINTENANCE.md`](docs/PLAYBOOK_MAINTENANCE.md) | Diagnostic incidents production |
+| [`docs/PROCEDURE_MAJ_MODELE.md`](docs/PROCEDURE_MAJ_MODELE.md) | Procédure de promotion d'un nouveau modèle |
+| [`docs/PROCEDURE_MAJ_ROCM.md`](docs/PROCEDURE_MAJ_ROCM.md) | Migration ROCm (Windows wheels-only) |
+| [`docs/ACCESSIBILITE_DOCUMENTATION.md`](docs/ACCESSIBILITE_DOCUMENTATION.md) | Conformité WCAG 2.1 AA |
+| [`docs/PLAN_ETAPES.md`](docs/PLAN_ETAPES.md) · [`docs/CHECKLIST_SUIVI.md`](docs/CHECKLIST_SUIVI.md) | Feuille de route + validation compétences E1-E5 |
+
+---
+
+## 📂 Structure du projet
 
 ```
 greentech-intelligence/
-├── src/greentech/               # Package Python principal
-│   ├── config.py                # Configuration Pydantic Settings
-│   ├── data/                    # Collecte, nettoyage, stockage (Bloc E1)
-│   │   ├── collectors/          # API, scraping, fichiers
-│   │   ├── processors/          # Nettoyage Spark
-│   │   └── storage/             # PostgreSQL, MinIO, modeles ORM
-│   ├── ai/                      # Intelligence artificielle (Blocs E2 & E3)
-│   │   ├── services/            # summarizer.py (HuggingFace API)
-│   │   ├── models/              # classifier.py, inference.py, training.py
-│   │   └── mlops/               # tracking.py, validation.py, carbon.py
-│   └── api/                     # API REST (Bloc E4)
-│       ├── main.py              # App FastAPI (14 endpoints)
-│       ├── routes/              # articles, analyze, auth, stats
-│       ├── schemas/             # Pydantic (article, analysis, user, stats)
-│       └── security/            # JWT auth (bcrypt + python-jose)
-├── frontend/                    # Application React (Bloc E4)
-│   ├── src/
-│   │   ├── components/          # ui/ (shadcn), layout/ (Header, Footer)
-│   │   ├── pages/               # Login, Dashboard, ArticleDetail
-│   │   ├── hooks/               # useAuth
-│   │   ├── lib/                 # api.ts, auth.ts
-│   │   └── types/               # Miroir des schemas Pydantic
-│   ├── tests/                   # Tests Playwright + Axe-core
-│   ├── Dockerfile               # Production (nginx multi-stage)
-│   └── nginx.conf               # Config NGINX (SPA, proxy, securite)
-├── models/production/           # Modele IA retenu (LoRA weights)
-├── tests/                       # Tests Python (api/, ai/)
-├── config/                      # Prometheus, Grafana, Loki
-├── scripts/sql/                 # init.sql (schema PostgreSQL)
-├── .github/workflows/           # CI (ci.yml) + CD (cd.yml)
-├── docker-compose.yml           # Stack complete
-├── Dockerfile.api               # API multi-stage (uv + python:3.12-slim)
-├── render.yaml                  # Blueprint deploiement Render
-└── docs/                        # Documentation projet
-    ├── PLAN_ETAPES.md           # Feuille de route detaillee
-    ├── CHECKLIST_SUIVI.md       # Suivi competences diplome
-    ├── PLAYBOOK_MAINTENANCE.md  # Procedures de maintenance
-    └── PROCEDURE_MAJ_MODELE.md  # Mise a jour du modele IA
+├── src/greentech/                  # Backend Python 3.12
+│   ├── config.py                   # Pydantic Settings (PostgreSQL, MinIO, Redis, HF, JWT, Celery)
+│   ├── data/{collectors,processors,storage}/   # Collecte + Spark + SQLAlchemy
+│   ├── ai/
+│   │   ├── services/               # summarizer, classifier_llm, llm_dispatcher (HF + fallback local)
+│   │   ├── models/                 # training (Qwen3Classifier, MDeBERTaClassifier), inference, classifier
+│   │   └── mlops/                  # tracking (MLflow), carbon (CodeCarbon), calibration, robustness
+│   └── api/
+│       ├── main.py                 # FastAPI + Prometheus instrumentator
+│       ├── celery_app.py + tasks.py    # Queue Celery + Redis
+│       ├── routes/                 # auth, analyze, articles, stats
+│       └── schemas/, security/     # Pydantic + JWT
+├── frontend/                       # React 19 + Vite 8 + TS 6 + Tailwind v4
+│   ├── src/{components,pages,hooks,lib}/
+│   └── tests/                      # Playwright + Axe-core
+├── tests/                          # pytest (api, unit/ai, unit/data)
+├── scripts/                        # 16 scripts CLI (retrain_pipeline, benchmark, smoke tests, helpers)
+├── models/                         # Modèle production (DVC → MinIO)
+│   ├── production/                 # Qwen3-4B TIES merged (8 GB, ensemble_config.json + calibration)
+│   └── qwen3/{folds,folds_ties}/   # 6 adapters K=3×2 (re-fusion possible)
+├── docs/                           # Sphinx + 21 documents projet
+├── config/{prometheus,alertmanager,loki,grafana}/   # Monitoring stack
+├── audit_{crossref,greenit}/       # Audit Phase 2 (traçabilité)
+├── data/                           # golden_dataset*.csv (DVC) + fixtures test
+├── docker-compose.yml              # 15 services
+├── Dockerfile.api · Dockerfile.mlflow
+├── pyproject.toml · uv.lock        # Deps Python via UV
+├── render.yaml                     # Déploiement Render
+└── .github/workflows/{ci,cd}.yml   # CI/CD GitHub Actions
 ```
 
-### Stack technique
+---
 
-| Couche | Technologies |
-|--------|-------------|
-| **Data** | httpx, feedparser (RSS), Scrapy + Playwright + scrapy-playwright (scraping HTML), PySpark, SQLAlchemy 2.0 async, PostgreSQL 15, MinIO |
-| **IA** | PyTorch (ROCm/CUDA), transformers, PEFT (LoRA), scikit-learn (StratifiedKFold, MCC), Deepchecks, MLflow, DVC, CodeCarbon |
-| **Backend** | FastAPI, Uvicorn, Pydantic 2, Loguru (+ interception logging standard), prometheus-client, pypdf + python-docx (parsing uploads) |
-| **Frontend** | React 19, TypeScript 6, Vite 8, Tailwind CSS v4, shadcn/ui, recharts, Playwright + Axe-core |
-| **DevOps** | Docker, GitHub Actions, Prometheus, Grafana, Loki, Render |
+## 🌍 Déploiement (Render)
+
+Déploiement automatique via [`render.yaml`](render.yaml) :
+
+1. Lier le dépôt GitHub à Render
+2. **Blueprints** > **New Blueprint Instance** → détection automatique
+3. Renseigner les secrets : `HUGGINGFACE_TOKEN`, `GUARDIAN_API_KEY`, `JWT_SECRET_KEY`
+4. Chaque push sur `main` déclenche CI → CD (tests OK → déploiement)
 
 ---
 
-## 12. Deploiement production (Render)
+## 📄 Licence
 
-Le projet est configure pour un deploiement automatique sur Render via le fichier `render.yaml`.
+[MIT](LICENSE) · Modèle de base [`Qwen/Qwen3-4B`](https://huggingface.co/Qwen/Qwen3-4B) sous licence Apache-2.0.
 
-### Configuration
+## 👤 Auteur
 
-1. Creez un compte sur https://render.com
-2. Liez votre depot GitHub
-3. Rendez-vous dans **Blueprints** > **New Blueprint Instance**
-4. Selectionnez le depot `greentech-intelligence`
-5. Render detecte automatiquement `render.yaml` et cree :
-   - Un **Web Service** pour l'API (Dockerfile)
-   - Un **Static Site** pour le frontend (build Vite)
-   - Une **base PostgreSQL**
-
-### Secrets a configurer dans Render
-
-Dans le dashboard Render > Environment :
-
-| Variable | Valeur |
-|----------|--------|
-| `HUGGINGFACE_TOKEN` | Votre token HuggingFace |
-| `CORS_ORIGINS` | URL de votre frontend Render |
-
-Les variables `SECRET_KEY`, `JWT_SECRET_KEY` et `DATABASE_URL` sont generees automatiquement par le Blueprint.
-
-### Deploiement automatique
-
-Chaque push sur la branche `main` declenche :
-1. Le pipeline CI (tests, linting, build)
-2. Si le CI passe, le pipeline CD deploie sur Render
-
----
-
-## Licence
-
-MIT License - voir [LICENSE](LICENSE)
-
----
-
-## Auteur
-
-**Arnaud "KaRn1zC" BOY**
-
-Projet de memoire — Titre Professionnel de niveau 6 — Developpeur en Intelligence Artificielle et Data Analyst (2025-2026)
+**Arnaud "KaRn1zC" BOY** · Projet de mémoire — Titre Professionnel de niveau 6, Développeur en Intelligence Artificielle et Data Analyst (2025-2026).
