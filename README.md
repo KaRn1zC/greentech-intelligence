@@ -126,6 +126,13 @@ uv run celery -A greentech.api.celery_app worker --pool=solo            # worker
 cd frontend && npm run dev                                               # frontend Vite HMR
 ```
 
+**Arrêter la stack** (les deux modes) :
+```bash
+docker compose --profile "*" down       # arrête TOUS les services (y compris profil full)
+docker compose --profile "*" down -v    # idem + supprime les volumes (purge BD, MinIO, Redis…)
+```
+> Le wildcard `"*"` garantit que les services du profil `full` (`api`, `celery-worker`, `frontend`) sont bien stoppés en même temps que l'infra. Un `docker compose down` simple les laisserait orphelins et le réseau `greentech-network` en état `still in use`.
+
 ### 3. Récupérer le modèle de production
 
 Le modèle Qwen3-4B TIES merged (8 GB) est versionné via DVC vers MinIO :
