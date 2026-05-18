@@ -213,8 +213,8 @@ npm run lint              # ESLint v9
 npm run test:a11y         # Playwright + Axe-core (WCAG 2.1 AA)
 npm run build             # build prod Vite
 
-# Documentation Sphinx
-cd docs && uv run sphinx-build -b html . _build/html
+# Documentation Sphinx (depuis la racine du projet)
+uv run sphinx-build -b html docs docs/_build/html              # build HTML
 start docs\_build\html\index.html                              # ouverture directe (Windows)
 uv run python -m http.server 8080 --directory docs/_build/html # serveur local sur http://localhost:8080
 uv run sphinx-autobuild docs docs/_build/html --port 8080      # live reload (sphinx-autobuild requis)
