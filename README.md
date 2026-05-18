@@ -215,6 +215,9 @@ npm run build             # build prod Vite
 
 # Documentation Sphinx
 cd docs && uv run sphinx-build -b html . _build/html
+start docs\_build\html\index.html                              # ouverture directe (Windows)
+uv run python -m http.server 8080 --directory docs/_build/html # serveur local sur http://localhost:8080
+uv run sphinx-autobuild docs docs/_build/html --port 8080      # live reload (sphinx-autobuild requis)
 
 # Smoke tests
 uv run python scripts/smoke_e2e_analyze.py    # API + Celery + 10 analyses
