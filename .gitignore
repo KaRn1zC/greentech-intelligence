@@ -206,3 +206,6 @@ codecarbon.log
 # configuration plus larges (assistants IA, IDE) sont geres par le
 # .gitignore_global de chaque developpeur (voir core.excludesfile).
 scripts/_patch_security_hook.py
+
+# === Rédaction Mémoire ===
+docs/Mémoire
