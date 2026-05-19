@@ -58,13 +58,15 @@ services:
         sync: false
 
   # === Frontend (Site Static React + Vite) ===
+  # Les sites statiques Render utilisent le CDN global :
+  # le champ `region` n'est pas accepte (servis depuis edge nodes
+  # repartis automatiquement).
   - type: web
     name: greentech-frontend
     runtime: static
     buildCommand: cd frontend && npm ci && npx vite build
     staticPublishPath: frontend/dist
     plan: free
-    region: frankfurt
     headers:
       - path: /assets/*
         name: Cache-Control
