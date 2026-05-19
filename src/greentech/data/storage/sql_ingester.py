@@ -212,7 +212,7 @@ def _parse_iso_date(date_str: str | None) -> datetime | None:
 def read_parquet_from_minio(bucket: str, prefix: str) -> list[dict[str, Any]]:
     """Lit les fichiers Parquet depuis un bucket MinIO et retourne les enregistrements.
 
-    Spark sauvegarde les DataFrames en Parquet partitionné (part-*.parquet).
+    Spark sauvegarde les DataFrames en Parquet partitionné (``part-*.parquet``).
     Cette fonction télécharge chaque partition, la lit avec PyArrow
     et concatène les résultats en une liste de dictionnaires Python.
 

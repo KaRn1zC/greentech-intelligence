@@ -74,7 +74,10 @@ def _build_realistic_dataset(
     # 1 mot ~= 5 chars en moyenne)
     lengths = rng.integers(low=80, high=350, size=n_total)
     texts_arr = np.array(
-        [f"Titre article {i}\n\n" + ("contenu " * (length // 8)) for i, length in enumerate(lengths)],
+        [
+            f"Titre article {i}\n\n" + ("contenu " * (length // 8))
+            for i, length in enumerate(lengths)
+        ],
         dtype=object,
     )
 
@@ -132,9 +135,7 @@ def _run_kfold_and_collect_stats(
     mskf = MultilabelStratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
     folds_stats: list[dict[str, float]] = []
     for _train_idx, val_idx in mskf.split(strat_labels, strat_labels):
-        stats = _compute_fold_stats(
-            labels_arr[val_idx], langues_arr[val_idx], texts_arr[val_idx]
-        )
+        stats = _compute_fold_stats(labels_arr[val_idx], langues_arr[val_idx], texts_arr[val_idx])
         folds_stats.append(stats)
     return folds_stats
 
@@ -145,12 +146,15 @@ def _run_kfold_and_collect_stats(
 class TestLangueDistributionDrift:
     """Verifie que la repartition EN/FR est stable entre folds."""
 
-    @pytest.mark.parametrize("n_total,n_splits,seed", [
-        (1000, 5, 42),
-        (2000, 5, 123),
-        (1000, 3, 999),
-        (5000, 5, 7),
-    ])
+    @pytest.mark.parametrize(
+        "n_total,n_splits,seed",
+        [
+            (1000, 5, 42),
+            (2000, 5, 123),
+            (1000, 3, 999),
+            (5000, 5, 7),
+        ],
+    )
     def test_max_min_ratio_en_inferieur_a_tolerance(
         self, n_total: int, n_splits: int, seed: int
     ) -> None:
@@ -213,8 +217,7 @@ class TestLabelDistributionDrift:
 
         for i, fold in enumerate(folds, 1):
             assert fold["ratio_green"] > 0, (
-                f"Fold {i} ne contient aucun positif (ratio_green=0). "
-                "Stratification defaillante."
+                f"Fold {i} ne contient aucun positif (ratio_green=0). Stratification defaillante."
             )
 
 

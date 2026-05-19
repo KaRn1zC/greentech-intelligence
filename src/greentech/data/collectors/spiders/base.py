@@ -61,10 +61,10 @@ class StaticArticleSpider(Spider):
     - ``allowed_domains`` : liste des domaines autorises
     - ``source_nom`` : nom lisible de la source pour la BDD / les logs
     - ``langue`` : code ISO 2 lettres (``"fr"``, ``"en"``, ...)
-    - Une methode de discovery :
-      * ``sitemap_urls`` + ``article_url_pattern`` (regex articles)
-      * OU ``pagination_start_url`` + ``pagination_max_pages`` +
-        ``pagination_article_selector``
+    - Une methode de discovery, parmi : ``sitemap_urls`` +
+      ``article_url_pattern`` (regex articles), OU
+      ``pagination_start_url`` + ``pagination_max_pages`` +
+      ``pagination_article_selector``
 
     Les selecteurs d'extraction (``title_selectors``,
     ``content_selectors``, etc.) ont des valeurs par defaut compatibles

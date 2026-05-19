@@ -61,27 +61,32 @@ test.describe("Audit accessibilite WCAG", () => {
 })
 
 test.describe("Navigation au clavier", () => {
-  test("Login — tous les champs accessibles par tabulation", async ({
+  test("Login — formulaire entierement traversable au clavier", async ({
     page,
   }) => {
     await page.goto("/login")
     await page.waitForLoadState("networkidle")
 
-    // Premier Tab → champ email
-    await page.keyboard.press("Tab")
+    // Demarrer le focus depuis #email (en simulant que l'utilisateur a
+    // navigue jusque-la via Tab depuis le header global du Layout).
+    // L'important pour l'accessibilite n'est pas que email soit le PREMIER
+    // tabIndex de la page (il y a forcement le header global du Layout
+    // avant), mais que les champs du formulaire soient traversables dans
+    // un ordre logique : email -> password -> submit.
+    await page.locator("#email").focus()
     const emailFocused = await page.evaluate(
       () => document.activeElement?.id === "email",
     )
     expect(emailFocused).toBe(true)
 
-    // Deuxieme Tab → champ mot de passe
+    // Tab depuis #email -> #password
     await page.keyboard.press("Tab")
     const passwordFocused = await page.evaluate(
       () => document.activeElement?.id === "password",
     )
     expect(passwordFocused).toBe(true)
 
-    // Troisieme Tab → bouton submit
+    // Tab depuis #password -> bouton submit
     await page.keyboard.press("Tab")
     const submitFocused = await page.evaluate(
       () => document.activeElement?.getAttribute("type") === "submit",
@@ -129,8 +134,11 @@ test.describe("Responsive design", () => {
       const form = page.locator("form")
       await expect(form).toBeVisible()
 
-      // Le header est visible
-      const header = page.locator("header")
+      // Au moins un header est present (header global du Layout +
+      // potentiellement le header interne de la Card). On utilise
+      // .first() pour eviter le strict mode violation quand il y a
+      // plusieurs <header> dans le DOM (Layout + Card).
+      const header = page.locator("header").first()
       await expect(header).toBeVisible()
 
       // Le champ email est visible et utilisable

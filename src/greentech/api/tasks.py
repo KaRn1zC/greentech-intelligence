@@ -184,8 +184,7 @@ async def _run_analysis_pipeline(
                 resume_ecologique = green_result.resume
             else:
                 logger.warning(
-                    f"Resume ecologique echoue pour article {id_article} : "
-                    f"{green_result.erreur}"
+                    f"Resume ecologique echoue pour article {id_article} : {green_result.erreur}"
                 )
         except Exception as exc:
             logger.error(f"Erreur resume ecologique : {exc}")

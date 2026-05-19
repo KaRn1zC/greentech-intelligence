@@ -83,12 +83,11 @@ async def get_config_from_db(
     Returns:
         Liste des configurations correspondant aux critères.
 
-    Example:
-        ```python
+    Example::
+
         async with async_session_factory() as session:
             configs = await get_config_from_db(session, type_source="api")
             keywords = [c.mot_cle for c in configs]
-        ```
     """
     query = select(SearchConfig).order_by(SearchConfig.priorite)
 

@@ -210,3 +210,13 @@ scripts/_patch_security_hook.py
 # === Rédaction Mémoire ===
 docs/Mémoire
 scripts/redaction/
+
+# === Artefacts de prévisualisation rapports (PNG temporaires) ===
+e1-preview/
+e2-preview/
+e3-preview/
+e4-preview/
+e5-preview/
+
+# === Rapport d'accessibilité Playwright ===
+frontend/a11y-report/

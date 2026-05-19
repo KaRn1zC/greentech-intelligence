@@ -253,8 +253,7 @@ async def summarize_for_classification(text: str) -> SummaryResult:
     for pattern in _DEGENERATE_CONTENT_PATTERNS:
         if pattern in lower[:300]:  # on cherche dans les 300 premiers chars
             logger.warning(
-                f"Contenu rejete (preprint retire/retracte detecte) : "
-                f"{stripped[:80]!r}..."
+                f"Contenu rejete (preprint retire/retracte detecte) : {stripped[:80]!r}..."
             )
             return SummaryResult(
                 resume=None,

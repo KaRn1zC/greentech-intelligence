@@ -7,14 +7,15 @@ Challenger 3 : Qwen3-4B (fine-tuning LoRA via PEFT, ~4000M params, Apache-2.0)
 
 Le challenger Qwen3-4B est le modele d'entrainement cible depuis le
 15 avril 2026 : il remplace Llama 3.2 3B comme base du pipeline de
-production (`scripts/retrain_pipeline.py`). Avantages :
-  - Architecture dense transformer standard, pleinement supportee par
-    `transformers` et compatible ROCm sans dependance exotique.
-  - Multilingue natif (FR/EN/DE/ES/ZH) pour traiter les articles scrapes
-    sans etape de traduction.
-  - Licence Apache-2.0 (pas de gated access).
-  - Meme famille que `Qwen3-4B-Instruct-2507` deja utilise pour les
-    summarizers et le LLM judge : chat template et tokenizer unifies.
+production (``scripts/retrain_pipeline.py``). Avantages :
+
+- Architecture dense transformer standard, pleinement supportee par
+  ``transformers`` et compatible ROCm sans dependance exotique.
+- Multilingue natif (FR/EN/DE/ES/ZH) pour traiter les articles scrapes
+  sans etape de traduction.
+- Licence Apache-2.0 (pas de gated access).
+- Meme famille que ``Qwen3-4B-Instruct-2507`` deja utilise pour les
+  summarizers et le LLM judge : chat template et tokenizer unifies.
 
 La tentative precedente avec `Qwen/Qwen3.5-4B` a ete abandonnee parce qu'il
 s'agit en realite d'un modele multimodal vision-langage (image-text-to-text)
@@ -198,6 +199,7 @@ class SWACallback(TrainerCallback):
     re-uploade dans le modele.
 
     Compatible avec :
+
     - Modeles full fine-tune (mDeBERTa) : snapshot du modele complet
     - Modeles PEFT/LoRA (Qwen3) : snapshot inclut les adapters seulement
       (les poids backbone sont frozen, donc identiques entre snapshots)
@@ -1378,7 +1380,6 @@ def _build_classifier_and_config(
     return classifier, exp_config
 
 
-
 async def train_with_unified_protocol(
     model_type: str,
     *,
@@ -2189,6 +2190,7 @@ def _build_ensemble(
         # ensemble_config → merged/. Sans cela, fallback T=1.0 seuil=0.5 et
         # précision chute drastiquement (cf. P4.5 du 2026-05-17).
         import shutil as _shutil
+
         for _cfile in ("temperature.json", "optimal_threshold.json"):
             _src = model_output_root / _cfile
             if _src.exists():
@@ -2308,7 +2310,9 @@ def _merge_lora_adapters(
         raise ValueError(msg)
 
     if len(fold_checkpoints) == 1:
-        logger.info(f"Un seul checkpoint : chargement base {base_model_name} + merge_and_unload direct")
+        logger.info(
+            f"Un seul checkpoint : chargement base {base_model_name} + merge_and_unload direct"
+        )
         base_model = AutoModelForSequenceClassification.from_pretrained(
             base_model_name, num_labels=2, torch_dtype=torch.bfloat16
         )
@@ -2319,9 +2323,7 @@ def _merge_lora_adapters(
         logger.info(f"Modele LoRA sauvegarde : {output_dir}")
         return
 
-    logger.info(
-        f"TIES manuel (Yadav 2023) sur {len(fold_checkpoints)} adapters, density={density}"
-    )
+    logger.info(f"TIES manuel (Yadav 2023) sur {len(fold_checkpoints)} adapters, density={density}")
     state_dicts = [load_file(str(p / "adapter_model.safetensors")) for p in fold_checkpoints]
 
     keys = sorted(state_dicts[0].keys())
@@ -2348,8 +2350,14 @@ def _merge_lora_adapters(
         shutil.rmtree(ties_adapter_dir)
     ties_adapter_dir.mkdir(parents=True, exist_ok=True)
     save_file(merged_state, str(ties_adapter_dir / "adapter_model.safetensors"))
-    for fname in ("adapter_config.json", "tokenizer.json", "tokenizer_config.json",
-                  "chat_template.jinja", "README.md", "special_tokens_map.json"):
+    for fname in (
+        "adapter_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "chat_template.jinja",
+        "README.md",
+        "special_tokens_map.json",
+    ):
         src = fold_checkpoints[0] / fname
         if src.exists():
             shutil.copy(src, ties_adapter_dir / fname)

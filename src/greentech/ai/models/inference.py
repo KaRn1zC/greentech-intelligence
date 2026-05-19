@@ -264,9 +264,7 @@ async def get_classifier(model_path: Path | None = None) -> BaseClassifier:
                 )
             else:
                 merged_path = Path(ensemble_cfg["inference_model_path"])
-                logger.info(
-                    f"Ensemble {strategy} detecte : redirection vers {merged_path}"
-                )
+                logger.info(f"Ensemble {strategy} detecte : redirection vers {merged_path}")
                 path = merged_path
         elif strategy == "logit_average":
             from greentech.ai.models.training import MDeBERTaClassifier

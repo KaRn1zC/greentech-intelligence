@@ -6,16 +6,11 @@ conformite au referentiel C1 :
 1. **Decouverte d'URLs** via le flux RSS officiel de la section Climate
    (``https://techcrunch.com/category/climate/feed/``). Le RSS est
    standardise, stable, et resiste aux refontes de la page d'index HTML.
-   Les URLs sont ensuite filtrees en deux passes :
-
-   - **Blacklist regex** : on elimine les articles promotionnels
-     TechCrunch (tickets Disrupt, Startup Battlefield, savings campagnes)
-     qui polluent le RSS mais n'ont aucun rapport avec le Green IT.
-   - **Match mots-cles** : les mots-cles de la table ``search_config``
-     (``type_source='scraping'``) filtrent encore les URLs dont le titre
-     ou le summary RSS ne mentionnent pas le sujet vise. Si aucune URL ne
-     matche, on fallback sur la liste post-blacklist pour ne pas rater
-     l'integralite du flux.
+   Les URLs sont ensuite filtrees en deux passes (blacklist regex sur les
+   articles promotionnels TechCrunch — tickets Disrupt, Startup
+   Battlefield, savings campagnes — puis match contre les mots-cles de
+   la table ``search_config`` avec ``type_source='scraping'``, avec
+   fallback sur la liste post-blacklist si aucune URL ne matche).
 
 2. **Scraping HTML** de chaque article individuel avec Scrapy + Playwright.
    Le navigateur headless charge la page d'article, attend le rendu React,
@@ -25,6 +20,7 @@ conformite au referentiel C1 :
    de l'article meme si TechCrunch a refactor sa structure.
 
 Cette architecture coche les criteres de certification C1 :
+
 - "telechargement de l'HTML d'une ou plusieurs pages web visees par une
   action de scraping"
 - "filtrage/parsing des donnees utiles dans les resultats obtenus depuis

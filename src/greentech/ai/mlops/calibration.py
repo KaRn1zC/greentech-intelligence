@@ -236,16 +236,12 @@ def find_optimal_threshold(
         raise ValueError(msg)
 
     if grid_stop <= grid_start or grid_step <= 0:
-        msg = (
-            f"Grille de seuils invalide : [{grid_start}, {grid_stop}] "
-            f"pas {grid_step}"
-        )
+        msg = f"Grille de seuils invalide : [{grid_start}, {grid_stop}] pas {grid_step}"
         raise ValueError(msg)
 
     thresholds = np.arange(grid_start, grid_stop + grid_step / 2, grid_step)
     scores = [
-        (float(t), _score_threshold(y_true_arr, y_proba_arr, float(t), metric))
-        for t in thresholds
+        (float(t), _score_threshold(y_true_arr, y_proba_arr, float(t), metric)) for t in thresholds
     ]
 
     best_idx = int(np.argmax([s for _, s in scores]))

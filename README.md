@@ -109,6 +109,7 @@ cd frontend && npm install    # frontend
 **Mode Full Docker** (le plus simple) :
 ```bash
 docker compose --profile full up -d --build
+docker compose --profile full up -d (si déjà build)
 ```
 | Service | URL |
 |---|---|

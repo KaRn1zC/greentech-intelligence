@@ -1,12 +1,13 @@
 # =============================================================================
 # GreenTech Intelligence - CD Pipeline (Deploy to Render)
 # =============================================================================
+# Declencheur unique : completion reussie du CI Pipeline sur main.
+# On NE deploie PAS directement sur push (eviterait le gating du CI).
+# =============================================================================
 
 name: CD Pipeline
 
 on:
-  push:
-    branches: [main]
   workflow_run:
     workflows: ["CI Pipeline"]
     types: [completed]
@@ -16,8 +17,8 @@ jobs:
   deploy:
     name: Deploy to Render
     runs-on: ubuntu-latest
-    # Ne deployer que si le CI a reussi
-    if: ${{ github.event_name == 'push' || github.event.workflow_run.conclusion == 'success' }}
+    # Ne deployer que si le CI a effectivement reussi (pas seulement "completed")
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -35,21 +36,36 @@ jobs:
           api-key: ${{ secrets.RENDER_API_KEY }}
 
       - name: Verify API Health
+        # Sortie en erreur si le healthcheck n'est pas a 200 apres
+        # 5 tentatives espacees de 30s. Render demarre l'API en 30-60s,
+        # on accepte donc une periode de chauffe avant l'echec dur.
         run: |
-          echo "Attente du demarrage (60s)..."
-          sleep 60
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://greentech-api.onrender.com/health || echo "000")
-          if [ "$STATUS" = "200" ]; then
-            echo "API OK (HTTP 200)"
-          else
-            echo "ATTENTION : API retourne HTTP $STATUS (peut etre en cours de demarrage)"
-          fi
+          echo "Attente du demarrage initial Render (30s)..."
+          sleep 30
+          for attempt in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              https://greentech-api.onrender.com/health || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "API OK (HTTP 200) sur tentative $attempt/5"
+              exit 0
+            fi
+            echo "Tentative $attempt/5 : HTTP $STATUS (attente 30s avant nouvelle tentative)"
+            sleep 30
+          done
+          echo "::error::API ne repond pas en HTTP 200 apres 5 tentatives (durations totale ~3 min)"
+          exit 1
 
       - name: Verify Frontend
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://greentech-frontend.onrender.com/ || echo "000")
-          if [ "$STATUS" = "200" ]; then
-            echo "Frontend OK (HTTP 200)"
-          else
-            echo "ATTENTION : Frontend retourne HTTP $STATUS"
-          fi
+          for attempt in 1 2 3; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              https://greentech-frontend.onrender.com/ || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Frontend OK (HTTP 200) sur tentative $attempt/3"
+              exit 0
+            fi
+            echo "Tentative $attempt/3 : HTTP $STATUS (attente 30s)"
+            sleep 30
+          done
+          echo "::error::Frontend ne repond pas en HTTP 200 apres 3 tentatives"
+          exit 1

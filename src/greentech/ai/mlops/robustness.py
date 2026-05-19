@@ -49,9 +49,7 @@ class PerturbationConfig:
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.intensity <= 1.0:
-            raise ValueError(
-                f"intensity doit etre dans [0.0, 1.0], recu {self.intensity}"
-            )
+            raise ValueError(f"intensity doit etre dans [0.0, 1.0], recu {self.intensity}")
 
 
 def apply_aeda(text: str, config: PerturbationConfig | None = None) -> str:

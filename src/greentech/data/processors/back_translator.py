@@ -129,17 +129,14 @@ class BackTranslationStats:
             "bt_total_rejected_high_similarity": self.total_rejected_high_similarity,
             "bt_total_failed": self.total_failed,
             "bt_acceptance_rate": self.acceptance_rate(),
-            **{
-                f"bt_duration_{k}_s": v
-                for k, v in self.durations_seconds.items()
-            },
+            **{f"bt_duration_{k}_s": v for k, v in self.durations_seconds.items()},
         }
 
 
 class BackTranslator:
     """Augmentateur par back-translation EN<->FR via opus-mt.
 
-    Usage typique :
+    Usage typique::
 
         bt = BackTranslator()
         bt.load()
@@ -316,9 +313,7 @@ class BackTranslator:
         # en/fr apres le nettoyage B2.9).
         en_indices = [i for i, lang in enumerate(languages) if lang == "en"]
         fr_indices = [i for i, lang in enumerate(languages) if lang == "fr"]
-        other_indices = [
-            i for i, lang in enumerate(languages) if lang not in ("en", "fr")
-        ]
+        other_indices = [i for i, lang in enumerate(languages) if lang not in ("en", "fr")]
 
         if other_indices:
             logger.warning(

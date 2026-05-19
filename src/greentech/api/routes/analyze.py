@@ -348,6 +348,7 @@ def _build_analysis_result(job_id: uuid.UUID, async_result: AsyncResult) -> Anal
         date_analyse = None
         if isinstance(date_str, str):
             from datetime import datetime as _dt
+
             try:
                 date_analyse = _dt.fromisoformat(date_str)
             except ValueError:

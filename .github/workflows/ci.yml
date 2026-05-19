@@ -109,13 +109,21 @@ jobs:
       - name: Set up Python
         run: uv python install ${{ env.PYTHON_VERSION }}
       
-      - name: Install dependencies (CPU)
-        run: uv sync --extra cpu --dev
-      
-      - name: Run Deepchecks validation
+      - name: Install dependencies (sans wheels ROCm Windows)
+        # --no-sources ignore [tool.uv.sources] (wheels ROCm win_amd64)
+        # qui ne s'installeraient pas sur Linux. uv resoudra alors torch
+        # depuis l'index PyPI standard (build CPU compatible Ubuntu).
+        run: uv sync --dev --no-sources
+
+      - name: Run AI-aware unit tests
+        # Les 7 fichiers de tests/unit/ai/ utilisent des datasets
+        # synthetiques en memoire (cf. docstring de chaque module) et
+        # ne dependent ni du golden_dataset DVC ni du modele de
+        # production. Ils sont donc deterministes et bloquants : un
+        # echec doit casser la CI car il revele une regression sur
+        # la calibration, la stratification, la fusion TIES, etc.
         run: |
-          uv run python -m pytest tests/ai/ -v --tb=short
-        continue-on-error: true
+          uv run python -m pytest tests/unit/ai/ -v --tb=short
 
   # =========================================================================
   # Frontend Lint & Tests
@@ -153,23 +161,26 @@ jobs:
     defaults:
       run:
         working-directory: ./frontend
-    
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
-      
+
       - name: Install dependencies
         run: npm ci
-      
-      - name: Run unit tests
-        run: npm run test -- --coverage
-      
+
+      # Tests unitaires Vitest non encore configures sur ce projet
+      # (cf. C18 du rapport E4 — couverture frontend assuree par les
+      # tests d'accessibilite Playwright + Axe-core qui exercent les
+      # composants via le navigateur). A activer en backlog si une
+      # suite Vitest est ajoutee dans frontend/src/__tests__/.
+
       - name: Build application
         run: npm run build
 
@@ -204,9 +215,15 @@ jobs:
         run: npm run build
       
       - name: Run accessibility tests
+        # Test Playwright + Axe-core sur les 3 pages (Login, Dashboard,
+        # ArticleDetail) + navigation clavier + responsive 3 viewports.
+        # Le webServer Playwright lance lui-meme le frontend Vite via
+        # `npm run dev`, donc pas besoin d'un backend API en CI : les
+        # pages qui dependent de l'API affichent un etat d'erreur que
+        # Axe-core audite quand meme. Job bloquant : toute violation
+        # WCAG 2.1 AA de niveau serious/critical casse la CI.
         working-directory: ./frontend
         run: npm run test:a11y
-        continue-on-error: true
       
       - name: Upload accessibility report
         uses: actions/upload-artifact@v4

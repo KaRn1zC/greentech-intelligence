@@ -123,8 +123,7 @@ class TestBuildVariantIndex:
             expected_variants = sum(
                 1
                 for j in range(len(texts_arr))
-                if not original_mask[j]
-                and str(texts_arr[j]).split("\n\n", 1)[0] == title
+                if not original_mask[j] and str(texts_arr[j]).split("\n\n", 1)[0] == title
             )
             assert len(variant_index[int(orig_idx)]) == expected_variants
 
@@ -228,9 +227,7 @@ class TestKFoldDataLeakageInvariant:
 
     @pytest.mark.parametrize("n_splits", [3, 5])
     @pytest.mark.parametrize("seed", [42, 123, 999])
-    def test_val_split_ne_contient_jamais_de_variante(
-        self, n_splits: int, seed: int
-    ) -> None:
+    def test_val_split_ne_contient_jamais_de_variante(self, n_splits: int, seed: int) -> None:
         """Pour chaque fold, aucun indice du val split ne doit avoir
         ``augmentation_source != ""``. C'est la regle d'or anti-leakage de B3.3."""
         texts_arr, labels_arr, langues_arr, aug_sources_arr = _build_synthetic_dataset(

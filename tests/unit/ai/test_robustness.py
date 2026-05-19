@@ -153,9 +153,7 @@ class TestApplyRandomCasing:
         # Comparer position par position : non-alpha doit etre identique
         for orig_ch, new_ch in zip(text, result, strict=True):
             if not orig_ch.isalpha():
-                assert orig_ch == new_ch, (
-                    f"Caractere non-alpha modifie : '{orig_ch}' -> '{new_ch}'"
-                )
+                assert orig_ch == new_ch, f"Caractere non-alpha modifie : '{orig_ch}' -> '{new_ch}'"
 
     def test_intensite_un_inverse_tout_alpha(self) -> None:
         """intensite=1 = chaque caractere alpha voit sa casse inversee."""
@@ -231,29 +229,20 @@ class TestApplyCombinedPerturbations:
     def test_intensite_zero_est_identite(self) -> None:
         """intensite=0 sur les 3 = aucune modification."""
         text = "Article green IT francais sur la sobriete numerique."
-        result = apply_combined_perturbations(
-            text, PerturbationConfig(intensity=0.0, seed=42)
-        )
+        result = apply_combined_perturbations(text, PerturbationConfig(intensity=0.0, seed=42))
         assert result == text
 
     def test_intensite_forte_change_le_texte(self) -> None:
         """Avec intensite forte, le texte combine doit etre different de l'original."""
         text = "Optimisation energetique des modeles de deep learning pour reduire l'empreinte carbone des data centers."
-        result = apply_combined_perturbations(
-            text, PerturbationConfig(intensity=0.8, seed=42)
-        )
+        result = apply_combined_perturbations(text, PerturbationConfig(intensity=0.8, seed=42))
         assert result != text
 
     def test_determinisme_avec_seed(self) -> None:
         """Reproductibilite : meme seed = meme sortie pour la chaine combinee."""
         text = "Reduction empreinte carbone des reseaux numeriques par caching edge."
         cfg = PerturbationConfig(intensity=0.5, seed=42)
-        assert apply_combined_perturbations(text, cfg) == apply_combined_perturbations(
-            text, cfg
-        )
+        assert apply_combined_perturbations(text, cfg) == apply_combined_perturbations(text, cfg)
 
     def test_texte_vide(self) -> None:
-        assert (
-            apply_combined_perturbations("", PerturbationConfig(intensity=0.5, seed=42))
-            == ""
-        )
+        assert apply_combined_perturbations("", PerturbationConfig(intensity=0.5, seed=42)) == ""

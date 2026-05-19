@@ -85,17 +85,16 @@ def tracked_experiment(
     Yields:
         Le run MLflow actif pour logger des métriques supplémentaires.
 
-    Example:
-        ```python
+    Example::
+
         config = ExperimentConfig(
             nom_experience="greentech-classification",
             nom_run="deberta-v3-base-lr3e5",
             params={"learning_rate": 3e-5, "epochs": 5},
         )
         with tracked_experiment(config) as run:
-            # Entraînement du modèle
+            # Entrainement du modele
             mlflow.log_metrics({"accuracy": 0.95, "f1": 0.93})
-        ```
     """
     configure_mlflow()
     mlflow.set_experiment(config.nom_experience)

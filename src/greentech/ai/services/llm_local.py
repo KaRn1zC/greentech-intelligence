@@ -19,6 +19,7 @@ Strategie de fallback en cascade
    qui minimise l'ecart qualitatif entre les deux backends.
 3. **Local n2 (lightweight)** : ``Qwen/Qwen2.5-1.5B-Instruct``. Bascule
    automatique si :
+
    - le preflight memoire detecte moins de 8 Go VRAM (FP16 GPU) ou
      14 Go RAM (FP32 CPU) disponibles, OU
    - le chargement du 3B leve un ``OutOfMemoryError`` malgre le preflight

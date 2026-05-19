@@ -107,12 +107,14 @@ def normalize_url(url: str | None) -> str:
     4. Trailing slash retire : ``/foo/`` -> ``/foo``
 
     Ces regles couvrent les divergences observees en production :
+
     - ``http`` vs ``https`` entre ``file_ingester`` (Kaggle arXiv, https) et
       ``arxiv_collector`` API (http).
     - Variations de casse cote host (RFC 3986 dit le host est case-insensitive).
     - Trailing slash optionnel selon les conventions des CMS.
 
     On NE normalise PAS :
+
     - Le path au-dela du trailing slash (la casse path est significative
       sur certains serveurs).
     - Les query strings (certains CMS encodent l'identifiant de l'article
