@@ -26,6 +26,5 @@ pytestmark = pytest.mark.skip(
 )
 
 
-
 # Tests retires temporairement — voir docstring du module pour le
 # protocole de re-ecriture (mock AsyncResult au lieu de _jobs).

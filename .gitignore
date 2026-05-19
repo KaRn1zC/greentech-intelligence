@@ -3,23 +3,25 @@
 # =============================================================================
 
 # === Python ===
+# Patterns ancrés à la racine pour éviter de bloquer accidentellement
+# `frontend/src/lib/`, `frontend/build/`, etc.
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/build/
+/develop-eggs/
+/dist/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 *.egg-info/
 .installed.cfg
 *.egg
