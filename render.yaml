@@ -19,6 +19,12 @@ services:
     dockerContext: .
     plan: free
     region: frankfurt
+    # autoDeploy: false → le deploiement n'est PAS declenche par les pushes
+    # sur main (Render ne rebuild plus Docker a chaque commit). Le CD est
+    # pilote exclusivement par .github/workflows/cd.yml qui appelle
+    # johnbeynon/render-deploy-action quand la CI est verte, ce qui garantit
+    # le gating GitHub Actions et evite les rebuilds inutiles.
+    autoDeploy: false
     healthCheckPath: /health
     envVars:
       # PostgreSQL : Render injecte une connection string complete
@@ -66,6 +72,8 @@ services:
     runtime: static
     buildCommand: cd frontend && npm ci && npx vite build
     staticPublishPath: frontend/dist
+    # Idem API : deploiement pilote par le CD GitHub Actions.
+    autoDeploy: false
     headers:
       - path: /assets/*
         name: Cache-Control

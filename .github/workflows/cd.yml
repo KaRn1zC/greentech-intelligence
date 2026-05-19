@@ -12,6 +12,11 @@ on:
     workflows: ["CI Pipeline"]
     types: [completed]
     branches: [main]
+  # Permet de relancer manuellement le CD via `gh workflow run cd.yml`
+  # ou depuis l'UI GitHub Actions. Utile quand un CD a echoue sur un
+  # cold start Render mais que la CI etait verte (pas besoin de re-pousser
+  # un commit juste pour retenter le deploy).
+  workflow_dispatch:
 
 jobs:
   deploy:

@@ -288,12 +288,35 @@ greentech-intelligence/
 
 ## 🌍 Déploiement (Render)
 
-Déploiement automatique via [`render.yaml`](render.yaml) :
+Stack déployée sur **Render free tier** via [`render.yaml`](render.yaml) (Blueprint) :
 
-1. Lier le dépôt GitHub à Render
-2. **Blueprints** > **New Blueprint Instance** → détection automatique
-3. Renseigner les secrets : `HUGGINGFACE_TOKEN`, `GUARDIAN_API_KEY`, `JWT_SECRET_KEY`
-4. Chaque push sur `main` déclenche CI → CD (tests OK → déploiement)
+| Service | Type | URL publique |
+|---|---|---|
+| API (FastAPI) | Web Service Docker — Frankfurt | https://greentech-api-mln0.onrender.com |
+| Frontend (React) | Static Site — CDN global | https://greentech-frontend-tcsf.onrender.com |
+| Base de données | PostgreSQL 18 — Frankfurt | (interne, `DATABASE_URL` injecté) |
+
+**Procédure de déploiement initial** :
+
+1. Lier le dépôt GitHub à Render (autoriser l'accès au repo via GitHub App)
+2. **Blueprints** > **New Blueprint Instance** → détection automatique de `render.yaml`
+3. Saisir la valeur du secret `HUGGINGFACE_TOKEN` (les `SECRET_KEY` / `JWT_SECRET_KEY` sont auto-générés via `generateValue: true`)
+4. Render crée les 3 services en parallèle ; le 1er build Docker prend ~15 min (téléchargement PyTorch + dépendances ML), les suivants sont plus rapides (cache layers).
+
+**Variables d'env à ajuster après création** (Render attribue parfois un suffixe random aux noms de services) :
+
+- API : `CORS_ORIGINS` pointant vers l'URL réelle du frontend
+- Frontend : `VITE_API_URL` pointant vers l'URL réelle de l'API (Vite l'embed dans le bundle au build)
+
+**Pipeline CD** ([`.github/workflows/cd.yml`](.github/workflows/cd.yml)) :
+
+- Trigger : `workflow_run` succès du CI Pipeline sur `main`
+- Étapes : `render-deploy-action` × 2 (API + Frontend) puis healthchecks HTTP 200 sur `/health` et `/`
+- Tolérance cold start : 10 × 30s sur l'API (free tier endort le service après ~15 min d'inactivité, réveil ~50-60s)
+- Secrets GitHub requis : `RENDER_API_KEY`, `RENDER_API_SERVICE_ID`, `RENDER_FRONTEND_SERVICE_ID`
+- Variables GitHub (URLs override) : `RENDER_API_URL`, `RENDER_FRONTEND_URL`
+
+> **Note MVP lecture seule** : l'endpoint `POST /analyze` nécessite Redis + Celery worker + GPU pour l'inférence Qwen3-4B. Sur Render free, ces composants ne sont pas provisionnés ; le scope du déploiement est l'API REST en lecture (GET `/articles`, `/stats`, `/auth`) + le frontend. L'activation de `/analyze` en production demanderait Render Starter + Redis Key Value + un worker dédié GPU externe.
 
 ---
 
