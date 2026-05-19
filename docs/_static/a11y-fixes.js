@@ -56,10 +56,35 @@
     })
   }
 
+  function fixScrollableTables() {
+    // Les wrappers de tableaux generes par Furo/docutils peuvent etre
+    // scrollables horizontalement quand le tableau est large. On leur
+    // ajoute tabindex="0" + role="region" + aria-label pour permettre la
+    // navigation clavier (WCAG 2.1.1, axe-core "scrollable-region-focusable").
+    var wrappers = document.querySelectorAll(
+      ".table-wrapper, div.docutils.container > table"
+    )
+    wrappers.forEach(function (wrapper) {
+      if (!wrapper.hasAttribute("tabindex")) {
+        wrapper.setAttribute("tabindex", "0")
+      }
+      if (!wrapper.hasAttribute("role")) {
+        wrapper.setAttribute("role", "region")
+      }
+      if (!wrapper.hasAttribute("aria-label")) {
+        // Recupere la legende interne ou un libelle generique.
+        var caption = wrapper.querySelector("caption")
+        var label = caption ? caption.textContent.trim() : "Tableau de donnees"
+        wrapper.setAttribute("aria-label", label)
+      }
+    })
+  }
+
   function applyFixes() {
     fixAriaLevels()
     fixTasklistLabels()
     fixScrollablePre()
+    fixScrollableTables()
   }
 
   if (document.readyState === "loading") {
