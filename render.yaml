@@ -58,15 +58,14 @@ services:
         sync: false
 
   # === Frontend (Site Static React + Vite) ===
-  # Les sites statiques Render utilisent le CDN global :
-  # le champ `region` n'est pas accepte (servis depuis edge nodes
-  # repartis automatiquement).
+  # Les sites statiques Render utilisent le CDN global (champ `region`
+  # non accepte) et sont gratuits par defaut (champ `plan` non accepte
+  # non plus). Cf https://render.com/docs/blueprint-spec#site
   - type: web
     name: greentech-frontend
     runtime: static
     buildCommand: cd frontend && npm ci && npx vite build
     staticPublishPath: frontend/dist
-    plan: free
     headers:
       - path: /assets/*
         name: Cache-Control
