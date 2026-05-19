@@ -96,11 +96,23 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info(f"Demarrage de {_settings.app_name} v0.1.0 ({_settings.app_env})")
 
     # Verifier la connexion a la base de donnees
-    from greentech.data.storage.database import check_connection
+    from greentech.data.storage.database import check_connection, engine
+    from greentech.data.storage.models import Base
 
     db_ok = await check_connection()
     if not db_ok:
         logger.error("PostgreSQL inaccessible — l'API demarre en mode degrade")
+    elif _settings.app_env == "production":
+        # En production (Render, etc.), creer automatiquement les tables si
+        # elles n'existent pas. Idempotent : ne touche pas aux tables
+        # existantes. Permet un demarrage propre sur une base vierge sans
+        # devoir executer manuellement init.sql.
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("Tables SQLAlchemy verifiees/creees")
+        except Exception as exc:
+            logger.warning(f"Echec create_all (non bloquant) : {exc}")
 
     logger.info("API prete a recevoir des requetes")
 

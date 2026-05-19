@@ -10,6 +10,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Racine du projet (deux niveaux au-dessus de src/greentech/)
@@ -27,6 +28,7 @@ class Settings(BaseSettings):
         env_file=str(BASE_DIR / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     # --- Application ---
@@ -36,6 +38,10 @@ class Settings(BaseSettings):
     secret_key: str = "CHANGE_THIS_TO_A_RANDOM_STRING_IN_PRODUCTION"
 
     # --- PostgreSQL ---
+    # Override pleine URL (priorité). Utilisé par Render qui fournit
+    # une variable DATABASE_URL composée. Si vide, on reconstruit l'URL
+    # depuis les variables séparées postgres_* ci-dessous.
+    database_url_override: str = Field(default="", alias="DATABASE_URL")
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_user: str = "greentech"
@@ -224,7 +230,20 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """URL de connexion async pour l'utilisateur applicatif."""
+        """URL de connexion async pour l'utilisateur applicatif.
+
+        Si ``DATABASE_URL`` est définie dans l'environnement (cas Render
+        et autres PaaS), elle prévaut sur la composition manuelle. Le
+        préfixe ``postgres://`` ou ``postgresql://`` est automatiquement
+        converti en ``postgresql+asyncpg://`` pour SQLAlchemy async.
+        """
+        if self.database_url_override:
+            url = self.database_url_override
+            if url.startswith("postgres://"):
+                url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+            elif url.startswith("postgresql://") and "+asyncpg" not in url:
+                url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+            return url
         return (
             f"postgresql+asyncpg://{self.postgres_app_user}:{self.postgres_app_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"

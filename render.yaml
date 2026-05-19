@@ -1,9 +1,13 @@
 # =============================================================================
-# GreenTech Intelligence - Render Blueprint
+# GreenTech Intelligence - Render Blueprint (MVP lecture seule)
 # =============================================================================
-# Deploy : Lier ce depot GitHub a Render, le blueprint detecte automatiquement
-#          les services a deployer.
-# Docs   : https://docs.render.com/blueprint-spec
+# Deploy : lier le depot GitHub a Render -> le blueprint detecte
+# automatiquement les services a deployer.
+# Scope MVP : API REST en lecture (GET /articles, /stats, /auth, /health)
+# + Frontend static. L'endpoint /analyze est present mais retourne 503 si
+# Redis est indisponible (cas Render free sans broker dedie).
+#
+# Docs : https://docs.render.com/blueprint-spec
 # =============================================================================
 
 services:
@@ -17,10 +21,16 @@ services:
     region: frankfurt
     healthCheckPath: /health
     envVars:
+      # PostgreSQL : Render injecte une connection string complete
+      # qui surcharge automatiquement les variables postgres_* via
+      # le champ database_url_override (alias DATABASE_URL).
       - key: DATABASE_URL
         fromDatabase:
           name: greentech-db
           property: connectionString
+      # Secret signature JWT + session : generes une fois par Render,
+      # constants ensuite (sync: false permet de les modifier sans
+      # redeclencher tout le blueprint).
       - key: SECRET_KEY
         generateValue: true
       - key: JWT_SECRET_KEY
@@ -29,14 +39,25 @@ services:
         value: HS256
       - key: JWT_EXPIRE_MINUTES
         value: "30"
+      # Environnement applicatif : declenche create_all() au demarrage
+      # pour que la base soit operationnelle des le premier deploiement.
       - key: APP_ENV
         value: production
       - key: DEBUG
         value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+      # CORS : autoriser uniquement le frontend Render (pas de wildcard
+      # en production conformement au principe du moindre privilege OWASP).
       - key: CORS_ORIGINS
         value: https://greentech-frontend.onrender.com
+      # Hugging Face : optionnel pour le MVP lecture seule (l'endpoint
+      # /analyze qui necessite HF Serverless retournera 503 sur Render).
+      # Permet d'ajouter une cle apres deploiement sans re-pousser le code.
+      - key: HUGGINGFACE_TOKEN
+        sync: false
 
-  # === Frontend (React Static Site) ===
+  # === Frontend (Site Static React + Vite) ===
   - type: web
     name: greentech-frontend
     runtime: static
