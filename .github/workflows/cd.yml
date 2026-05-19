@@ -36,36 +36,43 @@ jobs:
           api-key: ${{ secrets.RENDER_API_KEY }}
 
       - name: Verify API Health
-        # Sortie en erreur si le healthcheck n'est pas a 200 apres
-        # 5 tentatives espacees de 30s. Render demarre l'API en 30-60s,
-        # on accepte donc une periode de chauffe avant l'echec dur.
+        # Render free tier endort les services apres ~15 min d'inactivite.
+        # Le reveil prend 30-60s + le build Docker ~10 min apres un push.
+        # On accorde 10 tentatives x 30s = 5 min de tolerance, plus un
+        # premier delai de 60s pour laisser le rolling update se propager.
+        env:
+          API_URL: ${{ vars.RENDER_API_URL || 'https://greentech-api.onrender.com' }}
         run: |
-          echo "Attente du demarrage initial Render (30s)..."
-          sleep 30
-          for attempt in 1 2 3 4 5; do
+          echo "Attente du redeploiement Render (60s)..."
+          sleep 60
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-              https://greentech-api.onrender.com/health || echo "000")
+              --max-time 30 "$API_URL/health" || echo "000")
             if [ "$STATUS" = "200" ]; then
-              echo "API OK (HTTP 200) sur tentative $attempt/5"
+              echo "API OK (HTTP 200) sur tentative $attempt/10"
               exit 0
             fi
-            echo "Tentative $attempt/5 : HTTP $STATUS (attente 30s avant nouvelle tentative)"
+            echo "Tentative $attempt/10 : HTTP $STATUS (attente 30s avant nouvelle tentative)"
             sleep 30
           done
-          echo "::error::API ne repond pas en HTTP 200 apres 5 tentatives (durations totale ~3 min)"
+          echo "::error::API ne repond pas en HTTP 200 apres 10 tentatives (~6 min)"
           exit 1
 
       - name: Verify Frontend
+        # Static site : reponse quasi-instantanee, mais on autorise quand
+        # meme 3 tentatives au cas ou la propagation CDN serait lente.
+        env:
+          FRONTEND_URL: ${{ vars.RENDER_FRONTEND_URL || 'https://greentech-frontend.onrender.com' }}
         run: |
-          for attempt in 1 2 3; do
+          for attempt in 1 2 3 4 5; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-              https://greentech-frontend.onrender.com/ || echo "000")
+              --max-time 15 "$FRONTEND_URL/" || echo "000")
             if [ "$STATUS" = "200" ]; then
-              echo "Frontend OK (HTTP 200) sur tentative $attempt/3"
+              echo "Frontend OK (HTTP 200) sur tentative $attempt/5"
               exit 0
             fi
-            echo "Tentative $attempt/3 : HTTP $STATUS (attente 30s)"
-            sleep 30
+            echo "Tentative $attempt/5 : HTTP $STATUS (attente 20s)"
+            sleep 20
           done
-          echo "::error::Frontend ne repond pas en HTTP 200 apres 3 tentatives"
+          echo "::error::Frontend ne repond pas en HTTP 200 apres 5 tentatives"
           exit 1
