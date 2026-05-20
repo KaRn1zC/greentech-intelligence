@@ -114,6 +114,22 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as exc:
             logger.warning(f"Echec create_all (non bloquant) : {exc}")
 
+    # Initialiser les metriques metier exposees a Prometheus (dashboard « Metier
+    # GreenTech ») : modele en production + ratio Green IT / distribution lus
+    # depuis PostgreSQL. Sans ce seed, les jauges restent a leur valeur par
+    # defaut tant qu'aucune analyse temps-reel n'a tourne.
+    if db_ok:
+        from greentech.ai.mlops.monitoring import (
+            refresh_business_metrics_from_db,
+            seed_model_info_from_production,
+        )
+
+        seed_model_info_from_production()
+        try:
+            await refresh_business_metrics_from_db()
+        except Exception as exc:
+            logger.warning(f"Seed des metriques metier au demarrage echoue : {exc}")
+
     logger.info("API prete a recevoir des requetes")
 
     yield
