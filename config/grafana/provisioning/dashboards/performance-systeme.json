@@ -9,65 +9,40 @@
   "links": [],
   "panels": [
     {
-      "title": "Requetes HTTP - Total",
+      "title": "Logs totaux",
       "type": "stat",
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
-          "expr": "sum(greentech_inference_requests_total)",
-          "legendFormat": "Total inferences"
+          "expr": "sum(count_over_time({job=\"greentech\"}[$__range]))",
+          "queryType": "instant",
+          "legendFormat": "Logs"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1000 },
-              { "color": "red", "value": 10000 }
-            ]
-          }
+          "color": { "mode": "fixed", "fixedColor": "blue" },
+          "unit": "short"
         }
       }
     },
     {
-      "title": "Resumes generes - Total",
+      "title": "Erreurs",
       "type": "stat",
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
-          "expr": "sum(greentech_summary_requests_total)",
-          "legendFormat": "Total resumes"
+          "expr": "sum(count_over_time({job=\"greentech\", level=\"error\"}[$__range]))",
+          "queryType": "instant",
+          "legendFormat": "Erreurs"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
-          "thresholds": {
-            "steps": [
-              { "color": "blue", "value": null }
-            ]
-          }
-        }
-      }
-    },
-    {
-      "title": "Erreurs Resumes",
-      "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "sum(greentech_summary_requests_total{statut=\"echec\"})",
-          "legendFormat": "Echecs"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
+          "unit": "short",
           "thresholds": {
             "steps": [
               { "color": "green", "value": null },
@@ -78,117 +53,174 @@
       }
     },
     {
-      "title": "Articles en attente",
-      "type": "gauge",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "title": "Warnings",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
-          "expr": "greentech_articles_pending_classification",
-          "legendFormat": "En attente"
+          "expr": "sum(count_over_time({job=\"greentech\", level=\"warning\"}[$__range]))",
+          "queryType": "instant",
+          "legendFormat": "Warnings"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
-          "min": 0,
-          "max": 100,
+          "unit": "short",
           "thresholds": {
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 50 },
-              { "color": "red", "value": 100 }
+              { "color": "yellow", "value": 1 }
             ]
           }
         }
       }
     },
     {
-      "title": "Latence Inference (p95)",
+      "title": "Modules actifs",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "expr": "count(sum by (module) (count_over_time({job=\"greentech\"}[$__range])))",
+          "queryType": "instant",
+          "legendFormat": "Modules"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "purple" },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "title": "Volume de logs par niveau",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, rate(greentech_inference_duration_seconds_bucket[5m]))",
-          "legendFormat": "p95 inference"
-        },
-        {
-          "expr": "histogram_quantile(0.50, rate(greentech_inference_duration_seconds_bucket[5m]))",
-          "legendFormat": "p50 inference"
+          "expr": "sum by (level) (count_over_time({job=\"greentech\"}[$__auto]))",
+          "queryType": "range",
+          "legendFormat": "{{level}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
-          "custom": { "lineWidth": 2 },
-          "thresholds": {
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 2 }
-            ]
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 30,
+            "stacking": { "mode": "normal", "group": "A" }
           }
-        }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "error" },
+            "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "warning" },
+            "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } } ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "info" },
+            "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ]
+          }
+        ]
       }
     },
     {
-      "title": "Latence Resumes (p95)",
+      "title": "Activite par module (top 8)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, rate(greentech_summary_duration_seconds_bucket[5m]))",
-          "legendFormat": "p95 resume"
-        },
-        {
-          "expr": "histogram_quantile(0.50, rate(greentech_summary_duration_seconds_bucket[5m]))",
-          "legendFormat": "p50 resume"
+          "expr": "topk(8, sum by (module) (count_over_time({job=\"greentech\"}[$__auto])))",
+          "queryType": "range",
+          "legendFormat": "{{module}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
-          "custom": { "lineWidth": 2 },
-          "thresholds": {
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 5 },
-              { "color": "red", "value": 10 }
-            ]
-          }
-        }
-      }
-    },
-    {
-      "title": "Requetes Inference par modele",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "rate(greentech_inference_requests_total[5m])",
-          "legendFormat": "{{modele}} - {{resultat}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps",
+          "unit": "short",
           "custom": { "lineWidth": 2, "fillOpacity": 10 }
         }
       }
     },
     {
-      "title": "Distribution Confiance",
-      "type": "histogram",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "title": "Repartition des logs par niveau",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
-          "expr": "greentech_inference_confidence_bucket",
-          "legendFormat": "{{le}}"
+          "expr": "sum by (level) (count_over_time({job=\"greentech\"}[$__range]))",
+          "queryType": "instant",
+          "legendFormat": "{{level}}"
         }
-      ]
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "right", "values": ["value"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "values": false }
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "error" },
+            "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "warning" },
+            "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } } ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "info" },
+            "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } } ]
+          }
+        ]
+      }
+    },
+    {
+      "title": "Volume de logs par module (top 12)",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 12 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "expr": "topk(12, sum by (module) (count_over_time({job=\"greentech\"}[$__range])))",
+          "queryType": "instant",
+          "legendFormat": "{{module}}"
+        }
+      ],
+      "transformations": [
+        { "id": "labelsToFields", "options": {} },
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": { "excludeByName": { "Time": true } } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "align": "auto" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Value" },
+            "properties": [
+              { "id": "displayName", "value": "Logs" },
+              { "id": "custom.cellOptions", "value": { "type": "gauge", "mode": "gradient" } },
+              { "id": "color", "value": { "mode": "continuous-GrYlRd" } }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm" }
     },
     {
       "title": "Logs Applicatifs (Loki)",
@@ -197,24 +229,26 @@
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
-          "expr": "{job=\"greentech\"} |= ``",
+          "expr": "{job=\"greentech\"}",
+          "queryType": "range",
           "legendFormat": ""
         }
       ],
       "options": {
         "showTime": true,
         "sortOrder": "Descending",
-        "enableLogDetails": true
+        "enableLogDetails": true,
+        "wrapLogMessage": true
       }
     }
   ],
   "schemaVersion": 39,
-  "tags": ["greentech", "performance"],
+  "tags": ["greentech", "performance", "logs"],
   "templating": { "list": [] },
-  "time": { "from": "now-1h", "to": "now" },
+  "time": { "from": "now-7d", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
   "title": "GreenTech - Performance Systeme",
   "uid": "greentech-perf",
-  "version": 1
+  "version": 2
 }

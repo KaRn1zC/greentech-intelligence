@@ -218,7 +218,7 @@ npm run build             # build prod Vite
 uv run sphinx-build -b html docs docs/_build/html              # build HTML
 start docs\_build\html\index.html                              # ouverture directe (Windows)
 uv run python -m http.server 8080 --directory docs/_build/html # serveur local sur http://localhost:8080
-uv run sphinx-autobuild docs docs/_build/html --port 8080      # live reload (sphinx-autobuild requis)
+uv run sphinx-autobuild docs docs/_build/html --port 8080 --watch src/greentech  # live reload (doc + docstrings du code via autoapi)
 
 # Smoke tests
 uv run python scripts/smoke_e2e_analyze.py    # API + Celery + 10 analyses
@@ -326,4 +326,4 @@ Stack déployée sur **Render free tier** via [`render.yaml`](render.yaml) (Blue
 
 ## 👤 Auteur
 
-**Arnaud "KaRn1zC" BOY** · Projet de mémoire — Titre Professionnel de niveau 6 RNCP 37827, Développeur en Intelligence Artificielle et Data Analyst (2025-2026).
+**Arnaud "KaRn1zC" BOY** · Projet de mémoire — Titre Professionnel de niveau 6 RNCP 37827, Développeur en Intelligence Artificielle et Data Analyst (2024-2026).

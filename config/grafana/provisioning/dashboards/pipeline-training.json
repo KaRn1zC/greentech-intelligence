@@ -12,10 +12,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "greentech_training_fold_current",
-          "legendFormat": "{{run_name}}"
-        }
+        { "expr": "greentech_training_fold_current", "legendFormat": "{{run_name}}" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -38,10 +35,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "greentech_training_cv_mcc_mean",
-          "legendFormat": "{{run_name}}"
-        }
+        { "expr": "greentech_training_cv_mcc_mean", "legendFormat": "{{run_name}}" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -64,10 +58,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "greentech_training_cv_mcc_std",
-          "legendFormat": "{{run_name}}"
-        }
+        { "expr": "greentech_training_cv_mcc_std", "legendFormat": "{{run_name}}" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -91,10 +82,7 @@
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "time() - greentech_training_last_push_timestamp_seconds",
-          "legendFormat": "{{run_name}}"
-        }
+        { "expr": "time() - greentech_training_last_push_timestamp_seconds", "legendFormat": "{{run_name}}" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -111,15 +99,12 @@
       }
     },
     {
-      "title": "MCC par fold",
+      "title": "MCC par fold (Qwen3 vs mDeBERTa)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "greentech_training_fold_mcc",
-          "legendFormat": "Fold {{fold}} ({{run_name}})"
-        }
+        { "expr": "greentech_training_fold_mcc", "legendFormat": "Fold {{fold}} ({{run_name}})" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -135,14 +120,8 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "greentech_training_fold_f1",
-          "legendFormat": "F1 fold {{fold}}"
-        },
-        {
-          "expr": "greentech_training_fold_recall",
-          "legendFormat": "Recall fold {{fold}}"
-        }
+        { "expr": "greentech_training_fold_f1", "legendFormat": "F1 fold {{fold}}" },
+        { "expr": "greentech_training_fold_recall", "legendFormat": "Recall fold {{fold}}" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -155,13 +134,10 @@
     {
       "title": "Duree par fold",
       "type": "bargauge",
-      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 12 },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 12 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "greentech_training_fold_duration_seconds",
-          "legendFormat": "Fold {{fold}}"
-        }
+        { "expr": "greentech_training_fold_duration_seconds", "legendFormat": "Fold {{fold}}" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -174,17 +150,11 @@
     {
       "title": "Memoire GPU (PyTorch)",
       "type": "timeseries",
-      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 12 },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 12 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "greentech_training_gpu_memory_allocated_bytes",
-          "legendFormat": "Alloue"
-        },
-        {
-          "expr": "greentech_training_gpu_memory_reserved_bytes",
-          "legendFormat": "Reserve"
-        }
+        { "expr": "greentech_training_gpu_memory_allocated_bytes", "legendFormat": "Alloue" },
+        { "expr": "greentech_training_gpu_memory_reserved_bytes", "legendFormat": "Reserve" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -194,69 +164,12 @@
       }
     },
     {
-      "title": "CPU par conteneur",
-      "type": "timeseries",
-      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 12 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name=~\"greentech-.*\"}[1m]))",
-          "legendFormat": "{{name}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "custom": { "drawStyle": "line", "stacking": { "mode": "normal" } }
-        }
-      }
-    },
-    {
-      "title": "RAM par conteneur",
-      "type": "timeseries",
-      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 19 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "sum by (name) (container_memory_usage_bytes{name=~\"greentech-.*\"})",
-          "legendFormat": "{{name}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "custom": { "drawStyle": "line", "fillOpacity": 10 }
-        }
-      }
-    },
-    {
-      "title": "Reseau entrant par conteneur",
-      "type": "timeseries",
-      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 19 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "sum by (name) (rate(container_network_receive_bytes_total{name=~\"greentech-.*\"}[1m]))",
-          "legendFormat": "{{name}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "Bps",
-          "custom": { "drawStyle": "line", "fillOpacity": 10 }
-        }
-      }
-    },
-    {
-      "title": "Baseline - MCC",
+      "title": "Baseline zero-shot - MCC",
       "type": "stat",
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 26 },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 19 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "greentech_baseline_mcc",
-          "legendFormat": "{{model}}"
-        }
+        { "expr": "greentech_baseline_mcc", "legendFormat": "{{model}}" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -275,15 +188,12 @@
       "options": { "colorMode": "value", "graphMode": "area" }
     },
     {
-      "title": "Baseline - F1",
+      "title": "Baseline zero-shot - F1",
       "type": "stat",
-      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 26 },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 19 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "greentech_baseline_f1",
-          "legendFormat": "{{model}}"
-        }
+        { "expr": "greentech_baseline_f1", "legendFormat": "{{model}}" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -301,15 +211,12 @@
       }
     },
     {
-      "title": "Baseline - Recall Green IT",
+      "title": "Baseline zero-shot - Recall Green IT",
       "type": "stat",
-      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 26 },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 19 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "greentech_baseline_recall",
-          "legendFormat": "{{model}}"
-        }
+        { "expr": "greentech_baseline_recall", "legendFormat": "{{model}}" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -329,13 +236,10 @@
     {
       "title": "Baseline - Derniere mise a jour",
       "type": "stat",
-      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 26 },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 19 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        {
-          "expr": "time() - greentech_baseline_last_push_timestamp_seconds",
-          "legendFormat": "{{model}}"
-        }
+        { "expr": "time() - greentech_baseline_last_push_timestamp_seconds", "legendFormat": "{{model}}" }
       ],
       "fieldConfig": {
         "defaults": {
@@ -354,7 +258,7 @@
     {
       "title": "Logs pipeline et training (Loki)",
       "type": "logs",
-      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 31 },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 24 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
@@ -375,11 +279,11 @@
   "schemaVersion": 39,
   "tags": ["greentech", "pipeline", "training"],
   "templating": { "list": [] },
-  "time": { "from": "now-1h", "to": "now" },
+  "time": { "from": "now-30d", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
   "title": "Pipeline & Training",
   "uid": "greentech-pipeline-training",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
