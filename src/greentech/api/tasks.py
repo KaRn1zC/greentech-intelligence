@@ -23,12 +23,18 @@ s'execute a la fois, ce qui evite l'OOM VRAM sur le GPU (Qwen3-4B occupe
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
 from sqlalchemy import select
 
+from greentech.ai.mlops.monitoring import (
+    push_worker_metrics,
+    record_inference,
+    record_summary,
+)
 from greentech.api.celery_app import celery_app
 from greentech.data.storage.database import async_session_factory
 from greentech.data.storage.models import AnalysisLog, Article
@@ -140,6 +146,7 @@ async def _run_analysis_pipeline(
     resume: str | None = None
     resume_ecologique: str | None = None
 
+    resume_start = time.perf_counter()
     try:
         resume_result = await summarize_article(id_article)
         if resume_result.succes:
@@ -151,6 +158,7 @@ async def _run_analysis_pipeline(
             )
     except Exception as exc:
         logger.error(f"Erreur resume de classification : {exc}")
+    record_summary(succes=resume is not None, duree_secondes=time.perf_counter() - resume_start)
 
     # 4. Classification IA sur le resume (lecture de articles.resume)
     est_green_it: bool | None = None
@@ -171,6 +179,13 @@ async def _run_analysis_pipeline(
             score_confiance = prediction.score_confiance
             modele_nom = prediction.modele
             temps_ms = prediction.temps_ms
+            # Metriques Prometheus alimentees a chaque inference (dashboard metier)
+            record_inference(
+                modele=modele_nom or "inconnu",
+                label="green_it" if est_green_it else "non_green_it",
+                confiance=score_confiance if score_confiance is not None else 0.0,
+                duree_secondes=(temps_ms or 0) / 1000.0,
+            )
         except FileNotFoundError:
             logger.warning("Modele de production non disponible, classification ignoree")
         except Exception as e:
@@ -178,6 +193,7 @@ async def _run_analysis_pipeline(
 
     # 5. Resume ecologique (uniquement si Green IT confirme)
     if est_green_it is True:
+        green_start = time.perf_counter()
         try:
             green_result = await summarize_green_for_article(id_article)
             if green_result.succes:
@@ -188,6 +204,10 @@ async def _run_analysis_pipeline(
                 )
         except Exception as exc:
             logger.error(f"Erreur resume ecologique : {exc}")
+        record_summary(
+            succes=resume_ecologique is not None,
+            duree_secondes=time.perf_counter() - green_start,
+        )
 
     # 6. Log d'analyse
     async with async_session_factory() as session:
@@ -200,6 +220,10 @@ async def _run_analysis_pipeline(
         )
         session.add(log)
         await session.commit()
+
+    # Pousser les compteurs/histogrammes d'inference du worker vers le
+    # Pushgateway (le worker Celery n'expose pas d'endpoint /metrics scrutable).
+    push_worker_metrics()
 
     logger.info(f"Analyse {job_id} terminee : article_id={id_article}")
 
