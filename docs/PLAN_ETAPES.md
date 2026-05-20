@@ -561,50 +561,52 @@ Environnement Node.js (via npm) :
   - [x] Etage 2 (LLM judge Qwen) : `classify_candidates.py` — **TERMINE 2026-04-20 23:04** en 3h10 sur les 4 528 candidats restants (91 batches de 50, kill-safe). Verdicts : 1 001 Green IT + 3 527 Non Green IT, 0 echec. Fallback Qwen2.5-3B local sur RX 7900 XTX (HF Serverless en quota HTTP 402).
   - [x] Generation resumes Green IT (confirmes uniquement) : `generate_green_summaries.py` — **TERMINE 2026-04-21 00:32** en 1h28 sur 1 002 articles Green IT, 0 echec (8-9 sec/article via Qwen local).
   - [x] Export golden dataset : `export_golden_dataset.py` — **TERMINE 2026-04-21 00:32** (initial) puis **re-execute 2026-04-21 01:46** apres nettoyage linguistique. `data/golden_dataset.csv` contient **11 664 articles** dont **1 018 Green IT (8.73 %)** et 10 646 Non Green IT, 0 article exclu. Dataset final bilingue EN/FR (EN 74.75 % / FR 25.25 %).
-- [ ] **Annotation manuelle** des articles borderline :
-  - [ ] Identification des borderline (score LLM judge entre 0.3 et 0.7)
-  - [ ] Decision sur le volume avec validation utilisateur
-  - [ ] Outil CLI : `scripts/manual_annotation_helper.py`
-  - [ ] Procedure documentee : `docs/ANNOTATION_MANUELLE.md`
-  - [ ] Re-export et versioning DVC
-- [ ] **Mise a jour documentation** :
-  - [ ] `docs/SPECIFICATIONS_DATA.md` : nouvelles sources
-  - [ ] `docs/REGISTRE_RGPD.md` : verifier nouvelles donnees personnelles
-  - [ ] Documentation interne : sections Data et Commandes
-  - [ ] Documentation Sphinx complete
+- [x] **Annotation manuelle** des articles borderline (terminee 2026-04-22) :
+  - [x] Identification des borderline (score LLM judge entre 0.3 et 0.7) — 1 325 articles identifies via index partiel
+  - [x] Decision sur le volume avec validation utilisateur (audit exhaustif des 1 325, priorite GreenIT.fr)
+  - [x] Outil CLI : `scripts/manual_annotation_helper.py`
+  - [x] Procedure documentee : `docs/ANNOTATION_MANUELLE.md`
+  - [x] Re-export et versioning DVC (`golden_dataset_augmented.csv.dvc`)
+- [ ] **Mise a jour documentation** (partielle) :
+  - [ ] `docs/SPECIFICATIONS_DATA.md` : nouvelles sources (RESTE A FAIRE : non actualise depuis l'enrichissement B2)
+  - [ ] `docs/REGISTRE_RGPD.md` : verifier nouvelles donnees personnelles (RESTE A FAIRE)
+  - [x] Documentation interne : sections Data et Commandes (collecteurs arXiv/Crossref + 4 spiders documentes)
+  - [ ] Documentation Sphinx complete (RESTE A FAIRE : narratif des sources a actualiser)
 
 ### 7.3 Optimisation Pipeline d'Entrainement (correspond a B3)
 
 > **Protocole unifie** (fige 2026-04-21 apres synthese de 3 recherches paralleles : imbalanced text classification 2024-2026 + LoRA Qwen3-4B + mDeBERTa fine-tuning bilingue). Les 4 decisions structurantes sont actees.
+>
+> **EXECUTE (mai 2026)** : protocole applique aux 2 modeles. Qwen3-4B en version **reduite K=3 folds x 2 seeds (6 trainings)**, `r=16 / lora_alpha=32` rSLoRA, 2 epochs, fusion **TIES** (Yadav et al. 2023) — calibree pour tenir dans la fenetre 8-12 h sur RX 7900 XTX. mDeBERTa en K=5 x 3 complet (15 trainings). Reference : `models/production/promotion_info.json`.
 
-- [ ] **Stratification croisee `(langue x label)`** (priorite 1, gain principal sur sigma MCC) : remplacer `StratifiedKFold` par `MultilabelStratifiedKFold` du package `iterative-stratification`. Chaque fold doit contenir la distribution exacte 75 % EN / 25 % FR et 8.73 % Green IT. Sans cela, l'ecart-type K-fold explose au-dela de la cible 0.10.
-- [ ] **Loss ponderee `class_weight=[1.0, 10.46]`** (CrossEntropy) remplace l'oversampling x84. Ratio calcule sur le train set de chaque fold. Les 3 agents de recherche convergent : BCE pondere / CE ponderee est la SOTA sur ratio modere 1:10, Focal Loss n'apporte de gain qu'au-dela de 1:50 (et degrade la calibration sans temperature scaling).
-- [ ] **Back-translation EN<->FR sur les positifs** via `Helsinki-NLP/opus-mt` (MarianMT, 2x 75M params) :
-  - [ ] Nouveau module `src/greentech/data/processors/back_translator.py` + script `scripts/augment_positives.py`
-  - [ ] Pour chaque positif, generer 1 variante via langue pivot (EN positif -> FR -> EN, FR positif -> EN -> FR)
-  - [ ] Filtre qualite : rejeter si similarite cosine `sentence-transformers` (original, retraduit) hors [0.85, 0.99]
-  - [ ] 1 018 positifs -> ~2 036 positifs effectifs, ratio 1:10.5 -> ~1:5.25
-  - [ ] Les variantes vont UNIQUEMENT dans le train split de chaque fold (jamais val/test) pour eviter toute fuite d'evaluation
-  - [ ] N'appliquer que sur le `resume` (150-220 mots), pas sur le `titre` (trop court)
-  - [ ] Temps estime : ~20-30 min sur RX 7900 XTX (MarianMT 75M params, batch 32)
-- [ ] **Calibration post-training** : nouveau module `src/greentech/ai/mlops/calibration.py`
-  - [ ] **Temperature scaling** : 1 parametre T scale, optimise sur val MCC apres training. Platt/isotonic ecartes (overfit avec <1 000 positifs).
-  - [ ] **Threshold tuning** : scan seuils [0.05, 0.95] pas 0.01, retenir argmax MCC sur val
-  - [ ] Persister `temperature.json` + `optimal_threshold.json` dans le dossier du modele
-  - [ ] `inference.py` : charger au startup, appliquer T puis seuil
-- [ ] **Ensemble K-fold K=5** : pour la production, moyenner les logits des 5 modeles K-fold plutot qu'entrainer un modele final sur le full train. Gain MCC +0.03 a +0.07 documente.
-  - [ ] Qwen3-4B : fusionner les 5 adapters LoRA via `PeftModel.merge_and_unload()` -> 1 seul modele prod (cout inference 1x)
-  - [ ] mDeBERTa : moyenner les logits a l'inference (cout ~5x, ~5.5 Go VRAM sur RX 7900 XTX, OK)
-- [ ] **3 seeds par fold** (15 trainings par modele) : variance inter-seed sur DeBERTa petit dataset est ±0.03-0.05 MCC. Moyenner sur 3 seeds stabilise sigma < 0.10.
-- [ ] **Validation Deepchecks renforcee** : verification data leakage, distribution drift entre folds, robustesse au bruit. Inchange.
-- [ ] **Decision finale** : conserver le modele avec MCC moyen K-fold le plus eleve ET ecart-type < 0.10. Critere secondaire : latence < 200 ms sur RX 7900 XTX.
+- [x] **Stratification croisee `(langue x label)`** (priorite 1, gain principal sur sigma MCC) : remplacer `StratifiedKFold` par `MultilabelStratifiedKFold` du package `iterative-stratification`. Chaque fold doit contenir la distribution exacte 75 % EN / 25 % FR et 8.73 % Green IT. Sans cela, l'ecart-type K-fold explose au-dela de la cible 0.10.
+- [x] **Loss ponderee `class_weight=[1.0, 10.46]`** (CrossEntropy) remplace l'oversampling x84. Ratio calcule sur le train set de chaque fold. Les 3 agents de recherche convergent : BCE pondere / CE ponderee est la SOTA sur ratio modere 1:10, Focal Loss n'apporte de gain qu'au-dela de 1:50 (et degrade la calibration sans temperature scaling).
+- [x] **Back-translation EN<->FR sur les positifs** via `Helsinki-NLP/opus-mt` (MarianMT, 2x 75M params) — executee 2026-04-21 :
+  - [x] Nouveau module `src/greentech/data/processors/back_translator.py` + script `scripts/augment_positives.py`
+  - [x] Pour chaque positif, generer 1 variante via langue pivot (EN positif -> FR -> EN, FR positif -> EN -> FR)
+  - [x] Filtre qualite : rejeter si similarite cosine `sentence-transformers` (original, retraduit) hors [0.85, 0.99]
+  - [x] 1 018 positifs -> 1 686 positifs effectifs (668 variantes acceptees), ratio 1:10.5 -> ~1:6.3
+  - [x] Les variantes vont UNIQUEMENT dans le train split de chaque fold (jamais val/test) pour eviter toute fuite d'evaluation
+  - [x] N'appliquer que sur le `resume` (150-220 mots), pas sur le `titre` (trop court)
+  - [x] Temps estime : ~20-30 min sur RX 7900 XTX (reel : ~13 min cumulees sur 2 runs)
+- [x] **Calibration post-training** : nouveau module `src/greentech/ai/mlops/calibration.py`
+  - [x] **Temperature scaling** : 1 parametre T scale, optimise sur val MCC apres training. Platt/isotonic ecartes (overfit avec <1 000 positifs).
+  - [x] **Threshold tuning** : scan seuils [0.05, 0.95] pas 0.01, retenir argmax MCC sur val
+  - [x] Persister `temperature.json` + `optimal_threshold.json` dans le dossier du modele
+  - [x] `inference.py` : charger au startup, appliquer T puis seuil
+- [x] **Ensemble K-fold** : pour la production, fusionner/moyenner les modeles K-fold plutot qu'entrainer un modele final sur le full train. Gain MCC +0.03 a +0.07 documente. (Execute en **K=3** pour Qwen3, K=5 pour mDeBERTa.)
+  - [x] Qwen3-4B : fusionner les adapters LoRA (1 par fold, meilleure seed) via fusion **TIES** -> 1 seul modele prod (cout inference 1x)
+  - [x] mDeBERTa : moyenner les logits a l'inference (cout ~5x, ~5.5 Go VRAM sur RX 7900 XTX, OK)
+- [x] **Seeds par fold** : Qwen3 en 2 seeds x 3 folds (6 trainings), mDeBERTa en 3 seeds x 5 folds (15 trainings). Moyenner sur plusieurs seeds stabilise sigma < 0.10 (Qwen3 atteint sigma=0.0103).
+- [ ] **Validation Deepchecks renforcee** : verification data leakage, distribution drift entre folds, robustesse au bruit. (RESTE A FAIRE : `tests/ai/` dedie a recreer.)
+- [x] **Decision finale** : conserver le modele avec MCC moyen K-fold le plus eleve ET ecart-type < 0.10. **Retenu : Qwen3-4B + LoRA (TIES)**, MCC 0.6238 ± 0.0103 (vs mDeBERTa 0.5941 ± 0.0093 en K-fold honnete), latence 58 ms.
 
 ### 7.4 Benchmark Final & Selection du modele (correspond a B4)
 
 - [x] **Selection de la version DeBERTa adaptee** : **`mdeberta-v3-base`** (multilingue) retenu le 2026-04-21. Justification : dataset final bilingue EN 74.75 % / FR 25.25 % (1 018 Green IT dont 600 en FR). `deberta-v3-base` EN-pur encoderait mal les 600 Green IT francais et fausserait le benchmark en faveur de Qwen3. mDeBERTa couvre 100 langues dont EN + FR avec la meme architecture que DeBERTa-v3-base (278M params, encoder-only, DisentangledSelfAttention), garantissant un benchmark equitable encoder-vs-decoder contre Qwen3-4B (decoder generatif, 4B params).
-- [ ] **Benchmark BRUT (zero-shot)** sur le nouveau dataset : run MLflow `baseline-comparison-2026-04` avec mDeBERTa-v3-base et Qwen3-4B
-- [ ] **Entrainement des 2 modeles avec le protocole unifie B3** (stratification langue x label, class_weight, 3 seeds, ensemble K=5, calibration) :
-  - [ ] **Qwen3-4B + LoRA** (`Qwen3Classifier` actualise) :
+- [x] **Benchmark BRUT (zero-shot)** sur le nouveau dataset : `docs/BENCHMARK_BRUT_2026-04.md` + `models/baseline_comparison_2026-04.json` (mDeBERTa-v3-base et Qwen3-4B)
+- [x] **Entrainement des 2 modeles avec le protocole unifie B3** (stratification langue x label, class_weight, seeds multiples, ensemble, calibration) — *valeurs reelles : cf. note d'execution en 7.3* :
+  - [x] **Qwen3-4B + LoRA** (`Qwen3Classifier`) — execute en K=3x2 seeds, `r=16 / alpha=32` rSLoRA, 2 epochs, fusion TIES (specs cibles ci-dessous, ajustees pour la fenetre 8-12 h) :
     - `target_modules="all-linear"` (attention + MLP : `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`)
     - `r=32, lora_alpha=64, lora_dropout=0.05`
     - Head : `AutoModelForSequenceClassification` num_labels=2 (latence / 5-10 vs generation)
@@ -615,7 +617,7 @@ Environnement Node.js (via npm) :
     - `gradient_checkpointing=True, use_reentrant=False`
     - Run MLflow `qwen3-final-2026-04`
     - Fusion des 5 adapters K-fold via `PeftModel.merge_and_unload()` -> 1 modele prod unique
-  - [ ] **mDeBERTa-v3-base** (nouvelle classe `MDeBERTaClassifier`) :
+  - [x] **mDeBERTa-v3-base** (`MDeBERTaClassifier`) — execute en K=5x3 complet (challenger) :
     - `lr=2e-5`, scheduler linear, `warmup_ratio=0.06`
     - `batch=16, grad_accum=2` (effectif 32), `max_length=384` (couvre 98 % des resumes FR + titre)
     - 5 epochs, early stopping sur val MCC (patience 2)
@@ -625,11 +627,11 @@ Environnement Node.js (via npm) :
     - `gradient_checkpointing=True`
     - Run MLflow `mdeberta-final-2026-04`
     - Ensemble : moyenne des logits des 5 modeles K-fold a l'inference (cout ~5x, ~5.5 Go VRAM sur RX 7900 XTX, OK)
-- [ ] **Benchmark comparatif des modeles entraines** : `scripts/benchmark_models.py`, evaluation sur test set fige, metriques completes (MCC, F1, precision, recall, latence p50/p95/p99, VRAM peak, CO2 CodeCarbon). Produit `docs/BENCHMARK_FINAL_2026-04.md` + `models/benchmark_final_metrics.json`.
-- [ ] **Selection du modele retenu** : MCC moyen K-fold le plus eleve ET ecart-type < 0.10 ET latence < 200 ms
-- [ ] **Promotion du modele retenu** : `models/production/` + tag DVC + push MinIO, avec `temperature.json` et `optimal_threshold.json` associes
-- [ ] **Validation end-to-end** : tests Deepchecks + API + Frontend + dashboards Grafana
-- [ ] **Mise a jour documentation finale** : Model Card, documentation interne, section 3.3 de ce plan, tag Git
+- [x] **Benchmark comparatif des modeles entraines** : `scripts/benchmark_models.py`, evaluation sur test set, metriques completes. Produit `docs/BENCHMARK_FINAL_2026-04.md` + `models/benchmark_final_metrics.json` (Qwen3 MCC 0.7565 / mDeBERTa 0.6066 sur la distribution comparee).
+- [x] **Selection du modele retenu** : Qwen3-4B + LoRA (TIES), MCC K-fold honnete 0.6238 ± 0.0103, latence 58 ms < 200 ms. Voir `docs/SELECTION_CHAMPION_2026-04.md`.
+- [x] **Promotion du modele retenu** : `models/production/` (promu 2026-05-17) + tag DVC `golden_dataset_augmented.csv.dvc` + `temperature.json` et `optimal_threshold.json` associes
+- [ ] **Validation end-to-end** : tests Deepchecks + API + Frontend + dashboards Grafana (RESTE A FAIRE : campagne de validation formelle non tracee)
+- [ ] **Mise a jour documentation finale** : Model Card (`docs/MODEL_CARD.md`) faite + tag Git `v2026.05.17-prod-qwen3-ties` cree ; RESTE A FAIRE : actualiser la section 3.3 de ce plan (encore centree sur Llama 3.2)
 
 ### 7.5 (BONUS) Refonte Agentic avec LangGraph (correspond a B5)
 
