@@ -694,10 +694,10 @@
     - [x] Commandes CLI exactes (commandes usuelles, raccourcis clavier, reprise, annulation)
     - [x] Justification de la fenetre [0.3 ; 0.7] vs [0.3 ; 0.8] (distance a 0.5, volume annotable, strategie d'elargissement conditionnelle)
     - [x] Priorite par source (GreenIT.fr en tete : 969 borderline sur 1 325)
-- [ ] **Etape 5 - Versioning** :
-  - [ ] Re-export du golden dataset apres annotation manuelle — **A FAIRE apres audit**
-  - [ ] Tag DVC du nouveau dataset versionne (`golden_dataset.csv.dvc`) — **A FAIRE apres audit**
-  - [ ] Push vers MinIO via `uv run dvc push` — **A FAIRE apres audit**
+- [x] **Etape 5 - Versioning** :
+  - [x] Re-export du golden dataset apres annotation manuelle (`data/golden_dataset_augmented.csv`)
+  - [x] Tag DVC du nouveau dataset versionne (`golden_dataset_augmented.csv.dvc` + `golden_dataset.csv.dvc`)
+  - [x] Push vers MinIO via `uv run dvc push`
 
 #### B2.11 Mise a jour documentation
 
@@ -800,7 +800,7 @@
 
 #### B3.7 Decision finale
 
-- [ ] **Critere** : conserver le modele (Qwen3-4B ou mDeBERTa) qui maximise `MCC_moyen_K-fold` avec `ecart-type_K-fold < 0.10`. Critere secondaire : latence < 200 ms, CO2 CodeCarbon documente.
+- [x] **Critere** : conserver le modele (Qwen3-4B ou mDeBERTa) qui maximise `MCC_moyen_K-fold` avec `ecart-type_K-fold < 0.10`. Critere secondaire : latence < 200 ms, CO2 CodeCarbon documente. **Retenu : Qwen3-4B + LoRA (TIES)**, MCC 0.6238 ± 0.0103 (vs mDeBERTa 0.5941 ± 0.0093 en K-fold honnete), latence 58 ms.
 
 ---
 
@@ -816,69 +816,69 @@
 
 - [x] Etudier la repartition linguistique du dataset enrichi (FR/EN/autre) — dataset final EN 74.75 % / FR 25.25 % (cf. B2.9), 1 018 Green IT dont 600 en FR.
 - [x] Decision : **`microsoft/mdeberta-v3-base`** (multilingue) retenu. Les 25 % FR sont trop significatifs pour `deberta-v3-base` EN-pur (qui encoderait mal les 600 Green IT FR et fausserait le benchmark). mDeBERTa conserve l'architecture DeBERTa-v3 (278M params, encoder-only, DisentangledSelfAttention) mais pre-entraine sur 100 langues — benchmark equitable encoder-vs-decoder contre Qwen3-4B.
-- [ ] Documenter la decision dans `docs/CHOIX_DEBERTA.md` (redaction finale apres benchmark B4.2-B4.3 pour inclure les metriques comparatives)
-- [ ] Mettre a jour `settings.huggingface_model_encoder_base` (creer le setting si besoin) — a faire lors de l'implementation du benchmark B4.2
+- [x] Documenter la decision dans `docs/CHOIX_DEBERTA.md` (redige avec les metriques comparatives)
+- [x] Mettre a jour `settings.huggingface_model_encoder_base` — `microsoft/mdeberta-v3-base` (`config.py:134`)
 
 #### B4.2 Benchmark BRUT (zero-shot)
 
-- [ ] Etendre `scripts/benchmark_baseline.py` :
-  - [ ] Ajouter un benchmark zero-shot DeBERTa via `pipeline("zero-shot-classification")`
-  - [ ] Conserver le benchmark zero-shot Qwen3-4B existant
-  - [ ] Run MLflow : un par modele, experiment dedie `baseline-comparison-2026-04`
-  - [ ] Metriques : MCC, F1, Recall, Precision, latence moyenne, CO2eq
-- [ ] Lancer sur le nouveau dataset complet
-- [ ] Generer un tableau comparatif (markdown) dans `docs/BENCHMARK_BRUT_2026-04.md`
+- [x] Etendre `scripts/benchmark_baseline.py` :
+  - [x] Ajouter un benchmark zero-shot DeBERTa via `pipeline("zero-shot-classification")`
+  - [x] Conserver le benchmark zero-shot Qwen3-4B existant
+  - [x] Run MLflow : un par modele, experiment dedie `baseline-comparison-2026-04`
+  - [x] Metriques : MCC, F1, Recall, Precision, latence moyenne, CO2eq
+- [x] Lancer sur le nouveau dataset complet
+- [x] Generer un tableau comparatif (markdown) dans `docs/BENCHMARK_BRUT_2026-04.md` + `models/baseline_comparison_2026-04.json`
 
 #### B4.3 Entrainement des 2 modeles avec le protocole unifie B3
 
 > Hyperparams ci-dessous issus des agents de recherche B (LoRA Qwen3-4B) et C (mDeBERTa). Les deux modeles suivent strictement le meme protocole B3 (stratification langue x label, class_weight, back-translation, calibration, ensemble K=5, 3 seeds par fold) pour un benchmark equitable.
 
-- [ ] **Pour Qwen3-4B + LoRA** (`Qwen3Classifier` actualise dans `src/greentech/ai/models/training.py`) :
-  - [ ] `target_modules="all-linear"` (`q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`)
-  - [ ] `r=32, lora_alpha=64, lora_dropout=0.05`
-  - [ ] Head : `AutoModelForSequenceClassification` num_labels=2 (pas prompt + generation : latence / 5-10)
-  - [ ] `lr=1e-4`, scheduler `cosine`, `warmup_ratio=0.06`
-  - [ ] 3 epochs, early stopping sur val MCC (patience 1), `metric_for_best_model="eval_matthews_correlation"`
-  - [ ] `per_device_train_batch_size=2, gradient_accumulation_steps=16` (batch effectif 32)
-  - [ ] `max_length=512`, `bf16=True`
-  - [ ] **Piege critique** : appeler `model.enable_input_require_grads()` AVANT `get_peft_model()` (sinon gradient_checkpointing n'est pas propage aux adapters, issue HF #42947)
-  - [ ] `gradient_checkpointing=True, use_reentrant=False`
-  - [ ] Mode : forcer **non-thinking** (Qwen3 a un mode thinking par defaut, desactiver via template ou utiliser `Qwen3-4B-Base`)
-  - [ ] K-fold K=5 x 3 seeds stratifie `(langue x label)` + calibration T/threshold post-fold
-  - [ ] Run MLflow `qwen3-final-2026-04` (modele de production actuel)
-  - [ ] Sauvegarder dans `models/qwen3/folds/fold_X_seed_Y/` + fusion finale dans `models/qwen3/merged/` via `PeftModel.merge_and_unload()`
-- [ ] **Pour mDeBERTa-v3-base** (nouvelle classe `MDeBERTaClassifier` dans `training.py`) :
-  - [ ] Base : `microsoft/mdeberta-v3-base`, `AutoModelForSequenceClassification` num_labels=2
-  - [ ] **Precision** : `bf16=True` si `transformers >= 4.48` (bug #35332 DisentangledSelfAttention corrige en decembre 2024, PR #35336), sinon `fp32`. **fp16 strictement interdit** (NaN garanti sur DeBERTa, non lie a ROCm).
-  - [ ] `lr=2e-5`, scheduler `linear`, `warmup_ratio=0.06`
-  - [ ] `per_device_train_batch_size=16, gradient_accumulation_steps=2` (batch effectif 32)
-  - [ ] 5 epochs, early stopping sur val MCC (patience 2)
-  - [ ] `max_length=384` (couvre 98 % des resumes FR+titre, tokenizer SentencePiece FR genere ~1.6 tokens/mot, 200 mots FR ≈ 320 tokens + titre)
-  - [ ] `weight_decay=0.01`, dropout 0.1 (default)
-  - [ ] `attn_implementation="sdpa"` (Flash-Attention indisponible RDNA3, reference issue ROCm #4391)
-  - [ ] `gradient_checkpointing=True`
-  - [ ] K-fold K=5 x 3 seeds stratifie `(langue x label)` + calibration T/threshold post-fold
-  - [ ] Run MLflow `mdeberta-final-2026-04` (concurrent encoder vs Qwen3 decoder pour le benchmark)
-  - [ ] Sauvegarder dans `models/mdeberta/folds/fold_X_seed_Y/` + ensemble logit-average a l'inference (pas de fusion de poids possible car architectures full-fine-tune, pas LoRA)
+- [x] **Pour Qwen3-4B + LoRA** (`Qwen3Classifier` dans `src/greentech/ai/models/training.py`) — **execute en version reduite** pour tenir dans 8-12 h sur RX 7900 XTX (cf. `models/production/promotion_info.json`) :
+  - [x] `target_modules="all-linear"` (`q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj`)
+  - [x] `r=16, lora_alpha=32, lora_dropout=0.05, rslora=True` (**reduit** vs cible `r=32/alpha=64`)
+  - [x] Head : `AutoModelForSequenceClassification` num_labels=2 (pas prompt + generation : latence / 5-10)
+  - [x] `lr=1e-4`, scheduler `cosine`, `warmup_ratio=0.06`
+  - [x] **2 epochs** (reduit vs cible 3), early stopping sur val MCC, `metric_for_best_model="eval_matthews_correlation"`
+  - [x] `per_device_train_batch_size=2, gradient_accumulation_steps=16` (batch effectif 32)
+  - [x] `max_length=512`, `bf16=True`
+  - [x] **Piege critique** : appeler `model.enable_input_require_grads()` AVANT `get_peft_model()` (sinon gradient_checkpointing n'est pas propage aux adapters, issue HF #42947)
+  - [x] `gradient_checkpointing=True, use_reentrant=False`
+  - [x] Mode : forcer **non-thinking** (Qwen3 a un mode thinking par defaut, desactiver via template ou utiliser `Qwen3-4B-Base`)
+  - [x] K-fold **K=3 x 2 seeds (6 trainings)** stratifie `(langue x label)` + calibration T/threshold post-fold (reduit vs cible 5x3)
+  - [x] Run MLflow `qwen3-unified-k3-s2` (modele de production actuel)
+  - [x] Sauvegarde dans `models/qwen3/folds/fold_X_seed_Y/` + fusion **TIES** (top-1 seed/fold, Yadav et al. NeurIPS 2023) -> `models/production/`
+- [x] **Pour mDeBERTa-v3-base** (`MDeBERTaClassifier` dans `training.py`) — challenger, **K=5 x 3 complet (15 trainings)** :
+  - [x] Base : `microsoft/mdeberta-v3-base`, `AutoModelForSequenceClassification` num_labels=2
+  - [x] **Precision** : `bf16=True` si `transformers >= 4.48` (bug #35332 DisentangledSelfAttention corrige en decembre 2024, PR #35336), sinon `fp32`. **fp16 strictement interdit** (NaN garanti sur DeBERTa, non lie a ROCm).
+  - [x] `lr=2e-5`, scheduler `linear`, `warmup_ratio=0.06`
+  - [x] `per_device_train_batch_size=16, gradient_accumulation_steps=2` (batch effectif 32)
+  - [x] 5 epochs, early stopping sur val MCC (patience 2)
+  - [x] `max_length=384` (couvre 98 % des resumes FR+titre, tokenizer SentencePiece FR genere ~1.6 tokens/mot, 200 mots FR ≈ 320 tokens + titre)
+  - [x] `weight_decay=0.01`, dropout 0.1 (default)
+  - [x] `attn_implementation="sdpa"` (Flash-Attention indisponible RDNA3, reference issue ROCm #4391)
+  - [x] `gradient_checkpointing=True`
+  - [x] K-fold K=5 x 3 seeds stratifie `(langue x label)` + calibration T/threshold post-fold
+  - [x] Run MLflow `mdeberta-final-2026-04` (concurrent encoder vs Qwen3 decoder pour le benchmark)
+  - [x] Sauvegarde + ensemble logit-average a l'inference (challenger non retenu : modele non conserve apres benchmark, metriques dans `benchmark_final_metrics.json`)
 
 #### B4.4 Benchmark comparatif des modeles entraines
 
 - [x] Creer `scripts/benchmark_models.py` :
   - [x] Charger les 2 modeles entraines — MODEL_REGISTRY (lignes 73-82) mappe `qwen3` vers `Qwen3Classifier` et `mdeberta` vers `MDeBERTaClassifier`, chargement via `_load_classifier_for_model()` (ligne 119)
-  - [ ] Evaluer sur le meme test set (split fige, hold-out non vu pendant l'entrainement) — **RESTE A FAIRE** : execution en attente des modeles entraines (B4.3)
-  - [ ] Metriques completes : MCC, F1, Recall, Precision, balanced_accuracy, specificite, matrice de confusion, latence p50/p95, CO2eq — **RESTE A FAIRE** (execution)
-  - [ ] Generer un rapport markdown comparatif dans `docs/BENCHMARK_FINAL_2026-04.md` — **RESTE A FAIRE** (execution)
-- [ ] Run MLflow `model-selection-final-2026-04` — **RESTE A FAIRE**
+  - [x] Evaluer sur le dataset complet — **note** : metriques "with leakage" (chaque article vu en train par 2/3 folds) pour comparaison meme-distribution ; le MCC honnete sans fuite est mesure sur les folds de validation (Qwen3 0.6238 / mDeBERTa 0.5941)
+  - [x] Metriques completes : MCC, F1, Recall, Precision, balanced_accuracy, specificite, matrice de confusion, latence p50/p95/p99, VRAM, CO2eq — `models/benchmark_final_metrics.json`
+  - [x] Generer un rapport markdown comparatif dans `docs/BENCHMARK_FINAL_2026-04.md`
+- [x] Run MLflow `model-selection-final-2026-04`
 
 #### B4.5 Selection et promotion du modele
 
-- [ ] **Critere de selection** : MCC moyen K-fold le plus eleve, sous condition que la latence reste < 200ms et l'ecart-type MCC < 0.10
-- [ ] Documenter la decision dans `docs/SELECTION_CHAMPION_2026-04.md`
-- [ ] Promotion du modele vainqueur :
-  - [ ] Copier dans `models/production/`
-  - [ ] Tag DVC : `uv run dvc add models/production && uv run dvc push`
-  - [ ] Mettre a jour `models/production.dvc`
-- [ ] Mettre a jour la "Model Card" : `docs/MODEL_CARD.md`
+- [x] **Critere de selection** : MCC moyen K-fold le plus eleve, sous condition que la latence reste < 200ms et l'ecart-type MCC < 0.10
+- [x] Documenter la decision dans `docs/SELECTION_CHAMPION_2026-04.md`
+- [x] Promotion du modele vainqueur :
+  - [x] Copier dans `models/production/` (promu 2026-05-17, `promotion_info.json`)
+  - [x] Tag DVC : `uv run dvc add models/production && uv run dvc push`
+  - [x] Mettre a jour `models/production.dvc`
+- [x] Mettre a jour la "Model Card" : `docs/MODEL_CARD.md` (v2.0, 2026-05-17)
 
 #### B4.6 Validation end-to-end
 
@@ -889,10 +889,10 @@
 
 #### B4.7 Mise a jour documentation finale
 
-- [ ] Mettre a jour `docs/PLAN_ETAPES.md` section 3.3 avec les nouveaux entrainements
-- [ ] Mettre a jour la documentation interne (section "Classifieur fine-tune Qwen3-4B + LoRA") avec la nouvelle famille de modele de production
-- [ ] Mettre a jour la documentation Sphinx
-- [ ] Tag Git : `vX.Y.Z-prod-2026-04`
+- [ ] Mettre a jour `docs/PLAN_ETAPES.md` section 3.3 avec les nouveaux entrainements (RESTE A FAIRE : section 3.3 encore centree sur Llama 3.2)
+- [x] Mettre a jour la documentation interne (section "Classifieur fine-tune Qwen3-4B + LoRA") avec la nouvelle famille de modele de production
+- [x] Mettre a jour la documentation Sphinx (rebuild OK, 0 warning)
+- [x] Tag Git : `v2026.05.17-prod-qwen3-ties`
 
 ---
 
