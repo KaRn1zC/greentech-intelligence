@@ -40,12 +40,15 @@ WORKDIR /app
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
 
-# Copier le venv et le code depuis le builder
-COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app/src /app/src
+# Copier le venv et le code depuis le builder en fixant directement le
+# proprietaire via --chown. Cela evite un ``chown -R /app`` a posteriori qui
+# devrait reparcourir et reecrire les permissions de chaque fichier du venv
+# (plusieurs milliers d'entrees) — l'etape la plus couteuse du build.
+COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
+COPY --from=builder --chown=appuser:appuser /app/src /app/src
 
 # Copier les scripts SQL d'initialisation
-COPY scripts/ ./scripts/
+COPY --chown=appuser:appuser scripts/ ./scripts/
 
 # Le modele de production (models/production/, ~8 Go) n'est PAS copie dans
 # l'image : il est exclu du build context via .dockerignore (sinon le contexte
@@ -54,7 +57,10 @@ COPY scripts/ ./scripts/
 #   - ./models/production:/app/models/production:ro
 # On cree le dossier vide ici pour que ``mkdir -p`` reussisse et que la
 # vue de l'image soit propre meme sans volume monte (ex. tests legers).
-RUN mkdir -p /app/models/production && mkdir -p /app/logs && chown -R appuser:appuser /app
+# Le chown est cible uniquement sur ces deux dossiers (vides, donc instantane) :
+# le venv et les sources ont deja le bon proprietaire grace au --chown des COPY.
+RUN mkdir -p /app/models/production /app/logs && \
+    chown appuser:appuser /app/models/production /app/logs
 
 # Variables d'environnement
 ENV PATH="/app/.venv/bin:$PATH" \
