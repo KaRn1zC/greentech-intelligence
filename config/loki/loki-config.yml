@@ -45,3 +45,16 @@ limits_config:
   reject_old_samples_max_age: 168h
   ingestion_rate_mb: 16
   ingestion_burst_size_mb: 24
+  # Requetes longue fenetre (count_over_time[7-30j]) : limiter le decoupage
+  # en sous-requetes et relever parallelisme/file pour eviter le « too many
+  # outstanding requests » quand plusieurs panneaux Grafana interrogent Loki
+  # simultanement (dashboard Performance Systeme base sur les logs).
+  split_queries_by_interval: 24h
+  max_query_parallelism: 64
+  max_query_series: 5000
+
+query_scheduler:
+  max_outstanding_requests_per_tenant: 4096
+
+frontend:
+  max_outstanding_per_tenant: 4096
