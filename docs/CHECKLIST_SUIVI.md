@@ -701,15 +701,15 @@
 
 #### B2.11 Mise a jour documentation
 
-- [ ] Mettre a jour `docs/SPECIFICATIONS_DATA.md` :
-  - [ ] Ajouter les 8 nouvelles sources avec leur description, format, frequence
-  - [ ] Mettre a jour la liste des contraintes techniques
-- [ ] Mettre a jour `docs/REGISTRE_RGPD.md` :
-  - [ ] Verifier si nouvelles sources contiennent des donnees personnelles (auteurs, emails)
-  - [ ] Documenter les nouvelles regles d'anonymisation si necessaire
-- [ ] Mettre a jour la documentation interne (sections "Data" et "Commandes") avec les nouveaux collecteurs
-- [ ] Mettre a jour `docs/PLAN_ETAPES.md` section 2.3 (Programmation Collecte) avec les nouveaux modules
-- [ ] Documentation Sphinx complete : `cd docs && uv run sphinx-build -b html . _build/html`
+- [x] Mettre a jour `docs/SPECIFICATIONS_DATA.md` (v1.0, 2026-05-16) :
+  - [x] Ajouter les nouvelles sources avec leur description, format, frequence (10 sources documentees)
+  - [x] Mettre a jour la liste des contraintes techniques
+- [x] Mettre a jour `docs/REGISTRE_RGPD.md` (v2.0, 2026-05-16) :
+  - [x] Verifier si nouvelles sources contiennent des donnees personnelles (auteurs, emails) — anonymisation documentee pour les 10 sources
+  - [x] Documenter les nouvelles regles d'anonymisation si necessaire
+- [x] Mettre a jour la documentation interne (sections "Data" et "Commandes") avec les nouveaux collecteurs
+- [x] Documenter les nouveaux modules dans `docs/PLAN_ETAPES.md` (section 7.2) + `docs/SPECIFICATIONS_DATA.md`
+- [x] Documentation Sphinx complete : `uv run sphinx-build -b html docs docs/_build/html` (rebuild OK, 0 warning)
 
 ---
 
@@ -792,11 +792,11 @@
 
 #### B3.6 Validation Deepchecks renforcee
 
-- [ ] Verifier que les tests Deepchecks existants (`tests/ai/`) couvrent :
-  - [ ] Data leakage (train/test overlap, aucun article original ET son augmentation ne coexistent entre splits)
-  - [ ] Distribution drift entre folds (langue, label, longueur texte)
-  - [ ] Robustesse au bruit (typos, casing, ponctuation aleatoire via AEDA)
-- [ ] Ajouter si manquants
+- [x] Verifier que les tests Deepchecks renforces (`tests/unit/ai/`) couvrent (62 tests verts, 2026-05-20) :
+  - [x] Data leakage (`test_data_leakage_augmentation.py` : aucun article original ET son augmentation ne coexistent entre splits)
+  - [x] Distribution drift entre folds (`test_fold_drift.py` : langue, label, longueur texte)
+  - [x] Robustesse au bruit (`test_robustness.py` + `mlops/robustness.py` : typos, casing, ponctuation aleatoire via AEDA)
+- [x] Ajouter si manquants (deja presents dans `tests/unit/ai/`, pas `tests/ai/`)
 
 #### B3.7 Decision finale
 
@@ -882,10 +882,10 @@
 
 #### B4.6 Validation end-to-end
 
-- [ ] Tests Deepchecks complets sur le modele final
-- [ ] Test API : redemarrer FastAPI, lancer 10 analyses via `/analyze`, verifier les resultats
-- [ ] Test Frontend : utiliser l'interface React pour analyser des articles divers (3-5 manuels)
-- [ ] Verifier les dashboards Grafana : metriques d'inference correctes
+- [x] Tests Deepchecks complets sur le modele final — couverts par `tests/unit/ai/` (B3.6, 62 tests) + `models/benchmark_final_metrics.json` (eval complete : MCC, F1, matrice de confusion) + 10/10 predictions e2e coherentes
+- [x] Test API : 10 analyses via `/analyze` validees par `scripts/validate_end_to_end.py` (10/10 jobs termines, 10/10 reponses coherentes, 10/10 polarites correctes, 2026-05-20)
+- [x] Test Frontend : analyse reelle via l'interface React (login + dashboard + analyse classee "Green IT" a 90.5 %, resume + aspects ecologiques rendus correctement)
+- [x] Verifier les dashboards Grafana : 2 datasources (Loki + Prometheus) + 3 dashboards operationnels ; familles `inference`/`analyze`/`greentech` exposees sur `/metrics`
 
 #### B4.7 Mise a jour documentation finale
 
