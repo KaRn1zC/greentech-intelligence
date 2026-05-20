@@ -272,6 +272,11 @@ Environnement Node.js (via npm) :
   - [x] Detection automatique de la famille Qwen3-4B dans `inference.py` pour le chargement LoRA
   - [x] Ajout de `gradient_checkpointing=True` et `max_length=512` dans `LoRAClassifier.train()` pour tenir la VRAM sur RX 7900 XTX
   - [x] Abandon de `Qwen/Qwen3.5-4B` (VLM incompatible ROCm) apres deux freezes systeme au premier step d'entrainement — voir `docs/PROCEDURE_MAJ_MODELE.md` pour le post-mortem
+- [x] **Selection finale de production (mai 2026, protocole unifie B3/B4)** :
+  - [x] Re-entrainement des 2 finalistes sur le golden dataset enrichi (11 664 articles, 1 018 Green IT) via le protocole unifie B3 (stratification langue x label, class_weight, back-translation, calibration, ensemble) — cf. section 7.4
+  - [x] Benchmark equitable Qwen3-4B (decoder, K=3x2) vs mDeBERTa-v3-base (encoder, K=5x3)
+  - [x] **Champion retenu : Qwen3-4B + LoRA (fusion TIES)**, MCC K-fold honnete 0.6238 ± 0.0103 (vs mDeBERTa 0.5941 ± 0.0093), latence 58 ms
+  - [x] Promotion en production le 2026-05-17 (`models/production/`, tag Git `v2026.05.17-prod-qwen3-ties`) — cf. `docs/SELECTION_CHAMPION_2026-04.md` et `models/production/promotion_info.json`
 
 ### 3.4 Validation & Packaging (Qualite Modele)
 
@@ -279,7 +284,7 @@ Environnement Node.js (via npm) :
   - [x] Ecriture d'une suite de tests pour verifier l'integrite du modele (Data Leakage, Biais, Robustesse au bruit)
   - [x] Generation d'un rapport de validation automatique
 - [x] **Packaging pour Inference** :
-  - [x] Sauvegarde du modele gagnant en safetensors (adapter_model.safetensors, 18 Mo) dans models/production/
+  - [x] Sauvegarde du modele de production en safetensors dans `models/production/` (initialement adapter LoRA 18 Mo ; depuis le 2026-05-17 : Qwen3-4B fusionne TIES, `model.safetensors` ~8 Go)
   - [x] Push du modele valide via DVC vers le stockage partage (MinIO s3://models/dvc)
   - [x] Redaction de la "Model Card" (Documentation du modele : donnees utilisees, limites, metriques)
 
@@ -567,11 +572,11 @@ Environnement Node.js (via npm) :
   - [x] Outil CLI : `scripts/manual_annotation_helper.py`
   - [x] Procedure documentee : `docs/ANNOTATION_MANUELLE.md`
   - [x] Re-export et versioning DVC (`golden_dataset_augmented.csv.dvc`)
-- [ ] **Mise a jour documentation** (partielle) :
-  - [ ] `docs/SPECIFICATIONS_DATA.md` : nouvelles sources (RESTE A FAIRE : non actualise depuis l'enrichissement B2)
-  - [ ] `docs/REGISTRE_RGPD.md` : verifier nouvelles donnees personnelles (RESTE A FAIRE)
+- [x] **Mise a jour documentation** :
+  - [x] `docs/SPECIFICATIONS_DATA.md` : 10 sources documentees (v1.0, 2026-05-16)
+  - [x] `docs/REGISTRE_RGPD.md` : 6 nouvelles sources + anonymisation (v2.0, 2026-05-16)
   - [x] Documentation interne : sections Data et Commandes (collecteurs arXiv/Crossref + 4 spiders documentes)
-  - [ ] Documentation Sphinx complete (RESTE A FAIRE : narratif des sources a actualiser)
+  - [x] Documentation Sphinx complete (rebuild OK, 0 warning)
 
 ### 7.3 Optimisation Pipeline d'Entrainement (correspond a B3)
 
@@ -598,7 +603,7 @@ Environnement Node.js (via npm) :
   - [x] Qwen3-4B : fusionner les adapters LoRA (1 par fold, meilleure seed) via fusion **TIES** -> 1 seul modele prod (cout inference 1x)
   - [x] mDeBERTa : moyenner les logits a l'inference (cout ~5x, ~5.5 Go VRAM sur RX 7900 XTX, OK)
 - [x] **Seeds par fold** : Qwen3 en 2 seeds x 3 folds (6 trainings), mDeBERTa en 3 seeds x 5 folds (15 trainings). Moyenner sur plusieurs seeds stabilise sigma < 0.10 (Qwen3 atteint sigma=0.0103).
-- [ ] **Validation Deepchecks renforcee** : verification data leakage, distribution drift entre folds, robustesse au bruit. (RESTE A FAIRE : `tests/ai/` dedie a recreer.)
+- [x] **Validation Deepchecks renforcee** : data leakage, distribution drift entre folds, robustesse au bruit — `tests/unit/ai/` (test_data_leakage_augmentation + test_fold_drift + test_robustness, 62 tests verts).
 - [x] **Decision finale** : conserver le modele avec MCC moyen K-fold le plus eleve ET ecart-type < 0.10. **Retenu : Qwen3-4B + LoRA (TIES)**, MCC 0.6238 ± 0.0103 (vs mDeBERTa 0.5941 ± 0.0093 en K-fold honnete), latence 58 ms.
 
 ### 7.4 Benchmark Final & Selection du modele (correspond a B4)
@@ -630,7 +635,7 @@ Environnement Node.js (via npm) :
 - [x] **Benchmark comparatif des modeles entraines** : `scripts/benchmark_models.py`, evaluation sur test set, metriques completes. Produit `docs/BENCHMARK_FINAL_2026-04.md` + `models/benchmark_final_metrics.json` (Qwen3 MCC 0.7565 / mDeBERTa 0.6066 sur la distribution comparee).
 - [x] **Selection du modele retenu** : Qwen3-4B + LoRA (TIES), MCC K-fold honnete 0.6238 ± 0.0103, latence 58 ms < 200 ms. Voir `docs/SELECTION_CHAMPION_2026-04.md`.
 - [x] **Promotion du modele retenu** : `models/production/` (promu 2026-05-17) + tag DVC `golden_dataset_augmented.csv.dvc` + `temperature.json` et `optimal_threshold.json` associes
-- [ ] **Validation end-to-end** : tests Deepchecks + API + Frontend + dashboards Grafana (RESTE A FAIRE : campagne de validation formelle non tracee)
+- [x] **Validation end-to-end** (2026-05-20) : `scripts/validate_end_to_end.py` (10/10 analyses API, polarite 10/10) + analyse reelle via l'UI React (Green IT 90.5 %) + dashboards Grafana (2 datasources, 3 dashboards). Tests modele : `tests/unit/ai/` (B3.6) + `benchmark_final_metrics.json`.
 - [ ] **Mise a jour documentation finale** : Model Card (`docs/MODEL_CARD.md`) faite + tag Git `v2026.05.17-prod-qwen3-ties` cree ; RESTE A FAIRE : actualiser la section 3.3 de ce plan (encore centree sur Llama 3.2)
 
 ### 7.5 (BONUS) Refonte Agentic avec LangGraph (correspond a B5)
