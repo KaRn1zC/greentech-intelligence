@@ -326,4 +326,4 @@ Stack déployée sur **Render free tier** via [`render.yaml`](render.yaml) (Blue
 
 ## 👤 Auteur
 
-**Arnaud "KaRn1zC" BOY** · Projet de mémoire — Titre Professionnel de niveau 6 RNCP 37827, Développeur en Intelligence Artificielle et Data Analyst (2025-2026).
+**Arnaud "KaRn1zC" BOY** · Projet de mémoire — Titre Professionnel de niveau 6 RNCP 37827, Développeur en Intelligence Artificielle et Data Analyst (2024-2026).
