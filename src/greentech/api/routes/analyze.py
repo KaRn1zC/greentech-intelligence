@@ -30,8 +30,10 @@ from __future__ import annotations
 
 import io
 import re
+import socket
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 from celery.result import AsyncResult
@@ -54,6 +56,7 @@ from greentech.api.schemas.analysis import (
     AnalysisStatus,
 )
 from greentech.api.tasks import classify_article as classify_article_task
+from greentech.config import get_settings
 from greentech.data.storage.models import User
 
 router = APIRouter(prefix="/analyze", tags=["Analyse IA"])
@@ -66,6 +69,42 @@ MAX_UPLOAD_SIZE_BYTES = 10 * 1024 * 1024
 # Extensions acceptees avec leur extracteur dedie. On se limite aux formats qui
 # contiennent majoritairement du texte exploitable pour une analyse d'article.
 ALLOWED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx", ".html", ".htm"}
+
+# Message renvoye quand le worker d'inference (Celery + Redis) n'est pas
+# joignable : typiquement l'environnement de demonstration Render free, qui
+# n'embarque ni Redis ni worker GPU.
+_WORKER_UNAVAILABLE_DETAIL = (
+    "Analyse IA indisponible sur cet environnement de démonstration : le worker "
+    "d'inférence (file Celery + Redis + modèle Qwen3-4B) n'y est pas déployé. "
+    "Cette fonctionnalité s'exécute sur la stack complète en local."
+)
+
+
+def _inference_worker_reachable(timeout: float = 1.5) -> bool:
+    """Teste rapidement la joignabilite du broker Celery (Redis).
+
+    L'analyse IA est deleguee a un worker Celery via un broker Redis. Sur un
+    environnement depourvu de cette infrastructure (deploiement de
+    demonstration Render free, sans Redis ni worker GPU), un appel direct a
+    ``.delay()`` partirait dans une serie de tentatives de connexion kombu qui
+    echouerait, apres plusieurs secondes, en « Failed to fetch » cote client.
+    On teste donc d'abord la joignabilite TCP du broker avec un court delai
+    pour pouvoir repondre un 503 explicite et immediat.
+
+    Args:
+        timeout: Delai maximum en secondes pour la connexion TCP au broker.
+
+    Returns:
+        ``True`` si le broker accepte une connexion TCP, ``False`` sinon.
+    """
+    broker = urlparse(get_settings().celery_broker_url)
+    host = broker.hostname or "localhost"
+    port = broker.port or 6379
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def _extract_article_from_html(html: str, *, url: str | None = None) -> tuple[str | None, str]:
@@ -405,6 +444,12 @@ async def create_analysis(
         Identifiant du job + statut initial (en_attente jusqu'a ce qu'un
         worker pick la tache, puis en_cours, puis termine ou erreur).
     """
+    if not _inference_worker_reachable():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_WORKER_UNAVAILABLE_DETAIL,
+        )
+
     async_result = classify_article_task.delay(
         url=data.url,
         texte=data.texte,
@@ -449,6 +494,12 @@ async def create_analysis_from_file(
         HTTPException: 413 si fichier trop gros, 415 si format non supporte,
             422 si le contenu extrait est insuffisant ou le fichier illisible.
     """
+    if not _inference_worker_reachable():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_WORKER_UNAVAILABLE_DETAIL,
+        )
+
     titre, contenu = await _extract_text_from_upload(fichier)
 
     async_result = classify_article_task.delay(
