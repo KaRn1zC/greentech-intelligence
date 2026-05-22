@@ -75,7 +75,7 @@ jobs:
         # On accorde 10 tentatives x 30s = 5 min de tolerance, plus un
         # premier delai de 60s pour laisser le rolling update se propager.
         env:
-          API_URL: ${{ vars.RENDER_API_URL || 'https://greentech-api.onrender.com' }}
+          API_URL: ${{ vars.RENDER_API_URL || 'https://greentech-api-mln0.onrender.com' }}
         run: |
           echo "Attente du redeploiement Render (60s)..."
           sleep 60
@@ -96,7 +96,7 @@ jobs:
         # Static site : reponse quasi-instantanee, mais on autorise quand
         # meme 3 tentatives au cas ou la propagation CDN serait lente.
         env:
-          FRONTEND_URL: ${{ vars.RENDER_FRONTEND_URL || 'https://greentech-frontend.onrender.com' }}
+          FRONTEND_URL: ${{ vars.RENDER_FRONTEND_URL || 'https://greentech-frontend-tcsf.onrender.com' }}
         run: |
           for attempt in 1 2 3 4 5; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
