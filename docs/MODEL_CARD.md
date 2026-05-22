@@ -21,6 +21,7 @@
 | **Type de tâche PEFT** | `SEQ_CLS` (classification de séquence à 2 classes) |
 | **Version promue** | `v20260517_180500` (promotion le 17 mai 2026) |
 | **Emplacement** | `models/production/` (versionné DVC vers MinIO `s3://models/dvc`) |
+| **Publication** | [`KaRn1zC/greentech-greenit-classifier`](https://huggingface.co/KaRn1zC/greentech-greenit-classifier) (Hugging Face Hub, public, Apache-2.0) |
 | **Taille des poids** | **8.04 GB** (modèle merged base + LoRA fusionnés, format full `model.safetensors`) |
 | **Référence sélection** | `docs/SELECTION_CHAMPION_2026-04.md` |
 
