@@ -1,0 +1,45 @@
+# =============================================================================
+# GreenTech Intelligence - Configuration Read the Docs
+# =============================================================================
+# Ce fichier DOIT se trouver a la racine du depot. Read the Docs le lit a
+# chaque build pour generer la documentation Sphinx et la publier sur
+# https://greentech-intelligence.readthedocs.io/.
+#
+# Sans ce fichier, Read the Docs ne sait pas comment builder le projet : c'est
+# la cause du 404 (aucun build reussi n'a jamais produit de version par defaut).
+#
+# Dependances : sphinx-autoapi parse le code source via AST (il N'IMPORTE PAS
+# le paquet greentech), donc le build n'a besoin QUE des outils de
+# documentation (sphinx + myst-parser + furo + sphinx-autoapi). On evite ainsi
+# d'installer les dependances lourdes du projet (torch / transformers / ROCm),
+# qui ne s'installeraient de toute facon pas sur l'image Linux de Read the Docs.
+#
+# Conformement a la stack du projet, l'installation se fait avec uv (Astral) :
+# uv n'etant pas preinstalle sur l'image Read the Docs, on le recupere via son
+# installeur officiel (pas de pip), puis on installe les outils de doc dans le
+# virtualenv fourni par Read the Docs. Le build Sphinx natif prend ensuite le
+# relais (cle « sphinx » ci-dessous).
+# Format : https://docs.readthedocs.com/platform/en/stable/config-file/v2.html
+# =============================================================================
+
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    python: "3.12"
+  jobs:
+    install:
+      - 'curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$HOME/.uvbin" sh && "$HOME/.uvbin/uv" pip install --python "$READTHEDOCS_VIRTUALENV_PATH/bin/python" sphinx myst-parser furo sphinx-autoapi'
+
+sphinx:
+  configuration: docs/conf.py
+
+# --- Repli (si le job uv ci-dessus echoue dans les logs Read the Docs) -------
+# Supprimer le bloc « build.jobs » ci-dessus, creer un fichier
+# docs/requirements.txt listant sphinx, myst-parser, furo et sphinx-autoapi,
+# puis ajouter a ce fichier :
+#   python:
+#     install:
+#       - requirements: docs/requirements.txt
+# =============================================================================

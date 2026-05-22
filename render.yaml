@@ -56,7 +56,7 @@ services:
       # CORS : autoriser uniquement le frontend Render (pas de wildcard
       # en production conformement au principe du moindre privilege OWASP).
       - key: CORS_ORIGINS
-        value: https://greentech-frontend.onrender.com
+        value: https://greentech-frontend-tcsf.onrender.com
       # Hugging Face : optionnel pour le MVP lecture seule (l'endpoint
       # /analyze qui necessite HF Serverless retournera 503 sur Render).
       # Permet d'ajouter une cle apres deploiement sans re-pousser le code.
@@ -90,7 +90,7 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        value: https://greentech-api.onrender.com
+        value: https://greentech-api-mln0.onrender.com
 
 # === Base de Donnees PostgreSQL ===
 databases:
@@ -99,3 +99,8 @@ databases:
     region: frankfurt
     databaseName: greentech_db
     user: greentech
+    # Version explicite, alignee sur l'instance managee deja provisionnee
+    # (Render avait pris son defaut faute de pin). Le stack local et la CI
+    # utilisent postgres:15-alpine ; la base managee tourne en 18, qui execute
+    # le SQL cible 15 sans rupture (compatibilite ascendante).
+    postgresMajorVersion: "18"
