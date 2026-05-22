@@ -1,29 +1,37 @@
 # =============================================================================
 # GreenTech Intelligence - Regles d'Alertes Prometheus
 # =============================================================================
+#
+# Les metriques HTTP sont exposees par prometheus-fastapi-instrumentator sous
+# le prefixe standard ``http_*`` (http_requests_total, http_request_duration_
+# seconds_*). Les metriques metier sont exposees sous le prefixe ``greentech_*``
+# (cf. src/greentech/ai/mlops/monitoring.py). Chaque regle porte un
+# ``runbook_url`` renvoyant a la procedure de resolution du playbook.
 
 groups:
   - name: greentech-api-alerts
     rules:
       # Alerte si latence moyenne des requetes HTTP > 2 secondes
       - alert: HighRequestLatency
-        expr: rate(greentech_request_duration_seconds_sum[5m]) / rate(greentech_request_duration_seconds_count[5m]) > 2
+        expr: rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m]) > 2
         for: 2m
         labels:
           severity: warning
         annotations:
           summary: "Latence HTTP elevee"
           description: "La latence moyenne des requetes depasse 2 secondes depuis 2 minutes."
+          runbook_url: "https://github.com/KaRn1zC/greentech-intelligence/blob/main/docs/PLAYBOOK_MAINTENANCE.md#3-incidents-courants-et-resolution"
 
       # Alerte si taux d'erreurs 5xx > 5%
       - alert: HighErrorRate
-        expr: rate(greentech_http_responses_total{status=~"5.."}[5m]) / rate(greentech_http_responses_total[5m]) > 0.05
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
         for: 2m
         labels:
           severity: critical
         annotations:
           summary: "Taux d'erreurs 5xx eleve"
           description: "Plus de 5% des requetes retournent une erreur serveur."
+          runbook_url: "https://github.com/KaRn1zC/greentech-intelligence/blob/main/docs/PLAYBOOK_MAINTENANCE.md#3-incidents-courants-et-resolution"
 
       # Alerte si l'API ne repond plus (target down)
       - alert: ApiDown
@@ -34,16 +42,21 @@ groups:
         annotations:
           summary: "API GreenTech inaccessible"
           description: "L'API FastAPI ne repond pas depuis plus d'1 minute."
+          runbook_url: "https://github.com/KaRn1zC/greentech-intelligence/blob/main/docs/PLAYBOOK_MAINTENANCE.md#3-incidents-courants-et-resolution"
 
-      # Alerte si le temps d'inference IA > 10 secondes
+      # Alerte si le temps d'inference IA moyen > 10 secondes
+      # (greentech_inference_duration_seconds est un histogramme : on calcule la
+      # moyenne via _sum/_count plutot que de comparer le nom de base, qui
+      # n'expose aucune serie scalaire.)
       - alert: SlowInference
-        expr: greentech_inference_duration_seconds > 10
+        expr: greentech_inference_duration_seconds_sum / greentech_inference_duration_seconds_count > 10
         for: 1m
         labels:
           severity: warning
         annotations:
           summary: "Inference IA lente"
-          description: "Le temps d'inference du modele depasse 10 secondes."
+          description: "Le temps d'inference moyen du modele depasse 10 secondes."
+          runbook_url: "https://github.com/KaRn1zC/greentech-intelligence/blob/main/docs/PLAYBOOK_MAINTENANCE.md#3-incidents-courants-et-resolution"
 
   - name: greentech-infra-alerts
     rules:
@@ -56,6 +69,7 @@ groups:
         annotations:
           summary: "PostgreSQL inaccessible"
           description: "La base de donnees PostgreSQL ne repond plus."
+          runbook_url: "https://github.com/KaRn1zC/greentech-intelligence/blob/main/docs/PLAYBOOK_MAINTENANCE.md#3-incidents-courants-et-resolution"
 
       # Alerte si MinIO ne repond plus
       - alert: MinioDown
@@ -66,3 +80,4 @@ groups:
         annotations:
           summary: "MinIO inaccessible"
           description: "Le stockage objet MinIO ne repond plus."
+          runbook_url: "https://github.com/KaRn1zC/greentech-intelligence/blob/main/docs/PLAYBOOK_MAINTENANCE.md#3-incidents-courants-et-resolution"
