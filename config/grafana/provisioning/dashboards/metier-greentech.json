@@ -174,30 +174,103 @@
       }
     },
     {
-      "title": "Emissions Carbone (CO2eq cumulees)",
+      "title": "Empreinte carbone cumulee (CodeCarbon)",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
           "expr": "greentech_carbon_emissions_grams_total",
-          "legendFormat": "{{operation}} - CO2 (g)"
-        },
-        {
-          "expr": "greentech_energy_consumed_kwh_total",
-          "legendFormat": "{{operation}} - Energie (kWh)"
+          "legendFormat": "{{operation}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+          "unit": "massg",
+          "decimals": 4,
+          "custom": { "lineWidth": 2, "fillOpacity": 15, "drawStyle": "line" }
+        }
+      }
+    },
+    {
+      "title": "CO2eq total (analyses)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(last_over_time(greentech_carbon_emissions_grams_total[30d]))",
+          "legendFormat": "Total CO2",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "massg",
+          "decimals": 3,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "title": "Energie totale (analyses)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(last_over_time(greentech_energy_consumed_kwh_total[30d]))",
+          "legendFormat": "Energie cumulee",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "kwatth",
+          "decimals": 6,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Repartition CO2 par operation",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "greentech_carbon_emissions_grams_total",
+          "legendFormat": "{{operation}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value"] },
+        "pieType": "donut"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "massg",
+          "decimals": 4
         }
       }
     },
     {
       "title": "Temps moyen d'analyse IA",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 22 },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 30 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -221,7 +294,7 @@
     {
       "title": "Temps moyen resume IA",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 22 },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 30 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -245,7 +318,7 @@
     {
       "title": "Total Inferences",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 22 },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 30 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -273,5 +346,5 @@
   "timezone": "browser",
   "title": "GreenTech - Metier Green IT",
   "uid": "greentech-metier",
-  "version": 1
+  "version": 4
 }

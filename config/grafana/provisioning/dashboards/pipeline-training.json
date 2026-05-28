@@ -256,9 +256,133 @@
       }
     },
     {
+      "title": "CO2eq cumule (tous entrainements)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "last_over_time(greentech_training_emissions_grams_grand_total[30d])",
+          "legendFormat": "Total CO2eq",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "massg",
+          "decimals": 2,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 200 },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "title": "CO2eq par famille de modele",
+      "type": "bargauge",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "last_over_time(greentech_training_emissions_grams_total[30d])",
+          "legendFormat": "{{model_type}}",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "massg",
+          "decimals": 2,
+          "color": { "mode": "continuous-GrYlRd" }
+        }
+      },
+      "options": { "orientation": "horizontal", "displayMode": "gradient" }
+    },
+    {
+      "title": "Nombre de runs traces (CodeCarbon)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(last_over_time(greentech_training_emissions_runs_count[30d]))",
+          "legendFormat": "Runs traces",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Dernier rejeu MLflow -> Pushgateway",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "time() - max(last_over_time(greentech_training_emissions_last_export_timestamp_seconds[30d]))",
+          "legendFormat": "Age du snapshot",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 86400 },
+              { "color": "red", "value": 604800 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Empreinte carbone par run (CodeCarbon)",
+      "type": "bargauge",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "topk(15, last_over_time(greentech_training_emissions_grams[30d]))",
+          "legendFormat": "{{run_name}} - {{model_type}} ({{phase}})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "massg",
+          "decimals": 3,
+          "color": { "mode": "continuous-BlYlRd" }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "lcd",
+        "showUnfilled": true
+      }
+    },
+    {
       "title": "Logs pipeline et training (Loki)",
       "type": "logs",
-      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 24 },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 39 },
       "datasource": { "type": "loki", "uid": "loki" },
       "targets": [
         {
@@ -284,6 +408,6 @@
   "timezone": "browser",
   "title": "Pipeline & Training",
   "uid": "greentech-pipeline-training",
-  "version": 2,
+  "version": 6,
   "weekStart": ""
 }
