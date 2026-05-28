@@ -18,7 +18,7 @@ import {
   X,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Skeleton } from "@/components/ui/skeleton"
 import emptyStateIllustration from "@/assets/illustrations/empty-state-no-articles.png"
 import classificationLoadingIllustration from "@/assets/illustrations/classification-loading.png"
@@ -190,6 +190,18 @@ function AnalyzeSection({ onAnalysisComplete }: { onAnalysisComplete: () => void
   const [error, setError] = useState("")
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  // Auto-grow de la zone de texte : la hauteur suit le contenu sans depasser
+  // ~12 lignes (cap a 360 px), au-dela un scroll interne prend le relais.
+  // Indispensable pour rendre les copier-coller d'articles longs lisibles
+  // sans forcer un faux composant single-line.
+  useEffect(() => {
+    const node = textareaRef.current
+    if (!node) return
+    node.style.height = "auto"
+    node.style.height = `${Math.min(node.scrollHeight, 360)}px`
+  }, [input])
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -308,39 +320,68 @@ function AnalyzeSection({ onAnalysisComplete }: { onAnalysisComplete: () => void
         )}
       </header>
 
-      <div className="flex gap-2">
+      <div className="flex flex-col gap-2">
         <label htmlFor="analyze-input" className="sr-only">
           URL ou texte de l'article a analyser
         </label>
-        <Input
+        <Textarea
+          ref={textareaRef}
           id="analyze-input"
-          placeholder="https://... ou collez le texte de l'article"
+          placeholder="https://... ou collez ici le texte complet de l'article (50 car. min.)"
           value={input}
           onChange={(e) => {
             setInput(e.target.value)
             if (e.target.value && file) clearFile()
           }}
-          onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+          onKeyDown={(e) => {
+            // Cmd/Ctrl + Entree envoie le formulaire ; Entree seul laisse passer
+            // pour permettre les sauts de ligne dans un texte colle.
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault()
+              handleSubmit()
+            }
+          }}
           aria-describedby="analyze-help"
           disabled={!!file}
+          rows={3}
+          className="min-h-[88px] max-h-[360px] resize-none overflow-y-auto"
         />
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={loading}
-          aria-label="Choisir un fichier a analyser"
-        >
-          <FileUp className="h-4 w-4" />
-        </Button>
-        <Button
-          onClick={handleSubmit}
-          disabled={loading || !inputValid}
-          aria-label="Lancer l'analyse"
-          className="font-display font-medium"
-        >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
-        </Button>
+        <div className="flex items-center justify-between gap-2">
+          <span className="hidden text-xs text-muted-foreground sm:inline">
+            {input.length > 0 && (
+              <>
+                {input.length} caractere{input.length > 1 ? "s" : ""}
+                {!isUrl && input.length > 0 && input.length < 50 && (
+                  <span className="ml-2 text-amber-600">
+                    (minimum 50 pour un texte)
+                  </span>
+                )}
+                <span className="ml-2 hidden md:inline">
+                  &middot; Ctrl/Cmd + Entree pour analyser
+                </span>
+              </>
+            )}
+          </span>
+          <div className="ml-auto flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading}
+              aria-label="Choisir un fichier a analyser"
+            >
+              <FileUp className="h-4 w-4" />
+            </Button>
+            <Button
+              onClick={handleSubmit}
+              disabled={loading || !inputValid}
+              aria-label="Lancer l'analyse"
+              className="font-display font-medium"
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
+            </Button>
+          </div>
+        </div>
       </div>
 
       <input
