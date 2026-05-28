@@ -82,9 +82,7 @@ def _get_inference_tracker() -> object | None:
         )
         tracker.start()
         _INFERENCE_TRACKER = tracker
-        logger.info(
-            "CodeCarbon : tracker d'inference demarre (OfflineEmissionsTracker FR)"
-        )
+        logger.info("CodeCarbon : tracker d'inference demarre (OfflineEmissionsTracker FR)")
         return tracker
     except Exception as exc:
         logger.warning(f"CodeCarbon indisponible pour l'inference : {exc}")
