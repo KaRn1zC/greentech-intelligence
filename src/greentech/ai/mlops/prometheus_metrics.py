@@ -397,9 +397,9 @@ def record_training_emissions_snapshot(
         phase: Etape (``baseline``, ``cv``, ``final``, ``benchmark``...).
         emissions_g: Emissions CO2eq mesurees pour ce run, en grammes.
     """
-    training_emissions_grams.labels(
-        model_type=model_type, run_name=run_name, phase=phase
-    ).set(float(emissions_g))
+    training_emissions_grams.labels(model_type=model_type, run_name=run_name, phase=phase).set(
+        float(emissions_g)
+    )
 
 
 def update_training_emissions_aggregates(
