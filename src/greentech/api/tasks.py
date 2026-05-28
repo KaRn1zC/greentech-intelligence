@@ -32,12 +32,140 @@ from sqlalchemy import select
 
 from greentech.ai.mlops.monitoring import (
     push_worker_metrics,
+    record_carbon,
     record_inference,
     record_summary,
 )
 from greentech.api.celery_app import celery_app
+from greentech.config import BASE_DIR
 from greentech.data.storage.database import async_session_factory
 from greentech.data.storage.models import AnalysisLog, Article
+
+# Etat singleton du tracker CodeCarbon partage par toutes les analyses d'un
+# meme process worker. ``None`` quand CodeCarbon est indisponible (mode
+# degrade silencieux) ; ``False`` quand l'initialisation a deja echoue et
+# qu'on ne retentera pas a chaque tache. Le worker tournant en pool ``solo``
+# (une seule tache GPU concurrente), un unique tracker suffit a serialiser
+# proprement les mesures ``start_task`` / ``stop_task``.
+_INFERENCE_TRACKER: object | None = None
+_INFERENCE_TRACKER_DISABLED = False
+
+
+def _get_inference_tracker() -> object | None:
+    """Retourne le tracker CodeCarbon singleton, le cree au premier appel.
+
+    On utilise ``OfflineEmissionsTracker`` avec le code pays FR : pas de
+    dependance reseau, et le facteur d'intensite carbone du reseau francais
+    (~58 g CO2eq/kWh) reste representatif aussi bien pour le worker local
+    que pour Render.
+
+    L'echec d'init est definitif pour la duree de vie du process : si la
+    librairie ne peut pas instrumenter cet environnement, on n'insiste pas
+    pour ne pas saturer les logs a chaque inference.
+    """
+    global _INFERENCE_TRACKER, _INFERENCE_TRACKER_DISABLED  # noqa: PLW0603
+    if _INFERENCE_TRACKER is not None or _INFERENCE_TRACKER_DISABLED:
+        return _INFERENCE_TRACKER
+    try:
+        from codecarbon import OfflineEmissionsTracker
+
+        logs_dir = BASE_DIR / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        tracker = OfflineEmissionsTracker(
+            project_name="greentech-inference",
+            country_iso_code="FRA",
+            log_level="warning",
+            save_to_file=True,
+            output_dir=str(logs_dir),
+            output_file="emissions_inference.csv",
+            measure_power_secs=15,
+        )
+        tracker.start()
+        _INFERENCE_TRACKER = tracker
+        logger.info(
+            "CodeCarbon : tracker d'inference demarre (OfflineEmissionsTracker FR)"
+        )
+        return tracker
+    except Exception as exc:
+        logger.warning(f"CodeCarbon indisponible pour l'inference : {exc}")
+        _INFERENCE_TRACKER_DISABLED = True
+        return None
+
+
+def _start_carbon_task(task_name: str) -> object | None:
+    """Demarre une mesure delta CodeCarbon nommee et renvoie le tracker actif.
+
+    Les exceptions sont silencieuses : une defaillance de la mesure carbone
+    ne doit jamais empecher l'analyse de tourner.
+    """
+    tracker = _get_inference_tracker()
+    if tracker is None:
+        return None
+    try:
+        tracker.start_task(task_name)
+        return tracker
+    except Exception as exc:
+        logger.warning(f"CodeCarbon.start_task({task_name}) echoue : {exc}")
+        return None
+
+
+def _stop_carbon_task(
+    tracker: object | None,
+    task_name: str,
+    operation: str,
+) -> None:
+    """Cloture la mesure et alimente les compteurs Prometheus (CO2 et kWh).
+
+    Args:
+        tracker: Tracker renvoye par ``_start_carbon_task``. ``None`` =
+            mesure non demarree, on ignore silencieusement.
+        task_name: Nom de la sous-tache CodeCarbon (doit matcher start_task).
+        operation: Label Prometheus pour la metrique
+            ``greentech_carbon_emissions_grams_total{operation=...}``.
+    """
+    if tracker is None:
+        return
+    try:
+        data = tracker.stop_task(task_name)
+    except Exception as exc:
+        logger.warning(f"CodeCarbon.stop_task({task_name}) echoue : {exc}")
+        return
+    if data is None:
+        return
+    emissions_kg = float(getattr(data, "emissions", 0.0) or 0.0)
+    energy_kwh = float(getattr(data, "energy_consumed", 0.0) or 0.0)
+    record_carbon(
+        operation=operation,
+        emissions_g=emissions_kg * 1000.0,
+        energie_kwh=energy_kwh,
+    )
+
+
+def _shutdown_inference_tracker(**_kwargs: Any) -> None:
+    """Arrete proprement le tracker CodeCarbon quand le worker s'eteint.
+
+    Connecte au signal ``worker_shutdown`` de Celery : sans cet appel, le
+    tracker conservait son scheduler interne actif jusqu'au SIGKILL et le
+    fichier CSV n'etait pas correctement clos en cas de redemarrage gere.
+    """
+    global _INFERENCE_TRACKER  # noqa: PLW0603
+    tracker = _INFERENCE_TRACKER
+    if tracker is None:
+        return
+    try:
+        tracker.stop()
+    except Exception as exc:
+        logger.warning(f"Arret du tracker CodeCarbon echoue : {exc}")
+    _INFERENCE_TRACKER = None
+
+
+try:
+    from celery.signals import worker_shutdown
+
+    worker_shutdown.connect(_shutdown_inference_tracker)
+except ImportError:
+    # Tests unitaires importent ``tasks.py`` sans installer Celery.
+    pass
 
 
 class _WorkerLoop:
@@ -147,6 +275,8 @@ async def _run_analysis_pipeline(
     resume_ecologique: str | None = None
 
     resume_start = time.perf_counter()
+    summary_task = f"summarization-{job_id}"
+    summary_tracker = _start_carbon_task(summary_task)
     try:
         resume_result = await summarize_article(id_article)
         if resume_result.succes:
@@ -158,6 +288,7 @@ async def _run_analysis_pipeline(
             )
     except Exception as exc:
         logger.error(f"Erreur resume de classification : {exc}")
+    _stop_carbon_task(summary_tracker, summary_task, operation="summarization")
     record_summary(succes=resume is not None, duree_secondes=time.perf_counter() - resume_start)
 
     # 4. Classification IA sur le resume (lecture de articles.resume)
@@ -171,6 +302,8 @@ async def _run_analysis_pipeline(
             f"Classification sautee pour article {id_article} : pas de resume disponible"
         )
     else:
+        inference_task = f"inference-{job_id}"
+        inference_tracker = _start_carbon_task(inference_task)
         try:
             from greentech.ai.models.inference import classify_article
 
@@ -190,10 +323,13 @@ async def _run_analysis_pipeline(
             logger.warning("Modele de production non disponible, classification ignoree")
         except Exception as e:
             logger.error(f"Erreur classification : {e}")
+        _stop_carbon_task(inference_tracker, inference_task, operation="inference")
 
     # 5. Resume ecologique (uniquement si Green IT confirme)
     if est_green_it is True:
         green_start = time.perf_counter()
+        green_task = f"green-summarization-{job_id}"
+        green_tracker = _start_carbon_task(green_task)
         try:
             green_result = await summarize_green_for_article(id_article)
             if green_result.succes:
@@ -204,6 +340,7 @@ async def _run_analysis_pipeline(
                 )
         except Exception as exc:
             logger.error(f"Erreur resume ecologique : {exc}")
+        _stop_carbon_task(green_tracker, green_task, operation="green_summarization")
         record_summary(
             succes=resume_ecologique is not None,
             duree_secondes=time.perf_counter() - green_start,

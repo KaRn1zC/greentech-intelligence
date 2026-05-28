@@ -130,6 +130,19 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as exc:
             logger.warning(f"Seed des metriques metier au demarrage echoue : {exc}")
 
+    # Rejouer l'empreinte carbone des runs d'entrainement deja loguee dans
+    # MLflow. Sans ce rejeu, les panneaux CO2 du dashboard pipeline-training
+    # resteraient vides tant qu'aucun nouveau training n'a tourne, alors que
+    # CodeCarbon mesure deja chaque run depuis le debut du projet.
+    try:
+        from greentech.ai.mlops.training_emissions_exporter import (
+            export_training_emissions,
+        )
+
+        export_training_emissions()
+    except Exception as exc:
+        logger.warning(f"Rejeu MLflow des emissions training echoue : {exc}")
+
     logger.info("API prete a recevoir des requetes")
 
     yield

@@ -179,6 +179,48 @@ baseline_last_push_timestamp = Gauge(
     registry=_REGISTRY,
 )
 
+# === Empreinte carbone des runs d'entrainement (rejouee depuis MLflow) ===
+#
+# Ces jauges materialisent les emissions CO2eq deja loguees dans MLflow par
+# ``tracked_experiment()`` pendant les entrainements. Un exporter scanne
+# l'experience ``greentech-classification`` au demarrage de l'API (et a la
+# demande via un script CLI) et publie ces jauges vers le Pushgateway, afin
+# que le dashboard ``pipeline-training`` puisse afficher l'empreinte carbone
+# cumulee des entrainements sans avoir a re-lancer un seul run.
+
+training_emissions_grams = Gauge(
+    "greentech_training_emissions_grams",
+    "Emissions CO2eq d'un run d'entrainement (en grammes), rejouees depuis MLflow",
+    ["model_type", "run_name", "phase"],
+    registry=_REGISTRY,
+)
+
+training_emissions_grams_total = Gauge(
+    "greentech_training_emissions_grams_total",
+    "Somme des emissions CO2eq par type de modele (grammes)",
+    ["model_type"],
+    registry=_REGISTRY,
+)
+
+training_emissions_grams_grand_total = Gauge(
+    "greentech_training_emissions_grams_grand_total",
+    "Somme totale des emissions CO2eq de tous les entrainements (grammes)",
+    registry=_REGISTRY,
+)
+
+training_emissions_runs_count = Gauge(
+    "greentech_training_emissions_runs_count",
+    "Nombre de runs d'entrainement ayant une mesure carbone exploitable",
+    ["model_type"],
+    registry=_REGISTRY,
+)
+
+training_emissions_last_export_timestamp = Gauge(
+    "greentech_training_emissions_last_export_timestamp_seconds",
+    "Horodatage Unix du dernier rejeu MLflow vers le Pushgateway",
+    registry=_REGISTRY,
+)
+
 
 def push_metrics(job_name: str = "greentech-training") -> None:
     """Pousse le snapshot courant du registre vers le Pushgateway.
@@ -318,3 +360,74 @@ def record_baseline_metrics(
     baseline_last_push_timestamp.labels(**labels).set(time.time())
 
     push_metrics(job_name="greentech-baseline")
+
+
+def reset_training_emissions_gauges() -> None:
+    """Vide les jauges d'emissions training avant un re-export complet.
+
+    Un rejeu MLflow recalcule tous les snapshots ; on remet a zero pour
+    eviter qu'un run supprime cote MLflow continue d'apparaitre dans
+    Grafana avec sa derniere valeur publiee.
+    """
+    for gauge in (
+        training_emissions_grams,
+        training_emissions_grams_total,
+        training_emissions_runs_count,
+    ):
+        gauge.clear()
+    training_emissions_grams_grand_total.set(0.0)
+
+
+def record_training_emissions_snapshot(
+    *,
+    model_type: str,
+    run_name: str,
+    phase: str,
+    emissions_g: float,
+) -> None:
+    """Enregistre l'empreinte carbone d'un run d'entrainement sans pousser.
+
+    Les push successifs avec le meme job_name remplaceraient la totalite des
+    series. On accumule donc d'abord les jauges en memoire et on appelle
+    ``push_training_emissions()`` une fois apres tous les snapshots.
+
+    Args:
+        model_type: Famille du modele (``qwen3``, ``mdeberta``, ``llama3.2``...).
+        run_name: Nom MLflow du run, conserve tel quel comme label.
+        phase: Etape (``baseline``, ``cv``, ``final``, ``benchmark``...).
+        emissions_g: Emissions CO2eq mesurees pour ce run, en grammes.
+    """
+    training_emissions_grams.labels(
+        model_type=model_type, run_name=run_name, phase=phase
+    ).set(float(emissions_g))
+
+
+def update_training_emissions_aggregates(
+    *,
+    per_model_total_g: dict[str, float],
+    per_model_count: dict[str, int],
+) -> None:
+    """Met a jour les agregats par modele et le total general.
+
+    Args:
+        per_model_total_g: Somme des emissions par ``model_type`` (grammes).
+        per_model_count: Nombre de runs avec mesure exploitable par modele.
+    """
+    grand_total = 0.0
+    for model_type, total in per_model_total_g.items():
+        training_emissions_grams_total.labels(model_type=model_type).set(float(total))
+        grand_total += float(total)
+    for model_type, count in per_model_count.items():
+        training_emissions_runs_count.labels(model_type=model_type).set(int(count))
+    training_emissions_grams_grand_total.set(grand_total)
+    training_emissions_last_export_timestamp.set(time.time())
+
+
+def push_training_emissions() -> None:
+    """Pousse les jauges d'emissions training vers le Pushgateway.
+
+    Job Pushgateway dedie (``greentech-training-emissions``) pour que ces
+    jauges survivent meme si un job d'entrainement actif ecrase d'autres
+    labels du job ``greentech-training``.
+    """
+    push_metrics(job_name="greentech-training-emissions")
