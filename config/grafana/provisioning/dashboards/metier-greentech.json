@@ -11,7 +11,7 @@
     {
       "title": "Ratio Green IT",
       "type": "gauge",
-      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -38,7 +38,7 @@
     {
       "title": "Articles classifies",
       "type": "piechart",
-      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -66,7 +66,7 @@
     {
       "title": "Modele en production",
       "type": "stat",
-      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -86,9 +86,68 @@
       }
     },
     {
-      "title": "Articles classifies dans le temps",
+      "title": "Total articles classifies",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(greentech_prediction_distribution)",
+          "legendFormat": "Articles analyses"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Articles classifies dans le temps (historique complet)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 4 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "description": "Historique complet des classifications, lu directement depuis PostgreSQL (source de verite persistante) : toujours rempli avec tout le passe et s'incremente a chaque nouvelle classification, quel que soit le range du dashboard.",
+      "timeFrom": "1y",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "postgres" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroup(date_creation, '1d') AS \"time\", count(*) FILTER (WHERE est_green_it IS TRUE) AS \"Green IT\", count(*) FILTER (WHERE est_green_it IS FALSE) AS \"Non Green IT\" FROM articles WHERE $__timeFilter(date_creation) GROUP BY 1 ORDER BY 1"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 70,
+            "stacking": { "mode": "normal" }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Green IT" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Non Green IT" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }]
+          }
+        ]
+      }
+    },
+    {
+      "title": "Articles classifies dans le temps (live)",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 10 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -124,7 +183,7 @@
     {
       "title": "Score de confiance moyen par modele",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 10 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -146,9 +205,28 @@
       }
     },
     {
+      "title": "Empreinte carbone cumulee (CodeCarbon)",
+      "type": "timeseries",
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "greentech_carbon_emissions_grams_total",
+          "legendFormat": "{{operation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "massg",
+          "decimals": 4,
+          "custom": { "lineWidth": 2, "fillOpacity": 15, "drawStyle": "line" }
+        }
+      }
+    },
+    {
       "title": "Data Drift Score",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 14 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -174,103 +252,9 @@
       }
     },
     {
-      "title": "Empreinte carbone cumulee (CodeCarbon)",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "greentech_carbon_emissions_grams_total",
-          "legendFormat": "{{operation}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "massg",
-          "decimals": 4,
-          "custom": { "lineWidth": 2, "fillOpacity": 15, "drawStyle": "line" }
-        }
-      }
-    },
-    {
-      "title": "CO2eq total (analyses)",
-      "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 22 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "sum(last_over_time(greentech_carbon_emissions_grams_total[30d]))",
-          "legendFormat": "Total CO2",
-          "instant": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "massg",
-          "decimals": 3,
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 5 },
-              { "color": "red", "value": 50 }
-            ]
-          }
-        }
-      },
-      "options": { "colorMode": "value", "graphMode": "area" }
-    },
-    {
-      "title": "Energie totale (analyses)",
-      "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 22 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "sum(last_over_time(greentech_energy_consumed_kwh_total[30d]))",
-          "legendFormat": "Energie cumulee",
-          "instant": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "kwatth",
-          "decimals": 6,
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "steps": [
-              { "color": "blue", "value": null }
-            ]
-          }
-        }
-      }
-    },
-    {
-      "title": "Repartition CO2 par operation",
-      "type": "piechart",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "targets": [
-        {
-          "expr": "greentech_carbon_emissions_grams_total",
-          "legendFormat": "{{operation}}"
-        }
-      ],
-      "options": {
-        "legend": { "displayMode": "table", "placement": "right", "values": ["value"] },
-        "pieType": "donut"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "massg",
-          "decimals": 4
-        }
-      }
-    },
-    {
       "title": "Temps moyen d'analyse IA",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 30 },
+      "gridPos": { "h": 4, "w": 5, "x": 0, "y": 18 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -294,7 +278,7 @@
     {
       "title": "Temps moyen resume IA",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 30 },
+      "gridPos": { "h": 4, "w": 5, "x": 5, "y": 18 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -316,18 +300,49 @@
       }
     },
     {
-      "title": "Total Inferences",
+      "title": "CO2eq total (analyses)",
       "type": "stat",
-      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 30 },
+      "gridPos": { "h": 4, "w": 5, "x": 10, "y": 18 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(greentech_articles_classified_total)",
-          "legendFormat": "Articles analyses"
+          "expr": "sum(greentech_carbon_emissions_grams_total)",
+          "legendFormat": "Total CO2",
+          "instant": true
         }
       ],
       "fieldConfig": {
         "defaults": {
+          "unit": "massg",
+          "decimals": 3,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      },
+      "options": { "colorMode": "value", "graphMode": "area" }
+    },
+    {
+      "title": "Energie totale (analyses)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 5, "x": 15, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(greentech_energy_consumed_kwh_total)",
+          "legendFormat": "Energie cumulee",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "kwatth",
+          "decimals": 6,
           "color": { "mode": "thresholds" },
           "thresholds": {
             "steps": [
@@ -336,15 +351,38 @@
           }
         }
       }
+    },
+    {
+      "title": "Repartition CO2 par operation",
+      "type": "piechart",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "greentech_carbon_emissions_grams_total",
+          "legendFormat": "{{operation}}"
+        }
+      ],
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "pieType": "donut"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "massg",
+          "decimals": 4
+        }
+      }
     }
   ],
+  "refresh": "5s",
   "schemaVersion": 39,
   "tags": ["greentech", "metier", "green-it"],
   "templating": { "list": [] },
-  "time": { "from": "now-6h", "to": "now" },
+  "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
   "title": "GreenTech - Metier Green IT",
   "uid": "greentech-metier",
-  "version": 4
+  "version": 5
 }

@@ -81,6 +81,13 @@ def _setup_logging() -> None:
         logging.getLogger(name).handlers = [InterceptHandler()]
         logging.getLogger(name).propagate = False
 
+    # Sink Loki : centralise les logs de l'API vers Grafana (dashboard
+    # Performance Systeme). Sans lui, l'API ne loguait qu'en console + fichier
+    # et le dashboard restait vide. Best-effort : ne bloque pas si Loki indispo.
+    from greentech.utils.logger import add_loki_sink
+
+    add_loki_sink(level=_settings.log_level)
+
 
 # === Cycle de vie de l'application ===
 
@@ -138,10 +145,14 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         from greentech.ai.mlops.training_emissions_exporter import (
             export_training_emissions,
         )
+        from greentech.ai.mlops.training_metrics_exporter import (
+            export_training_metrics,
+        )
 
         export_training_emissions()
+        export_training_metrics()
     except Exception as exc:
-        logger.warning(f"Rejeu MLflow des emissions training echoue : {exc}")
+        logger.warning(f"Rejeu MLflow des metriques training echoue : {exc}")
 
     logger.info("API prete a recevoir des requetes")
 
