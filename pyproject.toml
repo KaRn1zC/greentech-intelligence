@@ -49,7 +49,12 @@ dependencies = [
     "deepchecks>=0.18.0",
     "codecarbon>=2.3.0",
     # === Backend API (Bloc E4) ===
-    "fastapi>=0.109.0",
+    # Borne haute < 0.137 : FastAPI 0.137 bascule sur Starlette 1.x et emballe
+    # les routers inclus dans un objet `_IncludedRouter` sans attribut `.path`,
+    # ce que prometheus-fastapi-instrumentator (7.x comme 8.0) ne sait pas lire
+    # -> 500 sur chaque requete. A relever quand l'instrumentator gere le nouveau
+    # routage de Starlette 1.x.
+    "fastapi>=0.109.0,<0.137",
     "uvicorn[standard]>=0.27.0",
     "fastapi-users[sqlalchemy]>=13.0.0",
     "python-multipart>=0.0.6",
@@ -75,7 +80,9 @@ dependencies = [
     "sacremoses>=0.1.1",
     "celery[redis]>=5.4",
     "redis>=5.0",
-    "prometheus-fastapi-instrumentator>=7.0",
+    # Borne haute < 8 : on reste sur la 7.x (combo valide avec FastAPI < 0.137 /
+    # Starlette 0.x). La 8.0 vise Starlette 1.x, hors de notre fenetre actuelle.
+    "prometheus-fastapi-instrumentator>=7.0,<8",
 ]
 
 # === Configuration UV pour PyTorch ROCm (AMD GPU RX 7900 XTX) ===

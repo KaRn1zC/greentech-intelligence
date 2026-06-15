@@ -144,6 +144,16 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.enable-lifecycle'
+      # Conserve tout l'historique des metriques (defaut Prometheus = 15 jours).
+      # Le plafond de taille est un simple garde-fou disque : la cardinalite du
+      # projet est faible, 10 ans tiennent largement sous 5 Go.
+      - '--storage.tsdb.retention.time=10y'
+      - '--storage.tsdb.retention.size=5GB'
+    extra_hosts:
+      # Permet a Prometheus (conteneur) de joindre l'API qui tourne EN LOCAL sur
+      # l'hote (mode hybride) via host.docker.internal. En full Docker, l'API
+      # publie 8000:8000, donc la meme adresse fonctionne aussi.
+      - "host.docker.internal:host-gateway"
     networks:
       - greentech-network
 
@@ -318,6 +328,10 @@ services:
       MINIO_SECRET_KEY: minioadmin123
       MLFLOW_TRACKING_URI: http://mlflow:5000
       LOKI_URL: http://loki:3100
+      # L'API rejoue au demarrage les metriques d'entrainement (emissions + MCC)
+      # depuis MLflow vers le Pushgateway. En conteneur, viser le service Docker
+      # (le defaut du code, localhost:9091, est pour l'API/worker LOCAL hybride).
+      PROMETHEUS_PUSHGATEWAY_URL: pushgateway:9091
       # Celery (broker + result backend) pour la queue /analyze
       REDIS_URL: redis://redis:6379
       CELERY_BROKER_URL: redis://redis:6379/0
@@ -423,6 +437,10 @@ services:
       HUGGINGFACE_MODEL_CLASSIFIER_LLM: ${HUGGINGFACE_MODEL_CLASSIFIER_LLM:-Qwen/Qwen3-4B-Instruct-2507}
       HUGGINGFACE_MODEL_LOCAL_FALLBACK: ${HUGGINGFACE_MODEL_LOCAL_FALLBACK:-Qwen/Qwen2.5-3B-Instruct}
       HUGGINGFACE_MODEL_LOCAL_FALLBACK_LIGHTWEIGHT: ${HUGGINGFACE_MODEL_LOCAL_FALLBACK_LIGHTWEIGHT:-Qwen/Qwen2.5-1.5B-Instruct}
+      # Worker conteneurise : pousse ses metriques d'inference vers le Pushgateway
+      # via le reseau Docker. (Le defaut du code vise localhost:9091, pour le
+      # worker LOCAL du mode hybride GPU.)
+      PROMETHEUS_PUSHGATEWAY_URL: pushgateway:9091
     command:
       - "celery"
       - "-A"

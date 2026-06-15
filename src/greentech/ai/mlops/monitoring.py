@@ -28,12 +28,17 @@ from prometheus_client import (
     push_to_gateway,
 )
 
-# URL du Pushgateway. Defaut adapte au conteneur (nom de service Docker),
-# override-able via env. Le worker Celery n'expose pas d'endpoint /metrics
+# URL du Pushgateway. Le worker Celery n'expose pas d'endpoint /metrics
 # scrutable ; il pousse donc ses metriques d'inference vers cette passerelle,
-# que Prometheus scrape (honor_labels=true), exactement comme les metriques
-# d'entrainement (cf. prometheus_metrics.py).
-_PUSHGATEWAY_URL = os.environ.get("PROMETHEUS_PUSHGATEWAY_URL", "pushgateway:9091")
+# que Prometheus scrape (honor_labels=true), comme les metriques d'entrainement
+# (cf. prometheus_metrics.py, meme defaut).
+#
+# Defaut ``localhost:9091`` : adapte au worker LOCAL du mode hybride (GPU AMD
+# ROCm), qui atteint le Pushgateway via son port hote publie. En full Docker, le
+# service ``celery-worker`` fixe ``PROMETHEUS_PUSHGATEWAY_URL=pushgateway:9091``
+# (nom de service Docker) pour pousser via le reseau interne. Les deux modes
+# fonctionnent ainsi sans configuration manuelle.
+_PUSHGATEWAY_URL = os.environ.get("PROMETHEUS_PUSHGATEWAY_URL", "localhost:9091")
 
 # Registre dedie aux metriques ENREGISTREES PAR LE WORKER Celery (process
 # distinct de l'API). Elles ne doivent PAS etre sur le registre global, sinon

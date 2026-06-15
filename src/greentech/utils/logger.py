@@ -125,6 +125,34 @@ def _loki_sink(message: Any) -> None:
         httpx.post(loki_url, json=payload, timeout=2.0)
 
 
+def add_loki_sink(level: str = "INFO") -> bool:
+    """Branche le sink Loki (centralisation Grafana) si Loki est joignable.
+
+    Sonde l'endpoint ``/ready`` de Loki avec backoff, puis ajoute le sink.
+    Best-effort : si Loki n'est pas pret, on continue avec console + fichier
+    uniquement (les logs ne remonteront pas dans le dashboard Performance).
+
+    Helper public reutilisable : l'API (``api/main.py``) et le worker Celery
+    (``api/celery_app.py``) doivent eux aussi expedier leurs logs vers Loki,
+    pas seulement les scripts de training.
+
+    Args:
+        level: Niveau minimum des logs envoyes a Loki.
+
+    Returns:
+        True si le sink Loki a ete branche, False sinon.
+    """
+    settings = get_settings()
+    if not _wait_for_loki_ready(settings.loki_url):
+        logger.warning(
+            f"Loki non pret apres {_LOKI_READY_MAX_ATTEMPTS} tentatives, logs locaux uniquement"
+        )
+        return False
+    logger.add(_loki_sink, level=level, serialize=False)
+    logger.info(f"Loki connecte : {settings.loki_url}")
+    return True
+
+
 def setup_logging(
     *,
     level: str = "INFO",
@@ -193,22 +221,10 @@ def setup_logging(
         encoding="utf-8",
     )
 
-    # Loki sink : sondage avec backoff pour encaisser le demarrage differe du
-    # service (jusqu'a 40 s apres `docker compose up -d`).
+    # Loki sink : centralisation des logs vers Grafana (best-effort, avec
+    # sondage de readiness pour encaisser le demarrage differe du service).
     if enable_loki:
-        settings = get_settings()
-        ready = _wait_for_loki_ready(settings.loki_url)
-        if ready:
-            logger.add(
-                _loki_sink,
-                level=level,
-                serialize=False,
-            )
-            logger.info(f"Loki connecte : {settings.loki_url}")
-        else:
-            logger.warning(
-                f"Loki non pret apres {_LOKI_READY_MAX_ATTEMPTS} tentatives, logs locaux uniquement"
-            )
+        add_loki_sink(level=level)
 
     logger.info("Logging configure avec succes")
 

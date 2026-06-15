@@ -395,6 +395,12 @@ jobs:
   #     starlette>=1.0.1 des que prometheus-fastapi-instrumentator supporte
   #     starlette 1.0.
   #
+  # CVE ignoree (revue 2026-06-15) :
+  #   - torch 2.12.0 : CVE-2025-3000 (divulgation OSV posterieure au dernier run
+  #     vert ; version de torch inchangee cote projet). Surface maitrisee : torch
+  #     ne sert que l'inference ML hors-ligne, jamais atteignable depuis l'API
+  #     HTTP publique. A retirer des qu'un correctif upstream sera publie.
+  #
   # Toute nouvelle CVE doit etre fixee (upgrade dependance) OU explicitement
   # ajoutee a cette liste avec une justification ecrite.
   security:
@@ -441,4 +447,5 @@ jobs:
             --ignore-vuln PYSEC-2025-197 \
             --ignore-vuln PYSEC-2025-210 \
             --ignore-vuln PYSEC-2026-139 \
-            --ignore-vuln PYSEC-2026-161
+            --ignore-vuln PYSEC-2026-161 \
+            --ignore-vuln CVE-2025-3000

@@ -47,10 +47,27 @@ horizontalement, lancer N workers sur N GPUs differents.
 from __future__ import annotations
 
 from celery import Celery
+from celery.signals import setup_logging as _celery_setup_logging
 
 from greentech.config import get_settings
 
 _settings = get_settings()
+
+
+@_celery_setup_logging.connect
+def _configure_worker_logging(**_kwargs: object) -> None:
+    """Configure Loguru + sink Loki pour le worker Celery.
+
+    Par defaut, Celery installe son propre logging et les logs du worker
+    n'atteignent jamais Loki : le dashboard « Performance Systeme » restait
+    donc vide pour toute l'activite d'inference. En se branchant sur le signal
+    ``setup_logging``, on remplace ce comportement par le setup centralise du
+    projet (console + fichier + Loki), aligne sur celui de l'API.
+    """
+    from greentech.utils.logger import setup_logging
+
+    setup_logging(level=_settings.log_level, enable_loki=True)
+
 
 celery_app = Celery(
     "greentech",
